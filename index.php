@@ -510,13 +510,13 @@ async function syncSaveToServer() {
 
     const json = await res.json();
     if (json.status === 'ok') {
-      alert('サーバーに保存しました');
+      alert('Saved to the server');
     } else {
-      alert('保存に失敗しました: ' + (json.message || 'unknown error'));
+      alert('Failed to save the data: ' + (json.message || 'unknown error'));
     }
   } catch (e) {
     console.error(e);
-    alert('通信エラーで保存できませんでした');
+    alert('Could not save due to a communication error');
   }
 }
 
@@ -573,12 +573,12 @@ async function syncLoadFromServer() {
 
     const json = await res.json();
     if (json.status !== 'ok') {
-      alert('読み込みに失敗しました: ' + (json.message || 'unknown error'));
+      alert('Failed to load the content: ' + (json.message || 'unknown error'));
       return;
     }
 
     if (!json.data) {
-      alert('サーバー側にデータがありません');
+      alert('No data was found on the server.');
       return;
     }
 
@@ -593,7 +593,7 @@ async function syncLoadFromServer() {
 
   } catch (e) {
     console.error(e);
-    alert('通信エラーで読み込めませんでした');
+    alert('Failed to load due to a communication error.');
   }
 }
 
@@ -4156,7 +4156,7 @@ window.addEventListener('DOMContentLoaded', function () {
         // 背景用関数が無い場合の保険
         syncSaveToServer();
       } else {
-        console.error('同期用の関数が見つかりません');
+        console.error('Sync function not found');
       }
     });
   }
@@ -4171,7 +4171,7 @@ window.addEventListener('DOMContentLoaded', function () {
       } else if (typeof syncSaveToServer === 'function') {
         syncSaveToServer();
       } else {
-        console.error('同期用の関数が見つかりません');
+        console.error('Sync function not found');
       }
     });
   }
@@ -4194,10 +4194,10 @@ window.addEventListener('DOMContentLoaded', function () {
         // 保険：静かな版がなければ普通の同期関数を呼ぶ
         syncSaveToServer();
       } else {
-        console.error('同期用の関数が見つかりません');
+        console.error('Sync function not found');
       }
     } catch (e) {
-      console.error('タスク保存時の同期でエラー', e);
+      console.error('Error during synchronization when saving task', e);
     }
   }, { passive: true });
 });
@@ -4218,10 +4218,10 @@ window.addEventListener('DOMContentLoaded', function () {
         // 静かな版がない場合の保険
         syncSaveToServer();
       } else {
-        console.error('同期用の関数が見つかりません');
+        console.error('Sync function not found');
       }
     } catch (e) {
-      console.error('タスク削除時の同期でエラー', e);
+      console.error('Error during synchronization when deleting task', e);
     }
   }, { passive: true });
 });
@@ -4243,7 +4243,7 @@ window.addEventListener('DOMContentLoaded', function () {
     if (typeof syncLoadFromServer === 'function') {
       syncLoadFromServer();   // ← 3秒パネルで使っている「サーバーから読み込み」関数
     } else {
-      console.error('syncLoadFromServer が定義されていません');
+      console.error('syncLoadFromServer is not defined');
     }
   }, true); // キャプチャフェーズで実行して先に止める
 });
@@ -4308,7 +4308,7 @@ async function copyNoteOrSelection() {
     // 必要ならここでトースト出せる
     // alert('Copied');
   } catch (e) {
-    alert('コピーできませんでした（ブラウザ権限やHTTPSの可能性）');
+    alert('Failed to copy (possible browser permission or HTTPS issue)');
   }
 }
 
@@ -4366,7 +4366,7 @@ async function pasteFromClipboard() {
 
   // 閲覧モードだと貼れないようにする（必要なら外してOK）
   if (editor.contentEditable !== 'true') {
-    alert('編集モード(Mod)をONにしてから貼り付けてね');
+    alert('Please turn ON Edit Mode (Mod) before pasting');
     return;
   }
 
@@ -4384,7 +4384,7 @@ async function pasteFromClipboard() {
 
   // fallback: どうしても読めない場合は手入力
   if (!text) {
-    const manual = prompt('ブラウザがクリップボード読込を許可していません\n貼り付けたいテキストを入力してね');
+    const manual = prompt('The browser does not allow clipboard reading.\nPlease enter the text you want to paste.');
     if (manual === null) return;
     text = manual;
   }
