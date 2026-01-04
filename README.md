@@ -48,6 +48,7 @@ https://passwords-generator.org/
 
 If you prefer not to rely on third-party sites, you can also generate values locally, e.g.:
 - `openssl rand -hex 32`
+- *The term "SECRET" is merely decorative and is planned to be discontinued in the future.*
 
 ### 4. First-time initialization (one time only)
 Open your site in a browser to launch **Notemod-selfhosted**.  
@@ -61,7 +62,7 @@ This operation will automatically generate the following if they do not already 
 
 ![](Notemod-selfhosted.png)
 
-### Strong recommendation: Enable Basic Authentication (Highly Recommended)
+### Be sure to set up Basic authentication (important).
 
 Notemod-selfhosted stores personal notes and API tokens.  
 Even if you use `.htaccess` and `robots.txt`, you should **strongly enable Basic Authentication** to protect your deployment.

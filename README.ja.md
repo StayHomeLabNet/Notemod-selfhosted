@@ -45,7 +45,8 @@ iPhone のショートカットを実行したら、そのテキストが iPhone
 SECRET や TOKEN の生成にはパスワード生成サイトを利用できます（例）
 https://passwords-generator.org/
 
-※第三者サイトが不安な場合は、OS標準のパスワード生成や `openssl rand -hex 32` 等でもOKです
+- 第三者サイトが不安な場合は、OS標準のパスワード生成や `openssl rand -hex 32` 等でもOKです
+- *SECRET は、ただの飾りに過ぎないので将来的に廃止予定*
 
 ### 4. 初期化（初回のみ）
 公開フォルダーへアクセスすると Notemod-selfhosted が開きます。  
@@ -59,7 +60,7 @@ https://passwords-generator.org/
 
 ![](Notemod-selfhosted.png)
 
-### 強く推奨: Basic認証を設定してください（重要）
+### 必ずBasic認証を設定してください（重要）
 
 Notemod-selfhosted は「個人メモ」や「APIトークン」など重要な情報を扱います。  
 `.htaccess` や `robots.txt` を置いていても、公開サーバーに置く以上は **Basic認証の導入を強く推奨** します。
