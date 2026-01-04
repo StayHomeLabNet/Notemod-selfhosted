@@ -85,7 +85,7 @@ Even if you use `.htaccess` and `robots.txt`, you should **strongly enable Basic
 ### 5. How to use / Integrations
 Detailed usage (API calls / iPhone Shortcuts / ClipboardSender integration, etc.) is explained in the links below.
 - [StayHomeLab YouTube ch](https://www.youtube.com/@StayHomeLab)  
-- [Website](https://stayhomelab.net/)  
+- [Website](https://stayhomelab.net/notemod-selfhosted)  
 - [ClipboardSender](https://github.com/StayHomeLabNet/ClipboardSender)  
 
 ---

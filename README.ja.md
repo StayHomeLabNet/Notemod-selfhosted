@@ -83,7 +83,7 @@ Notemod-selfhosted は「個人メモ」や「APIトークン」など重要な�
 ### 5. 使い方・連携
 具体的な利用方法（API叩き方 / iPhoneショートカット / ClipboardSender連携など）は、以下のリンクで紹介します。
 - [StayHomeLab YouTube ch](https://www.youtube.com/@StayHomeLab)  
-- [Website](https://stayhomelab.net/)  
+- [Website](https://stayhomelab.net/notemod-selfhosted)  
 - [ClipboardSender](https://github.com/StayHomeLabNet/ClipboardSender)  
 
 ---
