@@ -9,7 +9,7 @@ require_once __DIR__ . '/../logger.php';
 // ※logger.php 側でも設定しているが、単体動作の保険としてここでも読む
 // =====================
 $tz = 'Pacific/Auckland';
-$cfgCommonFile = dirname(__DIR__) . '/config/config.php';
+$cfgCommonFile = dirname(__DIR__) . '/config/config.php'; // api/ の1つ上 → config/
 if (file_exists($cfgCommonFile)) {
     $common = require $cfgCommonFile;
     if (is_array($common)) {
@@ -33,6 +33,147 @@ function respond_json(array $payload, int $statusCode = 200): void
 
     echo json_encode($payload, $flags);
     exit;
+}
+
+/**
+ * 指定の例に合わせた JSON（インデント2スペース）を生成する
+ * - 文字列内の改行/エスケープは json_encode に任せる
+ * - インデント幅だけ 2 スペースで整形する
+ */
+function nm_json_pretty_2($value): string
+{
+    $json = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        // 最悪の保険（ここはバックアップなので落としたくない）
+        return "{}\n";
+    }
+
+    $out = '';
+    $indent = 0;
+    $inString = false;
+    $escape = false;
+
+    $len = strlen($json);
+    for ($i = 0; $i < $len; $i++) {
+        $ch = $json[$i];
+
+        if ($inString) {
+            $out .= $ch;
+            if ($escape) {
+                $escape = false;
+            } elseif ($ch === '\\') {
+                $escape = true;
+            } elseif ($ch === '"') {
+                $inString = false;
+            }
+            continue;
+        }
+
+        switch ($ch) {
+            case '"':
+                $inString = true;
+                $out .= $ch;
+                break;
+
+            case '{':
+            case '[':
+                $out .= $ch . "\n";
+                $indent++;
+                $out .= str_repeat('  ', $indent);
+                break;
+
+            case '}':
+            case ']':
+                $out .= "\n";
+                $indent = max(0, $indent - 1);
+                $out .= str_repeat('  ', $indent) . $ch;
+                break;
+
+            case ',':
+                $out .= $ch . "\n" . str_repeat('  ', $indent);
+                break;
+
+            case ':':
+                $out .= ": ";
+                break;
+
+            default:
+                // スペースは不要（例も不要）
+                if ($ch !== ' ' && $ch !== "\n" && $ch !== "\r" && $ch !== "\t") {
+                    $out .= $ch;
+                }
+                break;
+        }
+    }
+
+    return $out . "\n";
+}
+
+/**
+ * Notemod の data.json（categories/notes が “JSON文字列” の場合がある）を
+ * バックアップ用に「配列構造」に展開し、キー順もなるべく例に寄せる
+ */
+function nm_build_backup_object(array $data, array $categoriesArr, array $notesArr): array
+{
+    // 例に出ている「存在しないなら null にしたいキー」
+    $ensureNullKeys = [
+        'categoryOrder',
+        'sidebarState',
+        'thizaState',
+        'tema',
+        'gistFile',
+        'gistId',
+        'gistToken',
+        'sync',
+    ];
+
+    // まずベースは $data を引き継ぐ
+    $base = $data;
+
+    // categories / notes は配列に展開したものを入れる
+    $base['categories'] = $categoriesArr;
+    $base['notes'] = $notesArr;
+
+    // 指定キーが無ければ null を入れる
+    foreach ($ensureNullKeys as $k) {
+        if (!array_key_exists($k, $base)) {
+            $base[$k] = null;
+        }
+    }
+
+    // 例の順番に寄せる（それ以外のキーは最後に付け足す）
+    $orderedKeys = [
+        'categories',
+        'categoryOrder',
+        'notes',
+        'sidebarState',
+        'thizaState',
+        'tema',
+        'gistFile',
+        'gistId',
+        'gistToken',
+        'sync',
+        'hasSelectedLanguage',
+        'selectedLanguage',
+    ];
+
+    $out = [];
+    foreach ($orderedKeys as $k) {
+        if (array_key_exists($k, $base)) {
+            $out[$k] = $base[$k];
+        } else {
+            // hasSelectedLanguage/selectedLanguage が無い場合もあるので null ではなく “無いまま” にする
+        }
+    }
+
+    // それ以外のキーも失わない（機能維持）
+    foreach ($base as $k => $v) {
+        if (!array_key_exists($k, $out)) {
+            $out[$k] = $v;
+        }
+    }
+
+    return $out;
 }
 
 // =====================
@@ -207,6 +348,7 @@ if ($dryRunBool) {
 
 // =====================
 // 8. バックアップ作成（設定でON/OFF）
+//    ★ここだけ変更：コピーではなく「指定フォーマットの整形JSON」を書き出す
 // =====================
 
 $backupBaseName = null;
@@ -214,7 +356,14 @@ $backupBaseName = null;
 if ($backupEnabled) {
     $backupFile = $notemodFile . $backupSuffix . date('Ymd-His');
 
-    if (!copy($notemodFile, $backupFile)) {
+    // バックアップ用オブジェクト作成（categories/notesを配列化＋順序寄せ＋null補完）
+    $backupObj = nm_build_backup_object($data, $categoriesArr, $notesArr);
+
+    // 例に合わせたインデント2のJSONを書き出す
+    $backupJson = nm_json_pretty_2($backupObj);
+
+    $ok = @file_put_contents($backupFile, $backupJson, LOCK_EX);
+    if ($ok === false) {
         respond_json(['status' => 'error', 'message' => 'failed to create backup'], 500);
     }
 

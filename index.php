@@ -3397,15 +3397,15 @@ document.getElementById('import').addEventListener('click', () => {
           localStorage.setItem(k, JSON.stringify(v));
         }
       });
+      
+      // サーバーにSAVE
+      syncSaveToServerBackground();
+      // ==== Local Storage をクリア
+      localStorage.clear();
+      
       alert(translate("data_imported_successfully"));
-    try {
-        await new Promise(resolve => {
-          updateGist();
-          setTimeout(resolve, 1000);
-        });
-      } catch (error) {
-        console.error("Gist güncelleme hatası:", error);
-      }
+      syncLoadFromServer();   // ←「サーバーから読み込み」関数
+
 setTimeout(() => {location.reload();}, 700);
 
   });
@@ -4241,7 +4241,9 @@ window.addEventListener('DOMContentLoaded', function () {
     e.stopImmediatePropagation();
 
     if (typeof syncLoadFromServer === 'function') {
-      syncLoadFromServer();   // ← 3秒パネルで使っている「サーバーから読み込み」関数
+      // ==== Local Storage をクリア
+      localStorage.clear();
+      syncLoadFromServer();   // ←「サーバーから読み込み」関数
     } else {
       console.error('syncLoadFromServer is not defined');
     }
