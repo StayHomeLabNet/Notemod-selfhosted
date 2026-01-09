@@ -35,147 +35,6 @@ function respond_json(array $payload, int $statusCode = 200): void
     exit;
 }
 
-/**
- * 指定の例に合わせた JSON（インデント2スペース）を生成する
- * - 文字列内の改行/エスケープは json_encode に任せる
- * - インデント幅だけ 2 スペースで整形する
- */
-function nm_json_pretty_2($value): string
-{
-    $json = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($json === false) {
-        // 最悪の保険（ここはバックアップなので落としたくない）
-        return "{}\n";
-    }
-
-    $out = '';
-    $indent = 0;
-    $inString = false;
-    $escape = false;
-
-    $len = strlen($json);
-    for ($i = 0; $i < $len; $i++) {
-        $ch = $json[$i];
-
-        if ($inString) {
-            $out .= $ch;
-            if ($escape) {
-                $escape = false;
-            } elseif ($ch === '\\') {
-                $escape = true;
-            } elseif ($ch === '"') {
-                $inString = false;
-            }
-            continue;
-        }
-
-        switch ($ch) {
-            case '"':
-                $inString = true;
-                $out .= $ch;
-                break;
-
-            case '{':
-            case '[':
-                $out .= $ch . "\n";
-                $indent++;
-                $out .= str_repeat('  ', $indent);
-                break;
-
-            case '}':
-            case ']':
-                $out .= "\n";
-                $indent = max(0, $indent - 1);
-                $out .= str_repeat('  ', $indent) . $ch;
-                break;
-
-            case ',':
-                $out .= $ch . "\n" . str_repeat('  ', $indent);
-                break;
-
-            case ':':
-                $out .= ": ";
-                break;
-
-            default:
-                // スペースは不要（例も不要）
-                if ($ch !== ' ' && $ch !== "\n" && $ch !== "\r" && $ch !== "\t") {
-                    $out .= $ch;
-                }
-                break;
-        }
-    }
-
-    return $out . "\n";
-}
-
-/**
- * Notemod の data.json（categories/notes が “JSON文字列” の場合がある）を
- * バックアップ用に「配列構造」に展開し、キー順もなるべく例に寄せる
- */
-function nm_build_backup_object(array $data, array $categoriesArr, array $notesArr): array
-{
-    // 例に出ている「存在しないなら null にしたいキー」
-    $ensureNullKeys = [
-        'categoryOrder',
-        'sidebarState',
-        'thizaState',
-        'tema',
-        'gistFile',
-        'gistId',
-        'gistToken',
-        'sync',
-    ];
-
-    // まずベースは $data を引き継ぐ
-    $base = $data;
-
-    // categories / notes は配列に展開したものを入れる
-    $base['categories'] = $categoriesArr;
-    $base['notes'] = $notesArr;
-
-    // 指定キーが無ければ null を入れる
-    foreach ($ensureNullKeys as $k) {
-        if (!array_key_exists($k, $base)) {
-            $base[$k] = null;
-        }
-    }
-
-    // 例の順番に寄せる（それ以外のキーは最後に付け足す）
-    $orderedKeys = [
-        'categories',
-        'categoryOrder',
-        'notes',
-        'sidebarState',
-        'thizaState',
-        'tema',
-        'gistFile',
-        'gistId',
-        'gistToken',
-        'sync',
-        'hasSelectedLanguage',
-        'selectedLanguage',
-    ];
-
-    $out = [];
-    foreach ($orderedKeys as $k) {
-        if (array_key_exists($k, $base)) {
-            $out[$k] = $base[$k];
-        } else {
-            // hasSelectedLanguage/selectedLanguage が無い場合もあるので null ではなく “無いまま” にする
-        }
-    }
-
-    // それ以外のキーも失わない（機能維持）
-    foreach ($base as $k => $v) {
-        if (!array_key_exists($k, $out)) {
-            $out[$k] = $v;
-        }
-    }
-
-    return $out;
-}
-
 // =====================
 // 0. POST 強制
 // =====================
@@ -248,7 +107,7 @@ if (!hash_equals($ADMIN_TOKEN, $token)) {
 }
 
 // =====================
-// 4. パラメータ（category / confirm / dry_run）
+// 4. パラメータ（category / confirm / dry_run / purge_bak）
 // =====================
 
 $TARGET_CATEGORY_NAME_DEFAULT = 'INBOX';
@@ -257,7 +116,11 @@ $categoryName = trim((string)($params['category'] ?? $TARGET_CATEGORY_NAME_DEFAU
 $confirm      = trim((string)($params['confirm'] ?? ''));
 $dryRun       = trim((string)($params['dry_run'] ?? '0'));
 
-$dryRunBool = ($dryRun === '1' || strtolower($dryRun) === 'true');
+// ★追加：bak 全削除モード
+$purgeBak     = trim((string)($params['purge_bak'] ?? $params['delete_bak'] ?? '0'));
+
+$dryRunBool   = ($dryRun === '1' || strtolower($dryRun) === 'true');
+$purgeBakBool = ($purgeBak === '1' || strtolower($purgeBak) === 'true');
 
 // confirm が無いと実行しない（dry_runはOK）
 if (!$dryRunBool && $confirm !== 'YES') {
@@ -265,6 +128,74 @@ if (!$dryRunBool && $confirm !== 'YES') {
         'status'  => 'error',
         'message' => 'This is a destructive action. Add confirm=YES (or use dry_run=1).',
     ], 400);
+}
+
+// =====================
+// 4.5 追加機能：notemod-data 内の bak ファイル全削除（purge_bak=1）
+// - 他機能は維持：このモードのときだけここで処理して exit
+// - 対象：同フォルダ内の「.bak / .bak- / .bak.」を含むファイル
+// =====================
+if ($purgeBakBool) {
+
+    $dir = dirname($notemodFile);
+    if (!is_dir($dir)) {
+        respond_json(['status' => 'error', 'message' => 'notemod-data dir not found', 'dir' => $dir], 500);
+    }
+
+    $targets = [];
+    $errors  = [];
+
+    $it = new DirectoryIterator($dir);
+    foreach ($it as $f) {
+        if ($f->isDot() || !$f->isFile()) continue;
+
+        $name = $f->getFilename();
+        $path = $f->getPathname();
+
+        // data.json 本体は絶対に消さない
+        if (realpath($path) === realpath($notemodFile)) continue;
+
+        // 「bakファイル」判定：.bak / .bak- / .bak. を含むもの
+        // 例：data.json.bak-20260108-122833 / data.json.bak / xxx.bak.txt
+        if (preg_match('/\.bak(\-|\.|$)/i', $name) !== 1) {
+            continue;
+        }
+
+        $targets[] = $name;
+    }
+
+    // dry_run なら対象一覧だけ返す
+    if ($dryRunBool) {
+        respond_json([
+            'status'  => 'ok',
+            'message' => 'dry run - purge_bak would delete these files',
+            'dir'     => $dir,
+            'dry_run' => true,
+            'count'   => count($targets),
+            'files'   => $targets,
+        ]);
+    }
+
+    $deleted = [];
+    foreach ($targets as $name) {
+        $path = $dir . DIRECTORY_SEPARATOR . $name;
+        if (@unlink($path)) {
+            $deleted[] = $name;
+        } else {
+            $errors[] = ['file' => $name, 'err' => error_get_last()];
+        }
+    }
+
+    // purge結果を返して終了（カテゴリ削除などは実行しない）
+    respond_json([
+        'status'  => 'ok',
+        'message' => 'purge_bak completed',
+        'dir'     => $dir,
+        'deleted' => count($deleted),
+        'failed'  => count($errors),
+        'files'   => $deleted,
+        'errors'  => $errors,
+    ]);
 }
 
 // =====================
@@ -348,7 +279,6 @@ if ($dryRunBool) {
 
 // =====================
 // 8. バックアップ作成（設定でON/OFF）
-//    ★ここだけ変更：コピーではなく「指定フォーマットの整形JSON」を書き出す
 // =====================
 
 $backupBaseName = null;
@@ -356,14 +286,7 @@ $backupBaseName = null;
 if ($backupEnabled) {
     $backupFile = $notemodFile . $backupSuffix . date('Ymd-His');
 
-    // バックアップ用オブジェクト作成（categories/notesを配列化＋順序寄せ＋null補完）
-    $backupObj = nm_build_backup_object($data, $categoriesArr, $notesArr);
-
-    // 例に合わせたインデント2のJSONを書き出す
-    $backupJson = nm_json_pretty_2($backupObj);
-
-    $ok = @file_put_contents($backupFile, $backupJson, LOCK_EX);
-    if ($ok === false) {
+    if (!copy($notemodFile, $backupFile)) {
         respond_json(['status' => 'error', 'message' => 'failed to create backup'], 500);
     }
 
