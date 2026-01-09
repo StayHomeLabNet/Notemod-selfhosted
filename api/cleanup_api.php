@@ -6,16 +6,16 @@ require_once __DIR__ . '/../logger.php';
 
 // =====================
 // タイムゾーン設定（config/config.php から読む）
-// ※logger.php 側でも設定しているが、単体動作の保険としてここでも読む
 // =====================
 $tz = 'Pacific/Auckland';
 $cfgCommonFile = dirname(__DIR__) . '/config/config.php'; // api/ の1つ上 → config/
+$commonCfg = [];
 if (file_exists($cfgCommonFile)) {
-    $common = require $cfgCommonFile;
-    if (is_array($common)) {
-        $t = (string)($common['TIMEZONE'] ?? $common['timezone'] ?? '');
-        if ($t !== '') $tz = $t;
-    }
+    $tmp = require $cfgCommonFile;
+    if (is_array($tmp)) $commonCfg = $tmp;
+
+    $t = (string)($commonCfg['TIMEZONE'] ?? $commonCfg['timezone'] ?? '');
+    if ($t !== '') $tz = $t;
 }
 date_default_timezone_set($tz);
 
@@ -38,7 +38,6 @@ function respond_json(array $payload, int $statusCode = 200): void
 // =====================
 // 0. POST 強制
 // =====================
-
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
 if (strtoupper($method) !== 'POST') {
     respond_json([
@@ -50,7 +49,6 @@ if (strtoupper($method) !== 'POST') {
 // =====================
 // 1. 設定読み込み（config/config.api.php）
 // =====================
-
 $configFile = dirname(__DIR__) . '/config/config.api.php';
 if (!file_exists($configFile)) {
     respond_json(['status' => 'error', 'message' => 'config.api.php missing'], 500);
@@ -63,7 +61,7 @@ if (!is_array($cfg)) $cfg = [];
 $ADMIN_TOKEN = (string)($cfg['ADMIN_TOKEN'] ?? $cfg['EXPECTED_TOKEN'] ?? '');
 $notemodFile = (string)($cfg['DATA_JSON'] ?? '');
 
-// ★追加：バックアップ設定
+// バックアップ設定
 $backupEnabled = (bool)($cfg['CLEANUP_BACKUP_ENABLED'] ?? true);
 $backupSuffix  = (string)($cfg['CLEANUP_BACKUP_SUFFIX'] ?? '.bak-');
 
@@ -76,11 +74,7 @@ if ($ADMIN_TOKEN === '' || $notemodFile === '') {
 
 // =====================
 // 2. パラメータ正規化（POSTのみ）
-//    - form
-//    - JSON
-//    - キーを小文字に統一して Category/category 等を吸収
 // =====================
-
 $params = array_change_key_case($_POST, CASE_LOWER);
 
 // JSONボディ対応
@@ -91,7 +85,6 @@ if (stripos($ct, 'application/json') !== false) {
     $decoded = json_decode($raw, true);
     if (is_array($decoded)) $jsonBody = $decoded;
 }
-
 if (!empty($jsonBody)) {
     $jsonLower = array_change_key_case($jsonBody, CASE_LOWER);
     $params = $jsonLower + $params; // JSON優先
@@ -100,27 +93,26 @@ if (!empty($jsonBody)) {
 // =====================
 // 3. 認証
 // =====================
-
 $token = (string)($params['token'] ?? '');
 if (!hash_equals($ADMIN_TOKEN, $token)) {
     respond_json(['status' => 'error', 'message' => 'Forbidden'], 403);
 }
 
 // =====================
-// 4. パラメータ（category / confirm / dry_run / purge_bak）
+// 4. パラメータ（category / confirm / dry_run / purge_bak / purge_log）
 // =====================
-
 $TARGET_CATEGORY_NAME_DEFAULT = 'INBOX';
 
 $categoryName = trim((string)($params['category'] ?? $TARGET_CATEGORY_NAME_DEFAULT));
 $confirm      = trim((string)($params['confirm'] ?? ''));
 $dryRun       = trim((string)($params['dry_run'] ?? '0'));
 
-// ★追加：bak 全削除モード
 $purgeBak     = trim((string)($params['purge_bak'] ?? $params['delete_bak'] ?? '0'));
+$purgeLog     = trim((string)($params['purge_log'] ?? '0'));
 
 $dryRunBool   = ($dryRun === '1' || strtolower($dryRun) === 'true');
 $purgeBakBool = ($purgeBak === '1' || strtolower($purgeBak) === 'true');
+$purgeLogBool = ($purgeLog === '1' || strtolower($purgeLog) === 'true');
 
 // confirm が無いと実行しない（dry_runはOK）
 if (!$dryRunBool && $confirm !== 'YES') {
@@ -131,9 +123,8 @@ if (!$dryRunBool && $confirm !== 'YES') {
 }
 
 // =====================
-// 4.5 追加機能：notemod-data 内の bak ファイル全削除（purge_bak=1）
-// - 他機能は維持：このモードのときだけここで処理して exit
-// - 対象：同フォルダ内の「.bak / .bak- / .bak.」を含むファイル
+// 追加機能：notemod-data 内の bak ファイル全削除（purge_bak=1）
+// - このモードのときだけここで処理して exit
 // =====================
 if ($purgeBakBool) {
 
@@ -143,8 +134,6 @@ if ($purgeBakBool) {
     }
 
     $targets = [];
-    $errors  = [];
-
     $it = new DirectoryIterator($dir);
     foreach ($it as $f) {
         if ($f->isDot() || !$f->isFile()) continue;
@@ -155,16 +144,12 @@ if ($purgeBakBool) {
         // data.json 本体は絶対に消さない
         if (realpath($path) === realpath($notemodFile)) continue;
 
-        // 「bakファイル」判定：.bak / .bak- / .bak. を含むもの
-        // 例：data.json.bak-20260108-122833 / data.json.bak / xxx.bak.txt
-        if (preg_match('/\.bak(\-|\.|$)/i', $name) !== 1) {
-            continue;
+        // 対象：.bak / .bak- / .bak. を含むファイル
+        if (preg_match('/\.bak(\-|\.|$)/i', $name) === 1) {
+            $targets[] = $name;
         }
-
-        $targets[] = $name;
     }
 
-    // dry_run なら対象一覧だけ返す
     if ($dryRunBool) {
         respond_json([
             'status'  => 'ok',
@@ -177,6 +162,8 @@ if ($purgeBakBool) {
     }
 
     $deleted = [];
+    $errors  = [];
+
     foreach ($targets as $name) {
         $path = $dir . DIRECTORY_SEPARATOR . $name;
         if (@unlink($path)) {
@@ -186,7 +173,6 @@ if ($purgeBakBool) {
         }
     }
 
-    // purge結果を返して終了（カテゴリ削除などは実行しない）
     respond_json([
         'status'  => 'ok',
         'message' => 'purge_bak completed',
@@ -199,9 +185,90 @@ if ($purgeBakBool) {
 }
 
 // =====================
+// 追加機能：logs フォルダー内の .log ファイル全削除（purge_log=1）
+// - LOGGER_LOGS_DIRNAME を config/config.php から参照
+// - 未指定なら logger.php と同じ決め方：baseRoot + 'logs'
+// - このモードのときだけここで処理して exit
+// =====================
+if ($purgeLogBool) {
+
+    // logger.php の __DIR__ は public_html（想定）
+    // cleanup_api.php の __DIR__ は public_html/api なので、baseRoot は 1階層上（public_html）
+    $baseRoot = dirname(__DIR__);
+
+    // config/config.php の LOGGER_LOGS_DIRNAME を優先（無ければ 'logs'）
+    $logsDirName = (string)($commonCfg['LOGGER_LOGS_DIRNAME'] ?? '');
+    $logsDirName = trim($logsDirName) !== '' ? trim($logsDirName) : 'logs';
+
+    // 安全：フォルダ名だけ許可（/ や .. を拒否）
+    if (preg_match('/[\/\\\\]/', $logsDirName) || strpos($logsDirName, '..') !== false) {
+        respond_json([
+            'status'  => 'error',
+            'message' => 'Invalid LOGGER_LOGS_DIRNAME',
+            'value'   => $logsDirName,
+        ], 500);
+    }
+
+    $logsDir = $baseRoot . '/' . $logsDirName;
+
+    if (!is_dir($logsDir)) {
+        respond_json([
+            'status'  => 'error',
+            'message' => 'logs dir not found',
+            'dir'     => $logsDir,
+        ], 500);
+    }
+
+    $targets = [];
+    $it = new DirectoryIterator($logsDir);
+    foreach ($it as $f) {
+        if ($f->isDot() || !$f->isFile()) continue;
+
+        $name = $f->getFilename();
+
+        // 対象：拡張子が .log のみ
+        if (preg_match('/\.log$/i', $name) === 1) {
+            $targets[] = $name;
+        }
+    }
+
+    if ($dryRunBool) {
+        respond_json([
+            'status'  => 'ok',
+            'message' => 'dry run - purge_log would delete these files',
+            'dir'     => $logsDir,
+            'dry_run' => true,
+            'count'   => count($targets),
+            'files'   => $targets,
+        ]);
+    }
+
+    $deleted = [];
+    $errors  = [];
+
+    foreach ($targets as $name) {
+        $path = $logsDir . DIRECTORY_SEPARATOR . $name;
+        if (@unlink($path)) {
+            $deleted[] = $name;
+        } else {
+            $errors[] = ['file' => $name, 'err' => error_get_last()];
+        }
+    }
+
+    respond_json([
+        'status'  => 'ok',
+        'message' => 'purge_log completed',
+        'dir'     => $logsDir,
+        'deleted' => count($deleted),
+        'failed'  => count($errors),
+        'files'   => $deleted,
+        'errors'  => $errors,
+    ]);
+}
+
+// =====================
 // 5. data.json 読み込み
 // =====================
-
 if (!file_exists($notemodFile)) {
     respond_json(['status' => 'error', 'message' => 'data.json not found'], 500);
 }
@@ -225,7 +292,6 @@ if (!is_array($notesArr)) $notesArr = [];
 // =====================
 // 6. 対象カテゴリIDを探す（大小文字ゆれ吸収）
 // =====================
-
 $categoryId = null;
 $resolvedCategoryName = $categoryName;
 
@@ -251,7 +317,6 @@ if ($categoryId === null) {
 // =====================
 // 7. 削除対象をフィルタ
 // =====================
-
 $keptNotes = [];
 $deletedCount = 0;
 
@@ -280,7 +345,6 @@ if ($dryRunBool) {
 // =====================
 // 8. バックアップ作成（設定でON/OFF）
 // =====================
-
 $backupBaseName = null;
 
 if ($backupEnabled) {
@@ -296,7 +360,6 @@ if ($backupEnabled) {
 // =====================
 // 9. 保存（元の形式を維持）
 // =====================
-
 $data['notes'] = is_string($notesVal)
     ? json_encode($keptNotes, JSON_UNESCAPED_UNICODE)
     : $keptNotes;
