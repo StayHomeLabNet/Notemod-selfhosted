@@ -1,38 +1,40 @@
 <?php
 // config/config.sample.php
 // ------------------------------------------------------------
-// 公開用サンプル（GitHubに置く用）
-// 実運用では同じ内容で config.php を作り、SECRET等を必ず変更してください
+// Public sample file (for GitHub)
+// For real use, create config.php with the same structure
+// and ALWAYS change SECRET and other sensitive values.
 // ------------------------------------------------------------
 
 return [
-    // アプリ内で「秘密値」として使うもの（署名・暗号化・固定キー用途などに）
-    // ★必ず変更（長いランダム推奨）
+    // Secret value used internally by the application
+    // (for signing, encryption, fixed keys, etc.)
+    // ★ MUST CHANGE (use a long, random string)
     'SECRET' => 'CHANGE_ME_SECRET',
 
-    // PHPのタイムゾーン（例）
-    // 日本: Asia/Tokyo
-    // NZ  : Pacific/Auckland
-    // 豪  : Australia/Sydney
-    // 米  : America/Los_Angeles / America/New_York
-    // カナダ: America/Toronto / America/Vancouver
-    // トルコ: Europe/Istanbul
+    // PHP timezone setting (examples)
+    // Japan : Asia/Tokyo
+    // NZ    : Pacific/Auckland
+    // AU    : Australia/Sydney
+    // US    : America/Los_Angeles / America/New_York
+    // Canada: America/Toronto / America/Vancouver
+    // Turkey: Europe/Istanbul
     'TIMEZONE' => 'Pacific/Auckland',
 
-    // デバッグログ等を増やしたい時だけ true
+    // Enable this only when you want more verbose debug logs
     'DEBUG' => false,
 
-    // ★追加：logger の有効/無効
-    // 生ログ（/logs/access-YYYY-MM.log）
+    // ★ Added: enable / disable logger
+    // Raw access logs (/logs/access-YYYY-MM.log)
     'LOGGER_FILE_ENABLED' => true,
 
-    // Notemod の Logs カテゴリ（月別ノート access-YYYY-MM）
+    // Notemod Logs category (monthly notes: access-YYYY-MM)
     'LOGGER_NOTEMOD_ENABLED' => true,
 
-    // （任意）logsフォルダ名を変えたい場合
+    // (Optional) Change the logs directory name
     // 'LOGGER_LOGS_DIRNAME' => 'logs',
   
-    // 必要ならNotemodの初期スナップショットを変えられる
-    // （JSON文字列として保存する前提）
+    // Optional: customize the initial Notemod snapshot
+    // (Must be stored as a JSON string)
     'INITIAL_SNAPSHOT' => '{"categories":null,"hasSelectedLanguage":null,"notes":null,"selectedLanguage":null}',
 ];

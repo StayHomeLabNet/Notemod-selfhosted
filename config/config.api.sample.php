@@ -1,33 +1,36 @@
 <?php
 // config/config.api.sample.php
 // ------------------------------------------------------------
-// 公開用サンプル（GitHubに置く用）
-// 実運用では同じ内容で config.api.php を作り、トークンを必ず変更してください
+// Public sample file (for GitHub)
+// For real use, create config.api.php with the same structure
+// and ALWAYS change the tokens.
 //
-// EXPECTED_TOKEN : 通常の API トークン（ノート追加 / 読み取り等）
-// ADMIN_TOKEN    : cleanup 専用の強いトークン（破壊的操作）
-// DATA_JSON      : data.json の絶対パス（おすすめは public_html の外）
+// EXPECTED_TOKEN : Regular API token (add/read notes, etc.)
+// ADMIN_TOKEN    : Strong token for cleanup APIs (destructive actions)
+// DATA_JSON      : Absolute path to data.json (recommended: outside public_html)
 // ------------------------------------------------------------
 
 return [
-    // ★必ず変更（長いランダム推奨）
+    // ★ MUST CHANGE (use a long, random string)
     'EXPECTED_TOKEN' => 'CHANGE_ME_EXPECTED_TOKEN',
     'ADMIN_TOKEN'    => 'CHANGE_ME_ADMIN_TOKEN',
 
-    // api.php / read_api.php / cleanup_api.php から見た data.json の絶対パス
-    // ※サンプルでは「config/ の1つ上に notemod-data がある」想定
-    // 運用では public_html の外に置くのがおすすめ
+    // Absolute path to data.json as seen from api.php / read_api.php / cleanup_api.php
+    // In this sample, it assumes "notemod-data" exists one level above "config/"
+    // For production, it is strongly recommended to place data.json outside public_html
     'DATA_JSON' => dirname(__DIR__) . '/notemod-data/data.json',
 
-    // 新規作成されるカテゴリ/ノートの色（Notemod側の仕様に合わせて16進カラーっぽい文字列）
+    // Default color for newly created categories/notes
+    // (String formatted like a hex color, following Notemod's internal convention)
     'DEFAULT_COLOR' => '3478bd',
     
-    // ★追加：cleanup のバックアップを作るか
-    // true  : 実行前に data.json を .bak-YYYYmmdd-HHiiSS で保存
-    // false : バックアップを作らない
+    // ★ Added: enable/disable backups for cleanup operations
+    // true  : Create a backup of data.json as .bak-YYYYmmdd-HHiiSS before cleanup
+    // false : Do not create a backup
     'CLEANUP_BACKUP_ENABLED' => true,
 
-    // （任意）バックアップファイル名のプレフィックスを変えたい時
-    // 例: 'data.json.bak-' にしたいなら 'data.json.bak-'
+    // (Optional) Customize the backup filename suffix
+    // Example: to generate "data.json.bak-YYYYmmdd-HHiiSS"
+    // set this to 'data.json.bak-'
     'CLEANUP_BACKUP_SUFFIX'  => '.bak-',
 ];
