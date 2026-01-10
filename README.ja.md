@@ -32,12 +32,12 @@ iPhone のショートカットを実行したら、そのテキストが iPhone
 ### 2. 設定ファイルを作成（重要）
 
 #### 共通設定
-`config/config.sample.php` を `config/config.php` にリネームし、以下を設定します  
+`config/config.sample.php` または `config/config.sample.ja.php` を `config/config.php` にリネームし、以下を設定します  
 - `CHANGE_ME_SECRET` を任意の長い文字列に置き換え（16文字以上推奨）
 - `TIMEZONE` を必要に応じて変更
 
 #### API設定
-`config/config.api.sample.php` を `config/config.api.php` にリネームし、以下を設定します  
+`config/config.api.sample.php` または `config/config.api.sample.php` を `config/config.api.php` にリネームし、以下を設定します  
 - `CHANGE_ME_EXPECTED_TOKEN` を任意の文字列に置き換え
 - `CHANGE_ME_ADMIN_TOKEN` を任意の文字列に置き換え（cleanup用。EXPECTED_TOKENより強い値推奨）
 
