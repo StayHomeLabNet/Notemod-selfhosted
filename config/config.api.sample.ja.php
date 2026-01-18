@@ -3,10 +3,11 @@
 // ------------------------------------------------------------
 // 公開用サンプル（GitHubに置く用）
 // 実運用では同じ内容で config.api.php を作り、トークンを必ず変更してください
+// v1.1.0 で下記の認証情報をWebUIで設定可能
 //
 // EXPECTED_TOKEN : 通常の API トークン（ノート追加 / 読み取り等）
 // ADMIN_TOKEN    : cleanup 専用の強いトークン（破壊的操作）
-// DATA_JSON      : data.json の絶対パス（おすすめは public_html の外）
+// DATA_JSON      : data.json の絶対パス
 // ------------------------------------------------------------
 
 return [
@@ -16,7 +17,6 @@ return [
 
     // api.php / read_api.php / cleanup_api.php から見た data.json の絶対パス
     // ※サンプルでは「config/ の1つ上に notemod-data がある」想定
-    // 運用では public_html の外に置くのがおすすめ
     'DATA_JSON' => dirname(__DIR__) . '/notemod-data/data.json',
 
     // 新規作成されるカテゴリ/ノートの色（Notemod側の仕様に合わせて16進カラーっぽい文字列）

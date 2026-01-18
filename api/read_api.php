@@ -23,7 +23,7 @@ require_once __DIR__ . '/../logger.php';
 // ※logger.php 側でも設定しているが、単体動作の保険としてここでも読む
 // =====================
 $tz = 'Pacific/Auckland';
-$cfgCommonFile = dirname(__DIR__) . '/config/config.php';
+$cfgCommonFile = dirname(__DIR__) . '/config/config.php'; // api/ の1つ上 → config/
 if (file_exists($cfgCommonFile)) {
     $common = require $cfgCommonFile;
     if (is_array($common)) {
@@ -75,7 +75,7 @@ function content_to_plain_text(string $html): string
 // 0. 設定読み込み（config/config.api.php）
 // =====================
 
-$configFile = dirname(__DIR__) . '/config/config.api.php';
+$configFile = dirname(__DIR__) . '/config/config.api.php'; // api/ の1つ上 → config/
 if (!file_exists($configFile)) {
     respond_json(['status' => 'error', 'message' => 'config.api.php missing'], 500);
 }

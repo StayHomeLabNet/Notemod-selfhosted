@@ -18,7 +18,7 @@ if (file_exists($configFile)) {
 }
 
 // TIMEZONE（無ければ既定）
-$timezone = (string)($cfg['TIMEZONE'] ?? $cfg['timezone'] ?? (defined('APP_TIMEZONE') ? APP_TIMEZONE : 'Asia/Tokyo'));
+$timezone = (string)($cfg['TIMEZONE'] ?? $cfg['timezone'] ?? (defined('APP_TIMEZONE') ? APP_TIMEZONE : 'Pacific/Auckland'));
 if ($timezone === '') $timezone = 'Asia/Tokyo';
 @date_default_timezone_set($timezone);
 
