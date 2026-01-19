@@ -51,24 +51,62 @@ function respond_json(array $payload, int $statusCode = 200): void
 }
 
 // latest_note / get_note の pretty=2 用：HTMLっぽいcontentを「見た目の改行」に寄せたプレーンテキストへ
+// latest_note / get_note の pretty=2 用：HTMLっぽいcontentを「見た目の改行」に寄せたプレーンテキストへ
 function content_to_plain_text(string $html): string
 {
-    // 1) <br> を改行へ
-    $text = preg_replace('/<br\s*\/?>/i', "\n", $html);
+    $text = $html;
 
-    // 2) いくつかの閉じタグも改行扱い（必要最低限）
-    $text = preg_replace('/<\/(p|div|li|h[1-6])>/i', "\n", $text);
+    // data.json 由来で <\/div> みたいな形が来る場合があるので正規化
+    $text = str_replace('\\/', '/', $text);
 
-    // 3) タグを除去
+    // 改行コード統一
+    $text = preg_replace("/\r\n|\r/", "\n", $text);
+
+    // 末尾が <div><br></div>（Notemodの末尾改行表現）か判定しておく
+    $hadTrailingEmptyDiv = (bool)preg_match(
+        '/<div\b[^>]*>\s*<br\s*\/?>\s*<\/div>\s*$/i',
+        $text
+    );
+
+    // ★重要：<div><br></div> は「改行1つ」にする（2つにしない）
+    $text = preg_replace(
+        '/<div\b[^>]*>\s*<br\s*\/?>\s*<\/div>/i',
+        "\n",
+        $text
+    );
+
+    // <br> は改行
+    $text = preg_replace('/<br\s*\/?>/i', "\n", $text);
+
+    // <div> は「次の行の開始」扱い：改行へ
+    $text = preg_replace('/<div\b[^>]*>/i', "\n", $text);
+
+    // 閉じdivは消す（改行にしない）
+    $text = preg_replace('/<\/div>/i', '', $text);
+
+    // 最低限の他タグも保険で
+    $text = preg_replace('/<p\b[^>]*>/i', "\n", $text);
+    $text = preg_replace('/<\/p>/i', '', $text);
+
+    // タグ除去
     $text = strip_tags($text);
 
-    // 4) エンティティを戻す
+    // エンティティ戻し
     $text = html_entity_decode($text, ENT_QUOTES, 'UTF-8');
 
-    // 5) 改行コード統一
+    // 改行コード統一（再度）
     $text = preg_replace("/\r\n|\r|\n/", "\n", $text);
 
-    return trim($text);
+    // 先頭に \n が出がちなので1つだけ削る
+    $text = preg_replace("/^\n/", "", $text);
+
+    // 末尾が <div><br></div> 由来なら「改行1つ」に寄せる（\n\n になりがちなので）
+    if ($hadTrailingEmptyDiv) {
+        $text = preg_replace("/\n+$/", "\n", $text);
+    }
+
+    // trim() はしない（末尾改行は意味がある）
+    return $text;
 }
 
 // =====================
