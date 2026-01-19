@@ -22,8 +22,10 @@ iPhone と Windows PC 間のクリップボード連携を、iPhone と Mac 間�
 
 ## v1.1.0 の追加点
 
+- Web UIでの初期設定に対応
 - **Web UIでの認証機能**（BASIC認証を使用できないサーバーに対応）
 - Notemod のUIに **設定アイコン（歯車）** を追加（アカウント/認証情報）
+- `setup_auth.php` による **config.php** と **config.api.php** の自動生成に対応
 - `cleanup_api.php` で **ログファイル** と **バックアップファイル** の一括削除に対応
 - **PHP 8.1 以上が必要**
 - **PWA対応**（ホーム画面に追加してアプリっぽく使える）
@@ -39,6 +41,10 @@ iPhone と Windows PC 間のクリップボード連携を、iPhone と Mac 間�
 > （構成を変える場合は PHP 側のパス調整が必要です）
 
 ### 2. 設定ファイルを作成（重要）
+
+#### 設定ファイルの自動生成
+v1.1.0 で Web UI での 初期設定の際に自動的に生成されます。
+タイムゾーンやログのオン/オフ、バックアップファイル自動作成のオン/オフなどは、下記設定ファイルを編集してください。
 
 #### 共通設定
 `config/config.sample.php` または `config/config.sample.ja.php` を `config/config.php` にリネームし、以下を設定します  

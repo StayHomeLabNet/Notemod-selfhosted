@@ -32,7 +32,7 @@ return [
   
     // Optional: customize Notemod initial snapshot
     // (Must be stored as a JSON string)
-    'INITIAL_SNAPSHOT' => '{"categories":null,"hasSelectedLanguage":null,"notes":null,"selectedLanguage":null}',
+    // 'INITIAL_SNAPSHOT' => '{"categories":null,"hasSelectedLanguage":null,"notes":null,"selectedLanguage":null}',
 
     // Application secret used as a private value
     // (signing, encryption, fixed keys, etc.)

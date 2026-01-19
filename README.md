@@ -22,8 +22,10 @@ Make clipboard synchronization between an iPhone and a Windows PC as seamless as
 
 ## What’s new in v1.1.0
 
+- **Web UI Initial setup** added
 - **Web UI Authentication** (for servers where Basic Auth cannot be used)
 - **Settings (gear) icon** added to the Notemod UI (links to Account/Auth pages)
+- Added support for automatic creation of **config.php** and **config.api.php** by `setup_auth.php`
 - `cleanup_api.php` supports **bulk delete of log files** and **backup files**
 - **PHP 8.1+ required**
 - **PWA support** (Add to Home Screen / app-like usage)
@@ -40,12 +42,16 @@ Upload the repository into your public web directory (e.g. `public_html/`).
 
 ### 2) Create configuration files (IMPORTANT)
 
-#### Common settings
+#### Configuration files auto-generation
+In v1.1.0, it is automatically generated during the initial setup in the Web UI.
+To configure the time zone, enable or disable logging, and enable or disable automatic creation of backup files, please edit the configuration file below.
+
+#### Common settings (config.php)
 Rename `config/config.sample.php` to `config/config.php`, then configure:
 - Replace `CHANGE_ME_SECRET` with a long random string (16+ characters recommended)
 - Set `TIMEZONE` if needed
 
-#### API settings
+#### API settings (config.api.php)
 Rename `config/config.api.sample.php` to `config/config.api.php`, then configure:
 - Replace `CHANGE_ME_EXPECTED_TOKEN` with your token
 - Replace `CHANGE_ME_ADMIN_TOKEN` with a stronger token (recommended) used for cleanup operations
