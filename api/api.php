@@ -6,15 +6,19 @@
 // - category が無ければ INBOX
 // - 指定カテゴリが無ければ作成
 // - data.json へ追記
+//
+// ★改善点（今回）
+// - text の末尾改行を trim で消さない
+// - Notemod オリジナルに寄せた HTML形式で保存（１<div>２</div><div><br></div>...）
+//   → 末尾改行の数も忠実に保存できる
 
 require_once __DIR__ . '/../logger.php';
 
 // =====================
 // タイムゾーン設定（config/config.php から読む）
-// ※logger.php 側でも設定しているが、単体動作の保険としてここでも読む
 // =====================
 $tz = 'Pacific/Auckland';
-$cfgCommonFile = dirname(__DIR__) . '/config/config.php'; // api/ の1つ上 → config/
+$cfgCommonFile = dirname(__DIR__) . '/config/config.php';
 if (file_exists($cfgCommonFile)) {
     $common = require $cfgCommonFile;
     if (is_array($common)) {
@@ -33,7 +37,7 @@ function respond_json(array $payload, int $statusCode = 200): void
 
     $flags  = JSON_UNESCAPED_UNICODE;
     $pretty = $_GET['pretty'] ?? $_POST['pretty'] ?? '';
-    if ($pretty === '1' || strtolower($pretty) === 'true') {
+    if ($pretty === '1' || strtolower((string)$pretty) === 'true') {
         $flags |= JSON_PRETTY_PRINT;
     }
 
@@ -42,15 +46,66 @@ function respond_json(array $payload, int $statusCode = 200): void
 }
 
 // =====================
+// Notemod風の content 生成（末尾改行も保持）
+// =====================
+// 例:
+// "１\n２\n"     → "１<div>２</div><div><br></div>"
+// "１\n\n\n"     → "１<div><br></div><div><br></div><div><br></div>"
+// "\n１"         → "<div><br></div><div>１</div>"  （先頭改行も表現）
+function notemod_text_to_html_preserve_newlines(string $text): string
+{
+    // 改行統一（Windows/Mac混在対策）
+    $text = str_replace("\r\n", "\n", $text);
+    $text = str_replace("\r", "\n", $text);
+
+    // XSS対策（タグを無効化）
+    $escaped = htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+
+    // 行分割（末尾が \n でも explode は末尾の空要素を保持する）
+    $lines = explode("\n", $escaped);
+
+    // text 必須だが「改行だけ」も来る可能性があるので、判定用に生の内容を確認
+    // ここでは「完全に空（長さ0）」だけ弾く。改行だけは許可したいならOKのまま。
+    //（今回の要望は末尾改行保持なので、改行だけでも保存できた方が自然）
+    if ($text === '') {
+        return '';
+    }
+
+    // Notemodの実データに寄せる：
+    // - 1行目はそのまま（divで包まない）
+    // - 2行目以降は <div>...</div>
+    // - 空行は <div><br></div>
+    $out = '';
+
+    // 1行目
+    $first = $lines[0] ?? '';
+    if ($first === '') {
+        // 先頭が空行の場合も Notemod側の表現に寄せる
+        $out .= '<div><br></div>';
+    } else {
+        $out .= $first;
+    }
+
+    // 2行目以降
+    $count = count($lines);
+    for ($i = 1; $i < $count; $i++) {
+        $line = $lines[$i];
+        if ($line === '') {
+            $out .= '<div><br></div>';
+        } else {
+            $out .= '<div>' . $line . '</div>';
+        }
+    }
+
+    return $out;
+}
+
+// =====================
 // 0. 設定読み込み（config/config.api.php）
 // =====================
-
-$configFile = dirname(__DIR__) . '/config/config.api.php'; // api/ の1つ上 → config/
+$configFile = dirname(__DIR__) . '/config/config.api.php';
 if (!file_exists($configFile)) {
-    respond_json([
-        'status'  => 'error',
-        'message' => 'config.api.php missing',
-    ], 500);
+    respond_json(['status' => 'error', 'message' => 'config.api.php missing'], 500);
 }
 
 $cfg = require $configFile;
@@ -61,17 +116,12 @@ $notemodFile    = (string)($cfg['DATA_JSON'] ?? '');
 $defaultColor   = (string)($cfg['DEFAULT_COLOR'] ?? '3478bd');
 
 if ($EXPECTED_TOKEN === '' || $notemodFile === '') {
-    respond_json([
-        'status'  => 'error',
-        'message' => 'Server not configured (EXPECTED_TOKEN / DATA_JSON)',
-    ], 500);
+    respond_json(['status' => 'error', 'message' => 'Server not configured (EXPECTED_TOKEN / DATA_JSON)'], 500);
 }
 
 // =====================
 // 1. パラメータ正規化（大小文字吸収 + POST/GET統一）
 // =====================
-
-// POST(JSON)も来る可能性があるので一応対応
 $jsonBody = [];
 $ct = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
 if (stripos($ct, 'application/json') !== false) {
@@ -80,7 +130,6 @@ if (stripos($ct, 'application/json') !== false) {
     if (is_array($decoded)) $jsonBody = $decoded;
 }
 
-// GET/POST/JSON を小文字キーで統一（POST/JSONを優先）
 $params = array_change_key_case($_GET, CASE_LOWER);
 $params = $params + array_change_key_case($_POST, CASE_LOWER);
 $params = $params + array_change_key_case($jsonBody, CASE_LOWER);
@@ -88,58 +137,42 @@ $params = $params + array_change_key_case($jsonBody, CASE_LOWER);
 // =====================
 // 2. トークンチェック
 // =====================
-
 $token = (string)($params['token'] ?? '');
 if (!hash_equals($EXPECTED_TOKEN, $token)) {
-    respond_json([
-        'status'  => 'error',
-        'message' => 'Forbidden',
-    ], 403);
+    respond_json(['status' => 'error', 'message' => 'Forbidden'], 403);
 }
 
 // =====================
 // 3. パラメータ取得（text / title / category）
 // =====================
 
-$text          = trim((string)($params['text'] ?? ''));
+// ★trimしない（末尾改行を消さない）
+$textRaw       = (string)($params['text'] ?? '');
 $titleParam    = trim((string)($params['title'] ?? ''));
-$categoryParam = trim((string)($params['category'] ?? '')); // ← Category/categoryどちらでもOK
+$categoryParam = trim((string)($params['category'] ?? ''));
 
-if ($text === '') {
-    respond_json([
-        'status'  => 'error',
-        'message' => 'text is required',
-    ], 400);
+// 「完全に空」だけ弾く（改行だけは保存できるようにする）
+if ($textRaw === '') {
+    respond_json(['status' => 'error', 'message' => 'text is required'], 400);
 }
 
-// タイトル：指定がなければ「日付＋時間」
-$noteTitle = ($titleParam !== '') ? $titleParam : date('Y-m-d H:i:s');
-
-// カテゴリ名：指定がなければ "INBOX"
+$noteTitle    = ($titleParam !== '') ? $titleParam : date('Y-m-d H:i:s');
 $categoryName = ($categoryParam !== '') ? $categoryParam : 'INBOX';
 
 // =====================
 // 4. Notemod の data.json を読み込む
 // =====================
-
 if (!file_exists($notemodFile)) {
-    respond_json([
-        'status'  => 'error',
-        'message' => 'data.json not found',
-    ], 500);
+    respond_json(['status' => 'error', 'message' => 'data.json not found'], 500);
 }
 if (!is_readable($notemodFile) || !is_writable($notemodFile)) {
-    respond_json([
-        'status'  => 'error',
-        'message' => 'data.json not readable/writable',
-    ], 500);
+    respond_json(['status' => 'error', 'message' => 'data.json not readable/writable'], 500);
 }
 
 $json = file_get_contents($notemodFile);
 $data = json_decode($json, true);
 if (!is_array($data)) $data = [];
 
-// Notemodの保存形式が「JSON文字列」でも「配列」でも対応
 $categoriesVal = $data['categories'] ?? '[]';
 $notesVal      = $data['notes'] ?? '[]';
 
@@ -152,23 +185,19 @@ if (!is_array($notesArr)) $notesArr = [];
 // =====================
 // 5. categoryName のカテゴリーを探す or 作る
 // =====================
-
 $categoryId = null;
 
-// 大小文字を区別せずカテゴリ名一致（MEMO / memo 等を同一扱いにしたい場合）
 foreach ($categoriesArr as $cat) {
     $catName = (string)($cat['name'] ?? '');
     if ($catName !== '' && strcasecmp($catName, $categoryName) === 0) {
         $categoryId   = $cat['id'] ?? null;
-        $categoryName = $catName; // 既存表記に寄せる
+        $categoryName = $catName;
         break;
     }
 }
 
 if ($categoryId === null) {
-    // ミリ秒ID（カテゴリ用）
     $categoryId = (int)floor(microtime(true) * 1000);
-
     $categoriesArr[] = [
         'id'    => $categoryId,
         'name'  => $categoryName,
@@ -179,14 +208,15 @@ if ($categoryId === null) {
 // =====================
 // 6. ノートを1つ作成して追加
 // =====================
-
 $noteIdMs  = (int)floor(microtime(true) * 1000);
 $noteId    = (string)$noteIdMs;
-$createdAt = gmdate('Y-m-d\TH:i:s\Z'); // v(ミリ秒)非対応環境でも壊れない形
+$createdAt = gmdate('Y-m-d\TH:i:s\Z');
 
-// 改行を <br> に変換して保存（XSS対策）
-$safeText = htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
-$safeText = nl2br($safeText, false); // <br /> ではなく <br>
+// ★Notemod形式で保存（末尾改行も保持）
+$safeText = notemod_text_to_html_preserve_newlines($textRaw);
+if ($safeText === '') {
+    respond_json(['status' => 'error', 'message' => 'text is required'], 400);
+}
 
 $newNote = [
     'id'           => $noteId,
@@ -204,7 +234,6 @@ $notesArr[] = $newNote;
 // =====================
 // 7. そのカテゴリに属するノート数を数える
 // =====================
-
 $noteCountInCategory = 0;
 foreach ($notesArr as $n) {
     $cats = $n['categories'] ?? null;
@@ -216,8 +245,6 @@ foreach ($notesArr as $n) {
 // =====================
 // 8. data.json に書き戻す
 // =====================
-
-// 元の形式が文字列なら文字列に戻す（互換性維持）
 $data['categories'] = is_string($categoriesVal)
     ? json_encode($categoriesArr, JSON_UNESCAPED_UNICODE)
     : $categoriesArr;
@@ -233,16 +260,12 @@ $saveResult = file_put_contents(
 );
 
 if ($saveResult === false) {
-    respond_json([
-        'status'  => 'error',
-        'message' => 'failed to save data.json',
-    ], 500);
+    respond_json(['status' => 'error', 'message' => 'failed to save data.json'], 500);
 }
 
 // =====================
 // 9. 成功レスポンス
 // =====================
-
 respond_json([
     'status'   => 'ok',
     'category' => [
@@ -250,5 +273,5 @@ respond_json([
         'name'      => $categoryName,
         'noteCount' => $noteCountInCategory,
     ],
-    'note'     => $newNote,
+    'note' => $newNote,
 ]);
