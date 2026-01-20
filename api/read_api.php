@@ -8,9 +8,10 @@
 //   action=latest_note   → Logs カテゴリーは常に除外
 //   action=get_note      → category名 + title(ノート名) で1件取得
 //
-// pretty:
-//   pretty=1 : JSONを整形（pretty print）
-//   pretty=2 : （latest_note / get_note のみ）JSONではなく本文だけ（改行を見た目一致）で返す
+// pretty（仕様変更）:
+//   (指定なし) : デフォルトで「pretty=2」相当（latest_note / get_note は本文だけ text/plain）
+//   pretty=1 または pretty=true  : 可読性重視のJSON（pretty print）
+//   pretty=0 または pretty=false : 通常JSON（圧縮）
 //
 // 入力：
 //   GET / POST(form) / POST(JSON) を受け付ける
@@ -33,24 +34,47 @@ if (file_exists($cfgCommonFile)) {
 }
 date_default_timezone_set($tz);
 
-header('Content-Type: application/json; charset=utf-8');
+// =====================
+// pretty パラメータ解釈（仕様変更）
+// - 未指定: '2' 扱い（本文だけ返すデフォルト）
+// - 1/true : JSON pretty print
+// - 0/false: JSON compact
+// =====================
+function nm_param_pretty_mode(array $params): string
+{
+    if (!array_key_exists('pretty', $params)) {
+        return '2'; // ★デフォルトは pretty=2 相当
+    }
+    $v = trim((string)$params['pretty']);
 
-// 共通レスポンス関数（pretty対応）
-function respond_json(array $payload, int $statusCode = 200): void
+    if ($v === '') return '2';
+    $lv = strtolower($v);
+
+    if ($v === '2') return '2';
+    if ($v === '1' || $lv === 'true') return '1';
+    if ($v === '0' || $lv === 'false') return '0';
+
+    // 互換：想定外はデフォルト寄り（本文だけ）
+    return '2';
+}
+
+// 共通レスポンス関数（pretty=1/0 対応）
+function respond_json(array $payload, int $statusCode = 200, string $prettyMode = '0'): void
 {
     http_response_code($statusCode);
 
-    $flags  = JSON_UNESCAPED_UNICODE;
-    $pretty = $_GET['pretty'] ?? $_POST['pretty'] ?? '';
-    if ($pretty === '1' || strtolower($pretty) === 'true') {
+    $flags = JSON_UNESCAPED_UNICODE;
+
+    // pretty=1 / true のときだけ整形
+    if ($prettyMode === '1') {
         $flags |= JSON_PRETTY_PRINT;
     }
 
+    header('Content-Type: application/json; charset=utf-8');
     echo json_encode($payload, $flags);
     exit;
 }
 
-// latest_note / get_note の pretty=2 用：HTMLっぽいcontentを「見た目の改行」に寄せたプレーンテキストへ
 // latest_note / get_note の pretty=2 用：HTMLっぽいcontentを「見た目の改行」に寄せたプレーンテキストへ
 function content_to_plain_text(string $html): string
 {
@@ -75,8 +99,9 @@ function content_to_plain_text(string $html): string
         $text
     );
 
-    // <br> は改行
-    $text = preg_replace('/<br\s*\/?>/i', "\n", $text);
+    // <br> は改行（直後の空白/改行も一緒に吸収して二重改行を防ぐ）
+    // ※ Windows側で <br>\n が混ざると \n\n になりがちなので吸収
+    $text = preg_replace('/<br\s*\/?>[ \t]*\r?\n?/i', "\n", $text);
 
     // <div> は「次の行の開始」扱い：改行へ
     $text = preg_replace('/<div\b[^>]*>/i', "\n", $text);
@@ -115,7 +140,8 @@ function content_to_plain_text(string $html): string
 
 $configFile = dirname(__DIR__) . '/config/config.api.php'; // api/ の1つ上 → config/
 if (!file_exists($configFile)) {
-    respond_json(['status' => 'error', 'message' => 'config.api.php missing'], 500);
+    // ここでは params が未確定なので compact JSONで返す
+    respond_json(['status' => 'error', 'message' => 'config.api.php missing'], 500, '0');
 }
 
 $cfg = require $configFile;
@@ -128,7 +154,7 @@ if ($EXPECTED_TOKEN === '' || $notemodFile === '') {
     respond_json([
         'status'  => 'error',
         'message' => 'Server not configured (EXPECTED_TOKEN / DATA_JSON)',
-    ], 500);
+    ], 500, '0');
 }
 
 // =====================
@@ -154,6 +180,9 @@ $params = $getLower;
 $params = $postLower + $params;
 $params = $jsonLower + $params;
 
+// pretty mode（仕様変更）
+$prettyMode = nm_param_pretty_mode($params);
+
 // =====================
 // 2. トークンチェック
 // =====================
@@ -163,7 +192,7 @@ if (!hash_equals($EXPECTED_TOKEN, $token)) {
     respond_json([
         'status'  => 'error',
         'message' => 'Forbidden',
-    ], 403);
+    ], 403, $prettyMode === '1' ? '1' : '0');
 }
 
 // =====================
@@ -172,18 +201,15 @@ if (!hash_equals($EXPECTED_TOKEN, $token)) {
 
 $action = (string)($params['action'] ?? 'list_categories');
 
-// pretty=2 は latest_note/get_note のみで使う
-$prettyMode = (string)($params['pretty'] ?? '');
-
 // =====================
 // 4. data.json を読み込む
 // =====================
 
 if (!file_exists($notemodFile)) {
-    respond_json(['status' => 'error', 'message' => 'data.json not found'], 500);
+    respond_json(['status' => 'error', 'message' => 'data.json not found'], 500, $prettyMode === '1' ? '1' : '0');
 }
 if (!is_readable($notemodFile)) {
-    respond_json(['status' => 'error', 'message' => 'data.json not readable'], 500);
+    respond_json(['status' => 'error', 'message' => 'data.json not readable'], 500, $prettyMode === '1' ? '1' : '0');
 }
 
 $json = file_get_contents($notemodFile);
@@ -226,7 +252,7 @@ switch ($action) {
             'status'     => 'ok',
             'count'      => count($categoriesArr),
             'categories' => $categoriesArr,
-        ]);
+        ], 200, $prettyMode === '1' ? '1' : '0');
 
     // -----------------
     // ノート一覧
@@ -259,7 +285,7 @@ switch ($action) {
                     'count'   => 0,
                     'notes'   => [],
                     'message' => 'category not found',
-                ]);
+                ], 200, $prettyMode === '1' ? '1' : '0');
             }
         }
 
@@ -301,7 +327,6 @@ switch ($action) {
                 if (isset($note['content'])) {
                     $plain           = strip_tags((string)$note['content']);
                     $note['preview'] = mb_substr($plain, 0, 80, 'UTF-8');
-                    // unset($note['content']); // content を返したくない場合
                 }
             }
             unset($note);
@@ -311,7 +336,7 @@ switch ($action) {
             'status' => 'ok',
             'count'  => count($filtered),
             'notes'  => $filtered,
-        ]);
+        ], 200, $prettyMode === '1' ? '1' : '0');
     }
 
     // -----------------
@@ -333,11 +358,12 @@ switch ($action) {
                 }
             }
             if ($filterCategoryId === null) {
+                // デフォルト(=2)でも、latest_note の「カテゴリなし」は JSONで返す
                 respond_json([
                     'status'  => 'ok',
                     'content' => null,
                     'message' => 'category not found',
-                ]);
+                ], 200, $prettyMode === '1' ? '1' : '0');
             }
         }
 
@@ -347,7 +373,7 @@ switch ($action) {
                 'status'  => 'ok',
                 'content' => null,
                 'message' => 'Logs category is excluded',
-            ]);
+            ], 200, $prettyMode === '1' ? '1' : '0');
         }
 
         $filtered = [];
@@ -380,7 +406,7 @@ switch ($action) {
                 'status'  => 'ok',
                 'content' => null,
                 'message' => 'no notes found',
-            ]);
+            ], 200, $prettyMode === '1' ? '1' : '0');
         }
 
         usort($filtered, function ($a, $b) {
@@ -400,9 +426,9 @@ switch ($action) {
             );
         }
 
+        // ★デフォルトは pretty=2 相当 → 本文だけ返す
         if ($prettyMode === '2') {
             $plain = content_to_plain_text($latestContent);
-            header_remove('Content-Type');
             header('Content-Type: text/plain; charset=utf-8');
             http_response_code(200);
             echo $plain;
@@ -412,18 +438,13 @@ switch ($action) {
         respond_json([
             'status'  => 'ok',
             'content' => $latestContent,
-        ]);
+        ], 200, $prettyMode === '1' ? '1' : '0');
     }
 
     // -----------------
     // category名 + title(ノート名) でノート1件取得
     // -----------------
     case 'get_note': {
-        // 必須:
-        //   category=Shopping
-        //   title=xxx
-        //
-        // pretty=2 のときは本文だけ（改行見た目一致）で返す
         $categoryName = trim((string)($params['category'] ?? ''));
         $title        = trim((string)($params['title'] ?? ''));
 
@@ -431,7 +452,7 @@ switch ($action) {
             respond_json([
                 'status'  => 'error',
                 'message' => 'category and title are required',
-            ], 400);
+            ], 400, $prettyMode === '1' ? '1' : '0');
         }
 
         // category名 → ID を探す
@@ -448,7 +469,7 @@ switch ($action) {
                 'status'  => 'ok',
                 'note'    => null,
                 'message' => 'category not found',
-            ]);
+            ], 200, $prettyMode === '1' ? '1' : '0');
         }
 
         // ノート検索：title一致 かつ categories に categoryId が含まれる
@@ -465,7 +486,7 @@ switch ($action) {
                 continue;
             }
             $found = $note;
-            break; // 同名が複数あるなら最初の1件（必要なら最新にする実装も可能）
+            break;
         }
 
         if ($found === null) {
@@ -473,7 +494,7 @@ switch ($action) {
                 'status'  => 'ok',
                 'note'    => null,
                 'message' => 'note not found',
-            ]);
+            ], 200, $prettyMode === '1' ? '1' : '0');
         }
 
         $content = (string)($found['content'] ?? '');
@@ -487,9 +508,9 @@ switch ($action) {
             );
         }
 
+        // ★デフォルトは pretty=2 相当 → 本文だけ返す
         if ($prettyMode === '2') {
             $plain = content_to_plain_text($content);
-            header_remove('Content-Type');
             header('Content-Type: text/plain; charset=utf-8');
             http_response_code(200);
             echo $plain;
@@ -502,7 +523,7 @@ switch ($action) {
         respond_json([
             'status' => 'ok',
             'note'   => $found,
-        ]);
+        ], 200, $prettyMode === '1' ? '1' : '0');
     }
 
     // -----------------
@@ -512,5 +533,5 @@ switch ($action) {
         respond_json([
             'status'  => 'error',
             'message' => 'unknown action',
-        ], 400);
+        ], 400, $prettyMode === '1' ? '1' : '0');
 }
