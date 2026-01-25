@@ -745,13 +745,17 @@ async function syncLoadFromServer() {
 <button id="add-category-button"></button>
 <div class="settool">
 
+
 <div class="settings-wrap">
   <button id="settings">Settings</button>
 
+  <!-- カスタム設定アイコン -->
   <div id="settings_menu" class="settings-menu" role="menu" aria-hidden="true">
     <button id="logout">Logout</button>
     <button id="account">Account</button>
     <button id="setup_auth">Credentials</button>
+    <button id="log_settings">Log settings</button>
+    <button id="bak_settings">Backup settings</button>
   </div>
 </div>
 
@@ -896,6 +900,8 @@ settings:{AR:"الإعدادات",DE:"Einstellungen",EN:"Settings",ES:"Configura
 logout:{AR:"تسجيل الخروج",DE:"Abmelden",EN:"Logout",ES:"Cerrar sesión",FA:"خروج",FR:"Se déconnecter",HI:"लॉग आउट",ID:"Keluar",IT:"Disconnetti",JA:"ログアウト",KO:"로그아웃",SW:"Ondoka",PL:"Wyloguj",PT:"Sair",RU:"Выйти",VI:"Đăng xuất",TR:"Çıkış yap",UR:"لاگ آؤٹ",UZ:"Chiqish",ZH:"退出登录",NL:"Uitloggen",SV:"Logga ut",EL:"Αποσύνδεση",CS:"Odhlásit se",HU:"Kijelentkezés",RO:"Deconectare",BG:"Изход",DA:"Log ud",FI:"Kirjaudu ulos",SL:"Odjava"},
 account:{AR:"الحساب",DE:"Konto",EN:"Account",ES:"Cuenta",FA:"حساب",FR:"Compte",HI:"खाता",ID:"Akun",IT:"Account",JA:"アカウント",KO:"계정",SW:"Akaunti",PL:"Konto",PT:"Conta",RU:"Аккаунт",VI:"Tài khoản",TR:"Hesap",UR:"اکاؤنٹ",UZ:"Hisob",ZH:"账户",NL:"Account",SV:"Konto",EL:"Λογαριασμός",CS:"Účet",HU:"Fiók",RO:"Cont",BG:"Акаунт",DA:"Konto",FI:"Tili",SL:"Račun"},
 setup_auth:{AR:"إعدادات المصادقة",DE:"Authentifizierungseinstellungen",EN:"Authentication settings",ES:"Configuración de autenticación",FA:"تنظیمات احراز هویت",FR:"Paramètres d’authentification",HI:"प्रमाणीकरण सेटिंग्स",ID:"Pengaturan autentikasi",IT:"Impostazioni di autenticazione",JA:"認証設定",KO:"인증 설정",SW:"Mipangilio ya uthibitishaji",PL:"Ustawienia uwierzytelniania",PT:"Configurações de autenticação",RU:"Настройки аутентификации",VI:"Cài đặt xác thực",TR:"Kimlik doğrulama ayarları",UR:"توثیق کی ترتیبات",UZ:"Autentifikatsiya sozlamalari",ZH:"认证设置",NL:"Authenticatie-instellingen",SV:"Autentiseringsinställningar",EL:"Ρυθμίσεις αυθεντικοποίησης",CS:"Nastavení ověřování",HU:"Hitelesítési beállítások",RO:"Setări de autentificare",BG:"Настройки за автентикация",DA:"Autentificeringsindstillinger",FI:"Todennusasetukset",SL:"Nastavitve preverjanja pristnosti"},
+log_settings:{AR:"إعدادات السجل",DE:"Protokolleinstellungen",EN:"Log settings",ES:"Configuración de registros",FA:"تنظیمات لاگ",FR:"Paramètres des journaux",HI:"लॉग सेटिंग्स",ID:"Pengaturan log",IT:"Impostazioni log",JA:"ログ設定",KO:"로그 설정",SW:"Mipangilio ya logi",PL:"Ustawienia logów",PT:"Configurações de log",RU:"Настройки журнала",VI:"Cài đặt nhật ký",TR:"Günlük ayarları",UR:"لاگ سیٹنگز",UZ:"Log sozlamalari",ZH:"日志设置",NL:"Loginstellingen",SV:"Logginställningar",EL:"Ρυθμίσεις καταγραφής",CS:"Nastavení protokolu",HU:"Naplóbeállítások",RO:"Setări jurnal",BG:"Настройки на логовете",DA:"Logindstillinger",FI:"Lokiasetukset",SL:"Nastavitve dnevnika"},
+bak_settings:{AR:"إعدادات النسخ الاحتياطي",DE:"Backup-Einstellungen",EN:"Backup settings",ES:"Configuración de copia de seguridad",FA:"تنظیمات پشتیبان‌گیری",FR:"Paramètres de sauvegarde",HI:"बैकअप सेटिंग्स",ID:"Pengaturan cadangan",IT:"Impostazioni di backup",JA:"バックアップ設定",KO:"백업 설정",SW:"Mipangilio ya chelezo",PL:"Ustawienia kopii zapasowej",PT:"Configurações de backup",RU:"Настройки резервного копирования",VI:"Cài đặt sao lưu",TR:"Yedekleme ayarları",UR:"بیک اپ سیٹنگز",UZ:"Zaxira sozlamalari",ZH:"备份设置",NL:"Back-upinstellingen",SV:"Säkerhetskopieringsinställningar",EL:"Ρυθμίσεις αντιγράφων ασφαλείας",CS:"Nastavení zálohování",HU:"Biztonsági mentés beállításai",RO:"Setări de backup",BG:"Настройки за архивиране",DA:"Backupindstillinger",FI:"Varmuuskopioinnin asetukset",SL:"Nastavitve varnostne kopije"},
 reading_mode:{AR:"وضع القراءة",DE:"Lesemodus",EN:"Reading mode",ES:"Modo de lectura",FA:"حالت خواندن",FR:"Mode lecture",HI:"रीडिंग मोड",ID:"Mode membaca",IT:"Modalità lettura",JA:"リーディングモード",KO:"읽기 모드",SW:"Mpango wa kusoma",PL:"Tryb czytania",PT:"Modo de leitura",RU:"Режим чтения",VI:"Chế độ đọc",TR:"Okuma modu",UR:"پڑھنے کا طریقہ",UZ:"O'qish rejimi",ZH:"阅读模式",NL:"Leesmodus",SV:"Läsläge",EL:"Λειτουργία ανάγνωσης",CS:"Režim čtení",HU:"Olvasási mód",RO:"Mod de citire",BG:"Режим на четене",DA:"Læsetilstand",FI:"Lukutila",SL:"Način branja"},
 today:{AR:"اليوم",DE:"Heute",EN:"Today",ES:"Hoy",FA:"امروز",FR:"Aujourd'hui",HI:"आज",ID:"Hari ini",IT:"Oggi",JA:"今日",KO:"오늘",SW:"Leo",PL:"Dzisiaj",PT:"Hoje",RU:"Сегодня",VI:"Hôm nay",TR:"Bugün",UR:"آج",UZ:"Bugun",ZH:"今天",NL:"Vandaag",SV:"Idag",EL:"Σήμερα",CS:"Dnes",HU:"Ma",RO:"Astăzi",BG:"Днес",DA:"I dag",FI:"Tänään",SL:"Danes"},
 tomorrow:{AR:"غدًا",DE:"Morgen",EN:"Tomorrow",ES:"Mañana",FA:"فردا",FR:"Demain",HI:"कल",ID:"Besok",IT:"Domani",JA:"明日",KO:"내일",SW:"Kesho",PL:"Jutro",PT:"Amanhã",RU:"Завтра",VI:"Ngày mai",TR:"Yarın",UR:"کل",UZ:"Ertaga",ZH:"明天",NL:"Morgen",SV:"I morgon",EL:"Αύριο",CS:"Zítra",HU:"Holnap",RO:"Mâine",BG:"Утре",DA:"I morgen",FI:"Huomenna",SL:"Jutri"},
@@ -1003,6 +1009,8 @@ const buttonRules = {
 'logout':{content:`"${translate("logout")}"`,top:'-37px',left:'-4px',transform:'none'},
 'account':{content:`"${translate("account")}"`,top:'-37px',left:'-4px',transform:'none'},
 'setup_auth':{content:`"${translate("setup_auth")}"`,top:'-37px',left:'-4px',transform:'none'},
+'log_settings':{content:`"${translate("log_settings")}"`,top:'-37px',left:'-4px',transform:'none'},
+'bak_settings':{content:`"${translate("bak_settings")}"`,top:'-37px',left:'-4px',transform:'none'},
 'omod_toggle':{content:`"${translate("reading_mode")}"!important`,right:'-6px',transform:'none',left:'auto'}
 };
 const editorButtons = {'h1':translate("heading_1"),'h2':translate("heading_2"),'bold':translate("bold"),'italic':translate("italic"),'list-ul':translate("bulleted_list"),'list-ol':translate("numbered_list"),'strike':translate("strikethrough"),'left':translate("align_left"),'center':translate("align_center"),'right':translate("align_right"),'erase':translate("remove_formatting"),'horizontalrule':translate("horizontal_line"),'link':translate("add_link"),'unlink':translate("remove_link"),'html':translate("add_html"),'table':translate("add_table"),'select':translate("select_all"),'kucult':translate("decrease_font_size"),'buyut':translate("increase_font_size"),'undo':translate("undo"),'redo':translate("redo"),'copy':translate("custom_copy"),'paste':translate("custom_paste")};
@@ -3626,6 +3634,14 @@ document.getElementById('setup_auth')?.addEventListener('click', () => {
   location.href = './setup_auth.php';
 });
 
+document.getElementById('log_settings')?.addEventListener('click', () => {
+  location.href = './log_settings.php';
+});
+
+document.getElementById('bak_settings')?.addEventListener('click', () => {
+  location.href = './bak_settings.php';
+});
+
 function nmT(key){
   try{
     if (typeof translate === 'function') return translate(key);
@@ -3637,10 +3653,14 @@ function nmUpdateSettingsMenuLabels(){
   const bLogout  = document.getElementById('logout');
   const bAccount = document.getElementById('account');
   const bCred    = document.getElementById('setup_auth');
+  const bLogset    = document.getElementById('log_settings');
+  const bBakset    = document.getElementById('bak_settings');
 
   if (bLogout)  bLogout.textContent  = nmT('logout');
   if (bAccount) bAccount.textContent = nmT('account');
   if (bCred)    bCred.textContent    = nmT('setup_auth');
+  if (bLogset)  bLogset.textContent  = nmT('log_settings');
+  if (bBakset)  bBakset.textContent  = nmT('bak_settings');
 }
 
 

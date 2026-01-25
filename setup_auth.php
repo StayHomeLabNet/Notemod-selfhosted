@@ -7,6 +7,9 @@ require_once __DIR__ . '/auth_common.php';
  * - auth.php が無い初回: 誰でもアクセス可（初期ユーザー作成 + SECRET追記 + APIトークン設定OK）
  * - auth.php がある運用中: ページ自体は見れるが、未ログイン時は APIトークンは伏字＆編集不可
  * - 運用中でログイン済み: APIトークン編集可
+ *
+ * 追加要望:
+ * - account.php と同じように、ログイン中のユーザー名を表示（他の機能はそのまま）
  */
 
 // --------------------
@@ -37,6 +40,10 @@ $t = [
     'title' => '初期セットアップ',
     'desc'  => 'Notemod-selfhosted のログイン用ユーザー/パスワードを作成します。',
     'desc2' => 'さらに、API用トークンと config/config.php の SECRET をセットできます。',
+
+    // ★追加（ログイン中ユーザー表示）
+    'logged_as' => 'ログイン中:',
+
     'username' => 'ユーザー名',
     'password' => 'パスワード（10文字以上）',
     'password2'=> 'パスワード（再入力）',
@@ -76,6 +83,10 @@ $t = [
     'title' => 'Initial Setup',
     'desc'  => 'Create username/password for Notemod-selfhosted login.',
     'desc2' => 'You can also set API tokens and SECRET in config/config.php.',
+
+    // ★追加（ログイン中ユーザー表示）
+    'logged_as' => 'Logged in as:',
+
     'username' => 'Username',
     'password' => 'Password (min 10 chars)',
     'password2'=> 'Repeat password',
@@ -185,6 +196,19 @@ function nm_ensure_secret_in_config(string $configDir, string $configPath, bool 
           . "    // Optional: customize Notemod initial snapshot\n"
           . "    // (Must be stored as a JSON string)\n"
           . "    // 'INITIAL_SNAPSHOT' => '{\"categories\":null,\"hasSelectedLanguage\":null,\"notes\":null,\"selectedLanguage\":null}',\n\n"
+          . "    // Initial IP Access Notification (Email)\n"
+          . "    'IP_ALERT_ENABLED' => true,                      // Enable: true\n"
+          . "    'IP_ALERT_TO'      => 'YOUR_EMAIL', // Send To:\n"
+          . "    'IP_ALERT_FROM' => 'notemod@localhost',    // Recipient: Optional (if configurable)\n"
+          . "    'IP_ALERT_SUBJECT' => 'Notemod: First-time IP access', // Email subject\n"
+          . "    'IP_ALERT_IGNORE_BOTS' => true,                  // Ignore user agents that are likely bots\n"
+          . "    'IP_ALERT_IGNORE_IPS' => [''],                   // Exclude your own fixed IP addresses, etc.\n"
+          . "    // 'IP_ALERT_STORE' => __DIR__ . '/../notemod-data/_known_ips.json', // Optional\n\n"
+          . "    // 0 = No limit (do nothing)\n"
+          . "    // Example: Monthly raw logs (access-YYYY-MM.log) — up to 2,000 lines\n"
+          . "    // Notemod Logs — Notes limited to 50 lines\n"
+          . "    'LOGGER_FILE_MAX_LINES' => 500,\n"
+          . "    'LOGGER_NOTEMOD_MAX_LINES' => 50,\n\n"
           . "    // Application secret used as a private value\n"
           . "    // (signing, encryption, fixed keys, etc.)\n"
           . "    // If not specified, setup_auth.php will append it automatically\n"
@@ -264,7 +288,8 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $exp
              . "    // Example: use 'data.json.bak-' if you want that format\n"
              . "    // Do NOT change this if you want ClipboardSender\n"
              . "    // to bulk-delete backup files\n"
-             . "    'CLEANUP_BACKUP_SUFFIX'  => '.bak-',\n"
+             . "    'CLEANUP_BACKUP_SUFFIX' => '.bak-',\n"
+             . "    'CLEANUP_BACKUP_KEEP' => 10,"
              . "];\n";
 
         $ok = @file_put_contents($configApiPath, $tpl, LOCK_EX);
@@ -322,6 +347,20 @@ $already = file_exists($authPath);
 
 // 重要：nm_auth_is_logged_in() は session_start 後で正しく判定できる前提
 $isLoggedIn = function_exists('nm_auth_is_logged_in') ? (bool)nm_auth_is_logged_in() : false;
+
+// ★追加：ログイン中ユーザー名（ログイン中のみ表示）
+$loggedUser = '';
+if ($isLoggedIn) {
+    $loggedUser = (string)($_SESSION['nm_user'] ?? '');
+    if ($loggedUser === '' && function_exists('nm_auth_load')) {
+        try {
+            $ac = nm_auth_load();
+            $loggedUser = (string)($ac['USERNAME'] ?? '');
+        } catch (Throwable $e) {
+            $loggedUser = '';
+        }
+    }
+}
 
 // 初回セットアップ（auth無し）は編集OK、auth有りの場合はログイン時のみ編集OK
 $canEditTokens  = (!$already) || $isLoggedIn;
@@ -480,6 +519,8 @@ if ($secretInfo === '') {
       background:linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent);
       border-bottom:1px solid var(--line);
       display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
+      padding-right:120px; /* トグルと干渉しにくく */
+      padding-bottom:10px;
     }
     .title{ font-weight:900; letter-spacing:.3px; }
     .meta{ color:var(--muted); font-size:13px; margin-top:6px; }
@@ -505,10 +546,8 @@ if ($secretInfo === '') {
       border-color: color-mix(in srgb, var(--accent) 70%, transparent);
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
     }
-    input[disabled]{
-      opacity:.75;
-      cursor:not-allowed;
-    }
+    input[disabled]{ opacity:.75; cursor:not-allowed; }
+
     .btn{
       border:none; border-radius:14px;
       padding:12px 14px;
@@ -596,6 +635,7 @@ if ($secretInfo === '') {
     }
     @media (max-width: 600px){
       .toggles{ top:6px; right:6px; transform: scale(.80); }
+      .head{ padding-right:18px; }
     }
 
     .row-links{ display:flex; gap:12px; flex-wrap:wrap; }
@@ -627,7 +667,15 @@ if ($secretInfo === '') {
       <div class="head">
         <div>
           <div class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></div>
-          <div class="meta"><?=htmlspecialchars($t[$lang]['desc'], ENT_QUOTES, 'UTF-8')?><br><?=htmlspecialchars($t[$lang]['desc2'], ENT_QUOTES, 'UTF-8')?></div>
+
+          <div class="meta">
+            <?=htmlspecialchars($t[$lang]['desc'], ENT_QUOTES, 'UTF-8')?><br>
+            <?=htmlspecialchars($t[$lang]['desc2'], ENT_QUOTES, 'UTF-8')?>
+
+            <?php if ($isLoggedIn && $loggedUser !== ''): ?>
+              <br><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($loggedUser, ENT_QUOTES, 'UTF-8')?></b>
+            <?php endif; ?>
+          </div>
         </div>
       </div>
 
