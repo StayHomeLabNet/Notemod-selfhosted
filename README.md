@@ -1,4 +1,4 @@
-# Notemod-selfhosted (v1.1.0)
+# Notemod-selfhosted (v1.1.6)
 
 A self-hosted, API-driven fork of **[Notemod](https://github.com/orayemre/Notemod)** (MIT License), designed to run on simple shared hosting (no DB required) and integrate with external tools (iPhone Shortcuts, Windows apps, scripts, etc.).
 
@@ -19,6 +19,14 @@ Make clipboard synchronization between an iPhone and a Windows PC as seamless as
 - Running an iPhone Shortcut fetches that text so it can be pasted on iPhone
 
 ---
+
+## What’s new in v1.1.6
+
+- Added log settings and backup settings to the Web UI.
+- Added an email notification feature for first-time IP access (a notification is sent by email when access is made from a new IP address).
+- With this update, **config.php** and **config.api.php** can now be changed through the Web UI.
+  - For modifications that may require changing source code, such as altering data file paths, please edit **config.php** and **config.api.php** directly.
+  
 
 ## What’s new in v1.1.0
 

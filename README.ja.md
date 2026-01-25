@@ -1,4 +1,4 @@
-# Notemod-selfhosted（改造版 Notemod）v1.1.0
+# Notemod-selfhosted（改造版 Notemod）v1.1.6
 
 これは **[Notemod（本家）](https://github.com/orayemre/Notemod)**（MIT License）をベースに、**共用サーバーでも動く自己ホスト型メモ基盤**として拡張したフォークです（DB不要）。  
 データベースを使わないため、ウェブサーバーにアップロードして設定ファイルを用意すればすぐ使えます。
@@ -19,6 +19,14 @@ iPhone と Windows PC 間のクリップボード連携を、iPhone と Mac 間�
 - iPhone のショートカットを実行すると、そのテキストが iPhone でペーストできる
 
 ---
+
+## v1.1.6 の追加点
+
+- Web UI にログ設定とバックアップ設定を追加
+- メールによる初回IPアクセス通知機能を追加（初めてのIPアドレスからアクセスがあった場合、メールで通知）
+- 今回のアップデートにより、**config.php** と **config.api.php** の編集は、Web UI で可能になりました
+  - データファイルのパスの変更など、ソースコードの改変が伴う可能性のある改造は **config.php** と **config.api.php** を編集してください。
+
 
 ## v1.1.0 の追加点
 
