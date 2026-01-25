@@ -205,7 +205,7 @@ function nm_ensure_secret_in_config(string $configDir, string $configPath, bool 
           . "    'IP_ALERT_IGNORE_IPS' => [''],                   // Exclude your own fixed IP addresses, etc.\n"
           . "    // 'IP_ALERT_STORE' => __DIR__ . '/../notemod-data/_known_ips.json', // Optional\n\n"
           . "    // 0 = No limit (do nothing)\n"
-          . "    // Example: Monthly raw logs (access-YYYY-MM.log) — up to 2,000 lines\n"
+          . "    // Example: Monthly raw logs (access-YYYY-MM.log) — up to 500 lines\n"
           . "    // Notemod Logs — Notes limited to 50 lines\n"
           . "    'LOGGER_FILE_MAX_LINES' => 500,\n"
           . "    'LOGGER_NOTEMOD_MAX_LINES' => 50,\n\n"
@@ -289,7 +289,7 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $exp
              . "    // Do NOT change this if you want ClipboardSender\n"
              . "    // to bulk-delete backup files\n"
              . "    'CLEANUP_BACKUP_SUFFIX' => '.bak-',\n"
-             . "    'CLEANUP_BACKUP_KEEP' => 10,"
+             . "    'CLEANUP_BACKUP_KEEP' => 10,\n\n"
              . "];\n";
 
         $ok = @file_put_contents($configApiPath, $tpl, LOCK_EX);
