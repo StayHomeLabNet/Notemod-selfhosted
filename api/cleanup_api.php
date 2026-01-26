@@ -1,6 +1,11 @@
 <?php
 // cleanup_api.php
 // 指定カテゴリのノートを全削除（危険操作：POST専用 + confirm必須 + dry_runあり + backup任意）
+//
+// dry_run:
+//   0 = 実行（削除する）※ confirm=YES 必須
+//   1 = 実行しない（対象一覧/詳細を返す）
+//   2 = 実行しない（対象「数」だけ返す）← NEW
 
 require_once __DIR__ . '/../logger.php';
 
@@ -105,26 +110,33 @@ $TARGET_CATEGORY_NAME_DEFAULT = 'INBOX';
 
 $categoryName = trim((string)($params['category'] ?? $TARGET_CATEGORY_NAME_DEFAULT));
 $confirm      = trim((string)($params['confirm'] ?? ''));
-$dryRun       = trim((string)($params['dry_run'] ?? '0'));
+$dryRunRaw    = trim((string)($params['dry_run'] ?? '0'));
 
 $purgeBak     = trim((string)($params['purge_bak'] ?? $params['delete_bak'] ?? '0'));
 $purgeLog     = trim((string)($params['purge_log'] ?? '0'));
 
-$dryRunBool   = ($dryRun === '1' || strtolower($dryRun) === 'true');
 $purgeBakBool = ($purgeBak === '1' || strtolower($purgeBak) === 'true');
 $purgeLogBool = ($purgeLog === '1' || strtolower($purgeLog) === 'true');
 
-// confirm が無いと実行しない（dry_runはOK）
+// dry_run モード判定（NEW）
+// - 'true' は 1 扱い
+$dryRunMode = 0;
+if ($dryRunRaw === '2') $dryRunMode = 2;
+elseif ($dryRunRaw === '1' || strtolower($dryRunRaw) === 'true') $dryRunMode = 1;
+$dryRunBool = ($dryRunMode > 0);
+
+// confirm が無いと実行しない（dry_run=1/2 はOK）
 if (!$dryRunBool && $confirm !== 'YES') {
     respond_json([
         'status'  => 'error',
-        'message' => 'This is a destructive action. Add confirm=YES (or use dry_run=1).',
+        'message' => 'This is a destructive action. Add confirm=YES (or use dry_run=1/2).',
     ], 400);
 }
 
 // =====================
 // 追加機能：notemod-data 内の bak ファイル全削除（purge_bak=1）
-// - このモードのときだけここで処理して exit
+// - dry_run=1: 対象一覧
+// - dry_run=2: 対象数のみ（NEW）
 // =====================
 if ($purgeBakBool) {
 
@@ -151,11 +163,21 @@ if ($purgeBakBool) {
     }
 
     if ($dryRunBool) {
+        if ($dryRunMode === 2) {
+            respond_json([
+                'status'  => 'ok',
+                'message' => 'dry run (count only) - purge_bak would delete files',
+                'dir'     => $dir,
+                'dry_run' => 2,
+                'count'   => count($targets),
+            ]);
+        }
+
         respond_json([
             'status'  => 'ok',
             'message' => 'dry run - purge_bak would delete these files',
             'dir'     => $dir,
-            'dry_run' => true,
+            'dry_run' => 1,
             'count'   => count($targets),
             'files'   => $targets,
         ]);
@@ -186,9 +208,8 @@ if ($purgeBakBool) {
 
 // =====================
 // 追加機能：logs フォルダー内の .log ファイル全削除（purge_log=1）
-// - LOGGER_LOGS_DIRNAME を config/config.php から参照
-// - 未指定なら logger.php と同じ決め方：baseRoot + 'logs'
-// - このモードのときだけここで処理して exit
+// - dry_run=1: 対象一覧
+// - dry_run=2: 対象数のみ（NEW）
 // =====================
 if ($purgeLogBool) {
 
@@ -233,11 +254,21 @@ if ($purgeLogBool) {
     }
 
     if ($dryRunBool) {
+        if ($dryRunMode === 2) {
+            respond_json([
+                'status'  => 'ok',
+                'message' => 'dry run (count only) - purge_log would delete files',
+                'dir'     => $logsDir,
+                'dry_run' => 2,
+                'count'   => count($targets),
+            ]);
+        }
+
         respond_json([
             'status'  => 'ok',
             'message' => 'dry run - purge_log would delete these files',
             'dir'     => $logsDir,
-            'dry_run' => true,
+            'dry_run' => 1,
             'count'   => count($targets),
             'files'   => $targets,
         ]);
@@ -305,12 +336,22 @@ foreach ($categoriesArr as $cat) {
 }
 
 if ($categoryId === null) {
+    // dry_run=2 なら「数だけ」に寄せる
+    if ($dryRunMode === 2) {
+        respond_json([
+            'status'  => 'ok',
+            'message' => 'category not found',
+            'dry_run' => 2,
+            'count'   => 0,
+        ]);
+    }
+
     respond_json([
         'status'   => 'ok',
         'message'  => 'category not found',
         'category' => $categoryName,
         'deleted'  => 0,
-        'dry_run'  => $dryRunBool,
+        'dry_run'  => $dryRunBool ? 1 : 0,
     ]);
 }
 
@@ -332,12 +373,23 @@ foreach ($notesArr as $note) {
 }
 
 if ($dryRunBool) {
+    // dry_run=2: 数だけ返す（NEW）
+    if ($dryRunMode === 2) {
+        respond_json([
+            'status'  => 'ok',
+            'message' => 'dry run (count only) - nothing deleted',
+            'dry_run' => 2,
+            'count'   => $deletedCount,
+        ]);
+    }
+
+    // dry_run=1: 従来どおり（※このAPIは「一覧」ではなく、削除数などの詳細を返す）
     respond_json([
         'status'   => 'ok',
         'message'  => 'dry run - nothing deleted',
         'category' => ['name' => $resolvedCategoryName, 'id' => $categoryId],
         'deleted'  => $deletedCount,
-        'dry_run'  => true,
+        'dry_run'  => 1,
         'backup'   => ['enabled' => $backupEnabled],
     ]);
 }
@@ -379,7 +431,7 @@ $out = [
     'message'  => 'deleted notes in category',
     'category' => ['name' => $resolvedCategoryName, 'id' => $categoryId],
     'deleted'  => $deletedCount,
-    'dry_run'  => false,
+    'dry_run'  => 0,
     'backup'   => [
         'enabled' => $backupEnabled,
     ],
