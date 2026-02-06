@@ -26,7 +26,7 @@ Make clipboard synchronization between an iPhone and a Windows PC as seamless as
 - Added an email notification feature for first-time IP access (a notification is sent by email when access is made from a new IP address).
 - With this update, **config.php** and **config.api.php** can now be changed through the Web UI.
   - For modifications that may require changing source code, such as altering data file paths, please edit **config.php** and **config.api.php** directly.
-  
+- Add backup settings and log settings to the settings icon (gear).
 
 ## What’s new in v1.1.0
 
