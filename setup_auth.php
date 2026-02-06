@@ -205,7 +205,7 @@ function nm_ensure_secret_in_config(string $configDir, string $configPath, bool 
           . "    'IP_ALERT_IGNORE_IPS' => [''],                   // Exclude your own fixed IP addresses, etc.\n"
           . "    // 'IP_ALERT_STORE' => __DIR__ . '/../notemod-data/_known_ips.json', // Optional\n\n"
           . "    // 0 = No limit (do nothing)\n"
-          . "    // Example: Monthly raw logs (access-YYYY-MM.log) — up to 500 lines\n"
+          . "    // Example: Monthly raw logs (access-YYYY-MM.log) — up to 2,000 lines\n"
           . "    // Notemod Logs — Notes limited to 50 lines\n"
           . "    'LOGGER_FILE_MAX_LINES' => 500,\n"
           . "    'LOGGER_NOTEMOD_MAX_LINES' => 50,\n\n"
@@ -289,7 +289,7 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $exp
              . "    // Do NOT change this if you want ClipboardSender\n"
              . "    // to bulk-delete backup files\n"
              . "    'CLEANUP_BACKUP_SUFFIX' => '.bak-',\n"
-             . "    'CLEANUP_BACKUP_KEEP' => 10,\n\n"
+             . "    'CLEANUP_BACKUP_KEEP' => 10,"
              . "];\n";
 
         $ok = @file_put_contents($configApiPath, $tpl, LOCK_EX);
@@ -641,6 +641,22 @@ if ($secretInfo === '') {
     .row-links{ display:flex; gap:12px; flex-wrap:wrap; }
     .row-links a{ font-size:13px; color:var(--accent); }
   </style>
+  <script>
+  // Notemod main language -> custom pages (JA only, otherwise EN)
+  (function(){
+    try{
+      var p = new URLSearchParams(window.location.search);
+      if (p.has('lang')) return;
+      var sl = null;
+      try { sl = localStorage.getItem('selectedLanguage'); } catch(e) {}
+      var lang = (sl === 'JA') ? 'ja' : 'en';
+      p.set('lang', lang);
+      var newUrl = window.location.pathname + '?' + p.toString() + window.location.hash;
+      window.location.replace(newUrl);
+    }catch(e){}
+  })();
+  </script>
+
 </head>
 <body>
   <div class="wrap">
@@ -680,7 +696,13 @@ if ($secretInfo === '') {
       </div>
 
       <div class="body">
-        <?php if ($msg): ?><div class="notice ok"><?=htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
+        
+        <div class="row-links body-top-right" style="justify-content:flex-end; margin:-2px 0 14px;">
+          <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8')?></a>
+          <a href="<?=htmlspecialchars($loginUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_login'], ENT_QUOTES, 'UTF-8')?></a>
+          <a href="<?=htmlspecialchars($accountUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_account'], ENT_QUOTES, 'UTF-8')?></a>
+        </div>
+<?php if ($msg): ?><div class="notice ok"><?=htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
         <?php if ($err): ?><div class="notice bad"><?=htmlspecialchars($err, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
 
         <div class="box">

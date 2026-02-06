@@ -587,6 +587,22 @@ $backUrl = nm_ui_url('/');
       color:var(--text);
     }
   </style>
+  <script>
+  // Notemod main language -> custom pages (JA only, otherwise EN)
+  (function(){
+    try{
+      var p = new URLSearchParams(window.location.search);
+      if (p.has('lang')) return;
+      var sl = null;
+      try { sl = localStorage.getItem('selectedLanguage'); } catch(e) {}
+      var lang = (sl === 'JA') ? 'ja' : 'en';
+      p.set('lang', lang);
+      var newUrl = window.location.pathname + '?' + p.toString() + window.location.hash;
+      window.location.replace(newUrl);
+    }catch(e){}
+  })();
+  </script>
+
 </head>
 <body>
   <div class="wrap">
@@ -624,7 +640,11 @@ $backUrl = nm_ui_url('/');
       </div>
 
       <div class="body">
-        <?php if ($msg): ?><div class="notice ok"><?=htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
+        
+        <div class="row-links body-top-right" style="justify-content:flex-end; margin:-2px 0 14px;">
+          <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8')?></a>
+        </div>
+<?php if ($msg): ?><div class="notice ok"><?=htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
         <?php if ($err): ?><div class="notice bad"><?=htmlspecialchars($err, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
 
         <?php if (!$canEdit): ?>

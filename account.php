@@ -304,11 +304,29 @@ $backUrl   = rtrim($base, '/') . '/';
       border:1px solid color-mix(in srgb, var(--line) 120%, transparent);
       text-decoration:none;
     }
+    .action-row.bottom-left{ justify-content:flex-start; }
+
     .action-row a:hover{
       text-decoration:none;
       filter: brightness(1.02);
     }
   </style>
+  <script>
+  // Notemod main language -> custom pages (JA only, otherwise EN)
+  (function(){
+    try{
+      var p = new URLSearchParams(window.location.search);
+      if (p.has('lang')) return;
+      var sl = null;
+      try { sl = localStorage.getItem('selectedLanguage'); } catch(e) {}
+      var lang = (sl === 'JA') ? 'ja' : 'en';
+      p.set('lang', lang);
+      var newUrl = window.location.pathname + '?' + p.toString() + window.location.hash;
+      window.location.replace(newUrl);
+    }catch(e){}
+  })();
+  </script>
+
 </head>
 <body>
   <div class="wrap">
@@ -384,7 +402,12 @@ $backUrl   = rtrim($base, '/') . '/';
         </div>
 
         <div class="notice"><?=htmlspecialchars($t[$lang]['note_api'], ENT_QUOTES, 'UTF-8')?></div>
-      </div>
+      
+        <div class="action-row bottom-left" style="justify-content:flex-start; margin-top:12px;">
+          <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
+          <a href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+        </div>
+</div>
     </div>
   </div>
 </body>
