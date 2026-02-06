@@ -1,4 +1,4 @@
-# Notemod-selfhosted（改造版 Notemod）v1.1.6
+# Notemod-selfhosted（改造版 Notemod）v1.2.3
 
 これは **[Notemod（本家）](https://github.com/orayemre/Notemod)**（MIT License）をベースに、**共用サーバーでも動く自己ホスト型メモ基盤**として拡張したフォークです（DB不要）。  
 データベースを使わないため、ウェブサーバーにアップロードして設定ファイルを用意すればすぐ使えます。
@@ -15,10 +15,51 @@
 iPhone と Windows PC 間のクリップボード連携を、iPhone と Mac 間の快適さに少しでも近づける。  
 これを **外部サービスに依存せず** 実現する。
 
-- Windows PC でコピーされたテキストが即時に Notemod-selfhosted に送られる（**Windowsアプリ ClipboardSender**）
+- Windows PC でコピーされたテキストが即時に Notemod-selfhosted に送られる（**Windowsアプリ ClipboardSync**）
 - iPhone のショートカットを実行すると、そのテキストが iPhone でペーストできる
+- iPhone でコピーされたテキストが、iPhone ショートカットの実行で、即時に Notemod-selfhosted に送られる
+- Windows PC で、ホットキー（例 Ctrl + Shift + R）を実行すると、すぐにペーストできる（**Windowsアプリ ClipboardSync**）
 
 ---
+
+## v1.2.3 の主な変更点
+
+### 1) 設定アイコン（歯車）に「クリップボード同期」を追加
+- 設定（歯車）に **Clipboard Sync** を追加
+- **ClipboardSync（Windowsアプリ）＋ iPhoneショートカットの設定が大幅に簡素化**
+  - ClipboardSync側の設定は **コピー＆ペースト中心**で完了
+  - iPhoneショートカットは **ダウンロード可能**（自作不要）
+  - iPhoneショートカットの初期設定も **ほぼコピー＆ペースト**で完了
+
+### 2) バックアップ設定の強化（リストア + 今すぐバックアップ）
+- 設定（歯車）のバックアップ設定（`bak_settings.php`）に以下を追加
+  - **リストア機能**
+  - **「今すぐバックアップを作成」ボタン**
+    - 現在の `notemod-data/data.json` をコピーしてバックアップとして保存（タイムスタンプ付きファイル名）
+
+### 3) 各種設定で「戻る」などの導線を上部＋下部に配置
+- 各種設定ページで、リンク（例：「戻る」など）を **上部と下部の両方**に配置し、操作性を改善
+
+### 4) 各種設定で Notemod 本体の言語設定を引き継ぐ
+- カスタム設定ページは **日本語/英語のみ**対応
+- Notemod本体は多言語対応のため、設定ページ側は **Notemod本体の言語設定を参照して自動選択**
+  - `selectedLanguage === "JA"` の場合は日本語
+  - それ以外（英語/日本語以外を含む）は **英語に誘導**
+- 低負荷な方法として **localStorage から読み取り**
+
+### 5) TIMEZONE の適用範囲を拡張（バックアップにも反映）
+- これまで Log の時刻にだけ反映していた `config/config.php` の **TIMEZONE** を、バックアップにも反映
+  - **バックアップファイル名のタイムスタンプ**
+  - **バックアップ一覧の日時表示**
+  が、サーバー時刻ではなく **指定TIMEZONE** に統一されます
+
+### 6) ログの上限設定（x行まで）
+- **月別の生ログ**
+- **Notemod Logs ノート**
+に対して、**最大 x 行まで**の上限設定を可能にし、ログ肥大化を抑制
+
+### 7) `read_api.php` のスピード改善
+- `api/read_api.php` の処理を見直し、読み取り系のレスポンスを改善
 
 ## v1.1.6 の追加点
 
@@ -165,25 +206,30 @@ Notemod-selfhosted は「クリップボードの内容」「個人メモ」な�
 
 ```text
 public_html/
-├─ index.php                 # Notemod UI
-├─ logger.php                # アクセスログ + Logsカテゴリ追記
-├─ notemod_sync.php          # 同期エンドポイント（save/load）
-├─ setup_auth.php            # Web UI 認証（v1.1.0）
-├─ login.php / logout.php    # 認証ページ（実装により差異あり）
-├─ account.php               # アカウントページ
-├─ auth_common.php           # 認証共通
+├─ index.php
+├─ notemod_sync.php
+├─ logger.php
+├─ auth_common.php
+├─ setup_auth.php
+├─ login.php
+├─ logout.php
+├─ account.php
+├─ bak_settings.php
+├─ clipboard_sync.php
+├─ log_settings.php
 ├─ api/
-│  ├─ api.php                # ノート追加
-│  ├─ read_api.php           # 読み取りAPI
-│  └─ cleanup_api.php        # 破壊的操作（管理者）
-├─ notemod-data/
-│  └─ data.json              # 単一データソース
+│  ├─ api.php
+│  ├─ read_api.php
+│  └─ cleanup_api.php
 ├─ config/
-│  ├─ config.php             # 共通設定（Gitに入れない）
-│  └─ config.api.php         # API設定（Gitに入れない）
-├─ logs/                     # ログ（任意）
-├─ robots.txt
-└─ (PWA files)               # manifest / service worker / icons（v1.1.0）
+│  ├─ config.php             # サーバー側で作成（秘密情報/設定。Git管理しない）
+│  ├─ config.sample.php      # サンプル
+│  ├─ config.api.php         # サーバー側で作成（トークン等。Git管理しない）
+│  └─ config.api.sample.php  # サンプル
+├─ notemod-data/
+│  └─ data.json              # 単一データソース（Single source of truth）
+└─ pwa/
+   └─ （PWA関連ファイル）
 ```
 
 ---

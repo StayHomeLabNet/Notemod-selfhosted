@@ -1,4 +1,4 @@
-# Notemod-selfhosted (v1.1.6)
+# Notemod-selfhosted (v1.2.3)
 
 A self-hosted, API-driven fork of **[Notemod](https://github.com/orayemre/Notemod)** (MIT License), designed to run on simple shared hosting (no DB required) and integrate with external tools (iPhone Shortcuts, Windows apps, scripts, etc.).
 
@@ -15,10 +15,52 @@ Tested with PHP 8.3.21 (and **requires PHP 8.1+**)
 
 Make clipboard synchronization between an iPhone and a Windows PC as seamless as possible—close to the comfort level between an iPhone and a Mac—**without relying on external services**.
 
-- Text copied on Windows is instantly sent to Notemod-selfhosted (**via ClipboardSender**)
+- Text copied on Windows is instantly sent to Notemod-selfhosted (**via ClipboardSync**)
 - Running an iPhone Shortcut fetches that text so it can be pasted on iPhone
+- Text copied on the iPhone is instantly sent to Notemod-selfhosted when an iPhone shortcut is run
+- On a Windows PC, pressing a hotkey (e.g., Ctrl + Shift + R) allows you to paste it immediately (**via ClipboardSync**)
 
 ---
+## Highlights in v1.2.3
+
+### 1) Clipboard Sync added to the Settings (gear) menu
+- Added **Clipboard Sync** entry to the Settings (gear) menu
+- **ClipboardSync (Windows app) + iPhone Shortcuts setup has been greatly simplified**
+  - ClipboardSync app configuration is now mostly **copy & paste**
+  - iPhone Shortcut can be **downloaded** (no need to build it from scratch)
+  - Initial Shortcut setup is also mostly **copy & paste**
+
+### 2) Backup settings enhanced (Restore + “Backup now”)
+- In the Settings (gear) → backup settings page (`bak_settings.php`), added:
+  - **Restore feature**
+  - **“Create backup now” button**
+    - Copies the current `notemod-data/data.json` and saves it as a backup file (timestamped filename)
+
+### 3) Navigation links placed at both top and bottom on settings pages
+- On settings-related pages, common navigation links (e.g., “Back”, etc.) are placed **both at the top and bottom** to improve usability.
+
+### 4) Settings pages inherit Notemod’s language setting
+- Custom settings pages support **Japanese / English only**
+- Since Notemod itself supports additional languages, the settings pages now **inherit the Notemod language setting**
+  - If `selectedLanguage === "JA"` → Japanese
+  - Otherwise (including non-JA/non-EN languages) → **English**
+- Implemented using **localStorage** to keep it lightweight
+
+### 5) TIMEZONE applied to backups as well
+- Previously, `TIMEZONE` in `config/config.php` was applied mainly to logs
+- Now the same **TIMEZONE** is applied to:
+  - **backup filename timestamps**
+  - **backup date/time display**
+- This ensures backup timestamps follow the configured timezone rather than the server’s default timezone
+
+### 6) Log line limit (up to x lines)
+- Added an option to cap:
+  - **monthly raw logs**
+  - **Notemod Logs note**
+  to a maximum of **x lines**, preventing logs from growing indefinitely
+
+### 7) `read_api.php` performance improvement
+- Improved the processing in `api/read_api.php` to speed up read operations.
 
 ## What’s new in v1.1.6
 
@@ -167,25 +209,30 @@ Detailed usage (API calls / iPhone Shortcuts / ClipboardSender, etc.):
 
 ```text
 public_html/
-├─ index.php                 # Notemod UI
-├─ logger.php                # access logging + Logs category logging
-├─ notemod_sync.php          # sync endpoint (save/load)
-├─ setup_auth.php            # Web UI auth setup/management (v1.1.0)
-├─ login.php / logout.php    # auth pages (implementation dependent)
-├─ account.php               # account page
-├─ auth_common.php           # shared auth functions
+├─ index.php
+├─ notemod_sync.php
+├─ logger.php
+├─ auth_common.php
+├─ setup_auth.php
+├─ login.php
+├─ logout.php
+├─ account.php
+├─ bak_settings.php
+├─ clipboard_sync.php
+├─ log_settings.php
 ├─ api/
-│  ├─ api.php                # add note
-│  ├─ read_api.php           # read API
-│  └─ cleanup_api.php        # destructive cleanup (admin)
-├─ notemod-data/
-│  └─ data.json              # single data source
+│  ├─ api.php
+│  ├─ read_api.php
+│  └─ cleanup_api.php
 ├─ config/
-│  ├─ config.php             # secrets + common settings (DO NOT COMMIT)
-│  └─ config.api.php         # API tokens + paths (DO NOT COMMIT)
-├─ logs/                     # file logs (optional)
-├─ robots.txt
-└─ (PWA files)               # manifest / service worker / icons (v1.1.0)
+│  ├─ config.php             # Create on server (secrets/config). Do not commit to Git.
+│  ├─ config.sample.php      # Sample
+│  ├─ config.api.php         # Create on server (tokens). Do not commit to Git.
+│  └─ config.api.sample.php  # Sample
+├─ notemod-data/
+│  └─ data.json              # Single source of truth
+└─ pwa/
+   └─ (PWA-related files)
 ```
 
 ---
