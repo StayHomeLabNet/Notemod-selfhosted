@@ -879,7 +879,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
 
             <form method="post" class="inline-form" style="margin: 8px 0 14px 0;">
               <input type="hidden" name="mode" value="backup_now">
-              <button type="submit" class="btn" style="width:auto; padding:10px 12px; font-size:13px; border-radius:12px;">
+              <button type="submit" class="btn" style="width:100%; padding:10px 12px; font-size:13px; border-radius:12px;">
                 <?=htmlspecialchars($t[$lang]['backup_now'], ENT_QUOTES, 'UTF-8')?>
               </button>
             </form>
