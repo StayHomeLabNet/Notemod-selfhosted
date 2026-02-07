@@ -29,8 +29,8 @@ $isLoggedIn = function_exists('nm_auth_is_logged_in') ? (bool)nm_auth_is_logged_
 // --------------------
 $LINKS = [
   // ClipboardSync (Windows) ダウンロードリンク（URLは画面に表示せずボタンにする）
-  'download_win_x64'   => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.0/ClipboardSync.exe', // TODO: GitHub Releases など
-  'download_win_arm64' => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.0/ClipboardSenderARM64.exe', // TODO
+  'download_win_x64'   => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSync.exe', // TODO: GitHub Releases など
+  'download_win_arm64' => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSenderARM64.exe', // TODO
 
   // arm64説明（JP/EN）
   'arm64_note' => [
@@ -42,18 +42,18 @@ $LINKS = [
   // 1行2つ表示：通常版 / BASIC認証対応版
   'shortcuts' => [
     'ja' => [
-      'pc_to_iphone' => ['label'=>'PC→iPhone', 'normal'=>'https://www.icloud.com/shortcuts/6adaa0717a524ff98695e808ea1852ba', 'basic'=>'https://www.icloud.com/shortcuts/2cf93602f31f4675a3f67255442dd60c'],
-      'iphone_to_pc' => ['label'=>'iPhone→PC', 'normal'=>'https://www.icloud.com/shortcuts/a6de0163137c4b72a9da67c6994cb98e', 'basic'=>'https://www.icloud.com/shortcuts/613dded54681449a8212f45f7ff4cf58'],
-      'text_memo' => ['label'=>'テキストメモ', 'normal'=>'https://www.icloud.com/shortcuts/45404bf139694fe7b3e09cd0d30c2ecc', 'basic'=>'https://www.icloud.com/shortcuts/c8f3edd1d1e241e99b411b9ff6f8c3c2'],
-      'voice_text_memo' => ['label'=>'音声テキストメモ', 'normal'=>'https://www.icloud.com/shortcuts/1422818b82bb404faca75dd92ea76ddd', 'basic'=>'https://www.icloud.com/shortcuts/e4f4e826932e4a37afab1bc04d27fa61'],
-      'camera_text' => ['label'=>'カメラからテキスト', 'normal'=>'https://www.icloud.com/shortcuts/03c31327e12b4c4f9233228674aaab13', 'basic'=>'https://www.icloud.com/shortcuts/8a06a40cb2cb42a783e20db57668992e'],
+      'pc_to_iphone' => ['label'=>'PC→iPhone', 'normal'=>'https://www.icloud.com/shortcuts/d47c8c55a73544dca641455fedc6bc99', 'basic'=>'https://www.icloud.com/shortcuts/9c52aec32bf845579df874e40c1fc588'],
+      'iphone_to_pc' => ['label'=>'iPhone→PC', 'normal'=>'https://www.icloud.com/shortcuts/13e05e4e61184d3981f219a6fc1bcd51', 'basic'=>'https://www.icloud.com/shortcuts/164e49e144df48df8350c6c38eac4a69'],
+      'text_memo' => ['label'=>'テキストメモ', 'normal'=>'https://www.icloud.com/shortcuts/543147bbfdbf4a12867e5c8fe8cb16f3', 'basic'=>'https://www.icloud.com/shortcuts/76733675ddb541a38930d5fcdd9368a8'],
+      'voice_text_memo' => ['label'=>'音声テキストメモ', 'normal'=>'https://www.icloud.com/shortcuts/9bed01c187564a18ae79a1c6ef3402c3', 'basic'=>'https://www.icloud.com/shortcuts/e403298c5a544d86bd0db3007f939c69'],
+      'camera_text' => ['label'=>'カメラからテキスト', 'normal'=>'https://www.icloud.com/shortcuts/eeaf6141e166475ca3fc9df84bc4a52d', 'basic'=>'https://www.icloud.com/shortcuts/2334c413578b4897a4c9df5c98d1c2e5'],
     ],
     'en' => [
-      'pc_to_iphone' => ['label'=>'PC → iPhone', 'normal'=>'https://www.icloud.com/shortcuts/8a06a40cb2cb42a783e20db57668992e', 'basic'=>'https://www.icloud.com/shortcuts/f3313b642b544443b5eacf679a37fbf7'],
-      'iphone_to_pc' => ['label'=>'iPhone → PC', 'normal'=>'https://www.icloud.com/shortcuts/f8df5e254a37438e902f8ea08253907b', 'basic'=>'https://www.icloud.com/shortcuts/a2cb763e45ec47ee9aec2b2ba23d4985'],
-      'text_memo' => ['label'=>'Text memo', 'normal'=>'https://www.icloud.com/shortcuts/6e68c22c5a1b46449d95c1c51af85e13', 'basic'=>'https://www.icloud.com/shortcuts/a87a8ed0d20d469ebb2df8549b8fb417'],
-      'voice_text_memo' => ['label'=>'Voice text memo', 'normal'=>'https://www.icloud.com/shortcuts/92f10794393a4af399ee8b4d9d1f8993', 'basic'=>'https://www.icloud.com/shortcuts/00cbfabb25244599ae99b7800c4fdb33'],
-      'camera_text' => ['label'=>'Camera to text', 'normal'=>'https://www.icloud.com/shortcuts/79c5a2fb3d7a48f88c4ab8e745cc6e44', 'basic'=>'https://www.icloud.com/shortcuts/67d705509752422a8923de28cb5b54c2'],
+      'pc_to_iphone' => ['label'=>'PC → iPhone', 'normal'=>'https://www.icloud.com/shortcuts/bb3ee1cf87944d53b2afa1510eef2431', 'basic'=>'https://www.icloud.com/shortcuts/dd7c1cd6bb2c473880e3d5d226d7ff4e'],
+      'iphone_to_pc' => ['label'=>'iPhone → PC', 'normal'=>'https://www.icloud.com/shortcuts/95c6a708badb4459ab72f021875d0cfa', 'basic'=>'https://www.icloud.com/shortcuts/a38da767ffdf4c30b9c7dbb6f8b26ebf'],
+      'text_memo' => ['label'=>'Text memo', 'normal'=>'https://www.icloud.com/shortcuts/243fcfeb6d884c86b070a5e0e36c0fd7', 'basic'=>'https://www.icloud.com/shortcuts/eda98a5240264addbd7592f62bae7682'],
+      'voice_text_memo' => ['label'=>'Voice text memo', 'normal'=>'https://www.icloud.com/shortcuts/8b2cf52412c348508c4da3b9c6492003', 'basic'=>'https://www.icloud.com/shortcuts/c7c5f2aec3eb4682a6cad8573dff5993'],
+      'camera_text' => ['label'=>'Camera to text', 'normal'=>'https://www.icloud.com/shortcuts/8c407b7bbb7e43a48089be6ea069b967', 'basic'=>'https://www.icloud.com/shortcuts/cb1ada0de51446a69c7a739d797f24a1'],
     ],
   ],
 ];
