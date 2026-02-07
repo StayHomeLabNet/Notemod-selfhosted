@@ -18,7 +18,7 @@ iPhone と Windows PC 間のクリップボード連携を、iPhone と Mac 間�
 - Windows PC でコピーされたテキストが即時に Notemod-selfhosted に送られる（**Windowsアプリ ClipboardSync**）
 - iPhone のショートカットを実行すると、そのテキストが iPhone でペーストできる
 - iPhone でコピーされたテキストが、iPhone ショートカットの実行で、即時に Notemod-selfhosted に送られる
-- Windows PC で、ホットキー（例 Ctrl + Shift + R）を実行すると、すぐにペーストできる（**Windowsアプリ ClipboardSync**）
+- Windows PC で、ホットキー（例 Ctrl + Alt + R）を実行すると、すぐにペーストできる（**Windowsアプリ ClipboardSync**）
 
 ---
 

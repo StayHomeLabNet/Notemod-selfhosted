@@ -18,7 +18,7 @@ Make clipboard synchronization between an iPhone and a Windows PC as seamless as
 - Text copied on Windows is instantly sent to Notemod-selfhosted (**via ClipboardSync**)
 - Running an iPhone Shortcut fetches that text so it can be pasted on iPhone
 - Text copied on the iPhone is instantly sent to Notemod-selfhosted when an iPhone shortcut is run
-- On a Windows PC, pressing a hotkey (e.g., Ctrl + Shift + R) allows you to paste it immediately (**via ClipboardSync**)
+- On a Windows PC, pressing a hotkey (e.g., Ctrl + Alt + R) allows you to paste it immediately (**via ClipboardSync**)
 
 ---
 ## Highlights in v1.2.3
