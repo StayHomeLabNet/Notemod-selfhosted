@@ -30,7 +30,7 @@ $isLoggedIn = function_exists('nm_auth_is_logged_in') ? (bool)nm_auth_is_logged_
 $LINKS = [
   // ClipboardSync (Windows) ダウンロードリンク（URLは画面に表示せずボタンにする）
   'download_win_x64'   => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSync.exe', // TODO: GitHub Releases など
-  'download_win_arm64' => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSenderARM64.exe', // TODO
+  'download_win_arm64' => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSyncARM64.exe', // TODO
 
   // arm64説明（JP/EN）
   'arm64_note' => [
