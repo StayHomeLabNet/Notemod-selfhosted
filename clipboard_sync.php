@@ -42,14 +42,14 @@ $LINKS = [
   // 1行2つ表示：通常版 / BASIC認証対応版
   'shortcuts' => [
     'ja' => [
-      'pc_to_iphone' => ['label'=>'PC→iPhone', 'normal'=>'https://www.icloud.com/shortcuts/d47c8c55a73544dca641455fedc6bc99', 'basic'=>'https://www.icloud.com/shortcuts/9c52aec32bf845579df874e40c1fc588'],
+      'pc_to_iphone' => ['label'=>'PC→iPhone', 'normal'=>'https://www.icloud.com/shortcuts/d47c8c55a73544dca641455fedc6bc99', 'basic'=>'https://www.icloud.com/shortcuts/bbc8dd894e7c4165a947ae21ff536ced'],
       'iphone_to_pc' => ['label'=>'iPhone→PC', 'normal'=>'https://www.icloud.com/shortcuts/13e05e4e61184d3981f219a6fc1bcd51', 'basic'=>'https://www.icloud.com/shortcuts/164e49e144df48df8350c6c38eac4a69'],
       'text_memo' => ['label'=>'テキストメモ', 'normal'=>'https://www.icloud.com/shortcuts/543147bbfdbf4a12867e5c8fe8cb16f3', 'basic'=>'https://www.icloud.com/shortcuts/76733675ddb541a38930d5fcdd9368a8'],
       'voice_text_memo' => ['label'=>'音声テキストメモ', 'normal'=>'https://www.icloud.com/shortcuts/9bed01c187564a18ae79a1c6ef3402c3', 'basic'=>'https://www.icloud.com/shortcuts/e403298c5a544d86bd0db3007f939c69'],
       'camera_text' => ['label'=>'カメラからテキスト', 'normal'=>'https://www.icloud.com/shortcuts/eeaf6141e166475ca3fc9df84bc4a52d', 'basic'=>'https://www.icloud.com/shortcuts/2334c413578b4897a4c9df5c98d1c2e5'],
     ],
     'en' => [
-      'pc_to_iphone' => ['label'=>'PC → iPhone', 'normal'=>'https://www.icloud.com/shortcuts/bb3ee1cf87944d53b2afa1510eef2431', 'basic'=>'https://www.icloud.com/shortcuts/dd7c1cd6bb2c473880e3d5d226d7ff4e'],
+      'pc_to_iphone' => ['label'=>'PC → iPhone', 'normal'=>'https://www.icloud.com/shortcuts/bb3ee1cf87944d53b2afa1510eef2431', 'basic'=>'https://www.icloud.com/shortcuts/052765bbf95b428cb3bfac3d26164877'],
       'iphone_to_pc' => ['label'=>'iPhone → PC', 'normal'=>'https://www.icloud.com/shortcuts/95c6a708badb4459ab72f021875d0cfa', 'basic'=>'https://www.icloud.com/shortcuts/a38da767ffdf4c30b9c7dbb6f8b26ebf'],
       'text_memo' => ['label'=>'Text memo', 'normal'=>'https://www.icloud.com/shortcuts/243fcfeb6d884c86b070a5e0e36c0fd7', 'basic'=>'https://www.icloud.com/shortcuts/eda98a5240264addbd7592f62bae7682'],
       'voice_text_memo' => ['label'=>'Voice text memo', 'normal'=>'https://www.icloud.com/shortcuts/8b2cf52412c348508c4da3b9c6492003', 'basic'=>'https://www.icloud.com/shortcuts/c7c5f2aec3eb4682a6cad8573dff5993'],
