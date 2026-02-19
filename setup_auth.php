@@ -289,8 +289,8 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $exp
              . "    // Do NOT change this if you want ClipboardSender\n"
              . "    // to bulk-delete backup files\n"
              . "    'CLEANUP_BACKUP_SUFFIX' => '.bak-',\n"
-             . "    'CLEANUP_BACKUP_KEEP' => 10,"
-             . "];\n";
+             . "    'CLEANUP_BACKUP_KEEP' => 10,\n"
+             . "];";
 
         $ok = @file_put_contents($configApiPath, $tpl, LOCK_EX);
         if ($ok === false) return false;

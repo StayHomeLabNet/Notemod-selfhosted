@@ -467,12 +467,6 @@ tr th{border-top:none;color: #9bbbf0;background-color:#1f2a3d;font-weight: 100;}
 .cell.selected{background:#007bff;}
 #sag-tik{position:fixed;background:#1f2a3d;padding: 5px;border-radius:5px;display:none;z-index:1000;}
 
-<!-- 
-// オリジナルのコピー＆ペーストボタンを無効化
-.sag-tik-buton{padding:6px 10px;cursor:pointer;}
-.sag-tik-buton:hover{background-color:#2c3c57;}
--->
-
 .omod .note-content-ic {max-width: 1300px;margin: auto;}
 .omod .rich-text-editor {caret-color: transparent;max-height: max-content;height: 100%;pointer-events: auto;}
 .omod input#note-title{position:absolute;z-index: 9;top:4px;left:0;background-color:transparent;border:0;padding-left:16px;pointer-events:none;}
@@ -4236,315 +4230,67 @@ document.getElementById('color-picker').addEventListener('input', function (even
 
 
 <script>
-// F5リロードでも必ずサーバーから読み込む
+// 同期マネージャー（ロジックの集約）
+const SyncManager = {
+    isSaving: false,
+    async save() {
+        if (this.isSaving) return;
+        this.isSaving = true;
+        try {
+            const saveFn = (typeof syncSaveToServerBackground === 'function') 
+                ? syncSaveToServerBackground 
+                : (typeof syncSaveToServer === 'function' ? syncSaveToServer : null);
+            
+            if (saveFn) {
+                await saveFn();
+                console.log("Sync Success");
+            }
+        } catch (e) {
+            console.error('Sync Error:', e);
+        } finally {
+            this.isSaving = false;
+        }
+    },
+    async load(forceClear = false) {
+        if (forceClear) localStorage.clear();
+        if (typeof syncLoadFromServer === 'function') await syncLoadFromServer();
+    }
+};
+
+window.addEventListener('DOMContentLoaded', function () {
+    // 確実にキャプチャするために document でイベントを待ち受ける
+    document.addEventListener('click', function (event) {
+        const target = event.target;
+
+        // 1. 同期（読み込み）ボタン
+        if (target.closest('#sync')) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            SyncManager.load(true);
+            return;
+        }
+
+        // 2. ADDボタン & 保存ボタン & 削除ボタンの判定
+        // target自体が消える可能性を考慮し、判定を「ID一致」または「closest」の両面待ちにする
+        const isAddBtn = target.id === 'confirmDelete' || target.closest('#confirmDelete');
+        const isSaveBtn = target.closest('#save-note-button, #saveTasksButton, .delete-task-button, .delete-confirm');
+
+        if (isAddBtn || isSaveBtn) {
+            // Note: ADDボタンは処理後にDOMから消えることが多いため、
+            // わずかに遅延（setTimeout）させて確実に裏側で同期を走らせる
+            setTimeout(() => SyncManager.save(), 50);
+        }
+    }, { capture: true, passive: true });
+});
+
+// ページ表示時の読み込み
 window.addEventListener('pageshow', function () {
-  // すでに「サーバー読み込み後のリロード」なら、ここでは何もしない
-  if (sessionStorage.getItem('reloadedAfterSync') === '1') {
-    // 1回だけの印なので消しておく（次回のF5ではまたロードしたいなら）
-    sessionStorage.removeItem('reloadedAfterSync');
-    return;
-  }
-
-  // 起動時に必ずサーバーから読み込み
-  if (typeof syncLoadFromServer === 'function') {
-    syncLoadFromServer();
-  }
+    if (sessionStorage.getItem('reloadedAfterSync') === '1') {
+        sessionStorage.removeItem('reloadedAfterSync');
+        return;
+    }
+    SyncManager.load(false);
 });
-</script>
-
-
-<script>
-// ==== ADDボタン & ノートSAVEで自動同期 ====
-window.addEventListener('DOMContentLoaded', function () {
-
-  document.addEventListener('click', function (event) {
-    var target = event.target;
-
-    // 1) すべての ADD ボタン（<button id="confirmDelete">add</button>）
-    if (target.matches('button#confirmDelete')) {
-      if (typeof syncSaveToServerBackground === 'function') {
-        syncSaveToServerBackground();
-      } else {
-        console.error('syncSaveToServerBackground is not defined');
-      }
-      return;
-    }
-
-    // 2) ノートの SAVE ボタン（<div id="save-note-button">Save</div>）
-    //    中のテキストや子要素をクリックしても拾えるように closest() を使う
-    var saveBtn = target.closest('#save-note-button');
-    if (saveBtn) {
-      if (typeof syncSaveToServerBackground === 'function') {
-        syncSaveToServerBackground();
-      } else {
-        console.error('syncSaveToServerBackground is not defined');
-      }
-      return;
-    }
-
-  }, { passive: true });
-
-});
-</script>
-
-<script>
-// ==== ノート保存 & タスク保存で自動同期 ====
-window.addEventListener('DOMContentLoaded', function () {
-  // ノートの Save ボタン: <div id="save-note-button">Save</div>
-  var noteSaveBtn = document.getElementById('save-note-button');
-  if (noteSaveBtn) {
-    noteSaveBtn.addEventListener('click', function () {
-      if (typeof syncSaveToServerBackground === 'function') {
-        syncSaveToServerBackground();
-      } else if (typeof syncSaveToServer === 'function') {
-        // 背景用関数が無い場合の保険
-        syncSaveToServer();
-      } else {
-        console.error('Sync function not found');
-      }
-    });
-  }
-
-  // タスクの Save ボタン:
-  // <button id="saveTasksButton" class="delete-confirm">Save</button>
-  var taskSaveBtn = document.getElementById('saveTasksButton');
-  if (taskSaveBtn) {
-    taskSaveBtn.addEventListener('click', function () {
-      if (typeof syncSaveToServerBackground === 'function') {
-        syncSaveToServerBackground();
-      } else if (typeof syncSaveToServer === 'function') {
-        syncSaveToServer();
-      } else {
-        console.error('Sync function not found');
-      }
-    });
-  }
-});
-</script>
-
-<script>
-// ==== タスクの Save ボタンをグローバルに拾って自動同期 ====
-window.addEventListener('DOMContentLoaded', function () {
-  document.addEventListener('click', function (event) {
-    // クリックされた要素から、#saveTasksButton を上にたどる
-    var taskSaveBtn = event.target.closest('#saveTasksButton');
-    if (!taskSaveBtn) return;
-
-    // 見つかったら同期
-    try {
-      if (typeof syncSaveToServerBackground === 'function') {
-        syncSaveToServerBackground();
-      } else if (typeof syncSaveToServer === 'function') {
-        // 保険：静かな版がなければ普通の同期関数を呼ぶ
-        syncSaveToServer();
-      } else {
-        console.error('Sync function not found');
-      }
-    } catch (e) {
-      console.error('Error during synchronization when saving task', e);
-    }
-  }, { passive: true });
-});
-</script>
-
-<script>
-// ==== タスクの DELETE ボタンで自動同期 ====
-window.addEventListener('DOMContentLoaded', function () {
-  document.addEventListener('click', function (event) {
-    // クリックされた要素から .delete-task-button を上にたどる
-    var deleteBtn = event.target.closest('.delete-task-button, .delete-confirm');
-    if (!deleteBtn) return;
-
-    try {
-      if (typeof syncSaveToServerBackground === 'function') {
-        syncSaveToServerBackground();
-      } else if (typeof syncSaveToServer === 'function') {
-        // 静かな版がない場合の保険
-        syncSaveToServer();
-      } else {
-        console.error('Sync function not found');
-      }
-    } catch (e) {
-      console.error('Error during synchronization when deleting task', e);
-    }
-  }, { passive: true });
-});
-</script>
-
-<script>
-// ==== #sync ボタンを「サーバーから読み込み」専用にする ====
-window.addEventListener('DOMContentLoaded', function () {
-  var syncBtn = document.getElementById('sync');
-  if (!syncBtn) return;
-
-  // 既存の Gist 用のクリック処理を止めて、
-  // サーバーから読み込みに差し替える
-  syncBtn.addEventListener('click', function (e) {
-    // もともとの click ハンドラが動かないよう完全ブロック
-    e.preventDefault();
-    e.stopImmediatePropagation();
-
-    if (typeof syncLoadFromServer === 'function') {
-      // ==== Local Storage をクリア
-      localStorage.clear();
-      syncLoadFromServer();   // ←「サーバーから読み込み」関数
-    } else {
-      console.error('syncLoadFromServer is not defined');
-    }
-  }, true); // キャプチャフェーズで実行して先に止める
-});
-</script>
-
-<script>
-function _nmEditor() {
-  return document.getElementById('note-editor');
-}
-
-function _nmSelectedTextInEditor() {
-  const editor = _nmEditor();
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return '';
-  if (sel.isCollapsed) return '';
-
-  const range = sel.getRangeAt(0);
-  const common = range.commonAncestorContainer;
-  const commonEl = (common.nodeType === 1) ? common : common.parentNode;
-
-  // 選択範囲が editor 外なら無視
-  if (!editor.contains(commonEl)) return '';
-
-  return sel.toString() || '';
-}
-
-async function _nmCopyText(text) {
-  // secure context(https) なら Clipboard API 優先
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-
-  // fallback: execCommand copy（古い環境用）
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.setAttribute('readonly', '');
-  ta.style.position = 'fixed';
-  ta.style.left = '-9999px';
-  ta.style.top = '0';
-  document.body.appendChild(ta);
-  ta.select();
-
-  try {
-    document.execCommand('copy');
-  } finally {
-    document.body.removeChild(ta);
-  }
-}
-
-// Copyボタンの挙動
-async function copyNoteOrSelection() {
-  const editor = _nmEditor();
-
-  const selected = _nmSelectedTextInEditor();
-  const textToCopy = (selected && selected.length > 0)
-    ? selected
-    : (editor.innerText || editor.textContent || '');
-
-  try {
-    await _nmCopyText(textToCopy);
-    // 必要ならここでトースト出せる
-    // alert('Copied');
-  } catch (e) {
-    alert('Failed to copy (possible browser permission or HTTPS issue)');
-  }
-}
-
-function _nmRestoreCaretIfPossible() {
-  const editor = _nmEditor();
-  if (typeof lastCaretPosition === 'undefined' || !lastCaretPosition) return false;
-
-  try {
-    const rng = lastCaretPosition.cloneRange();
-    const common = rng.commonAncestorContainer;
-    const commonEl = (common.nodeType === 1) ? common : common.parentNode;
-
-    if (!editor.contains(commonEl)) return false;
-
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(rng);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-function _nmInsertTextAtCursor(text) {
-  const editor = _nmEditor();
-
-  // クリックしてない状態でも貼れるように、最後のキャレットを復元できたら復元
-  _nmRestoreCaretIfPossible();
-
-  // まず execCommand insertText（改行とかが扱いやすい）
-  try {
-    if (document.queryCommandSupported && document.queryCommandSupported('insertText')) {
-      document.execCommand('insertText', false, text);
-      return;
-    }
-  } catch (e) {}
-
-  // fallback: Range操作
-  const sel = window.getSelection();
-  if (sel && sel.rangeCount > 0) {
-    const range = sel.getRangeAt(0);
-    range.deleteContents();
-    range.insertNode(document.createTextNode(text));
-    range.collapse(false);
-    sel.removeAllRanges();
-    sel.addRange(range);
-  } else {
-    editor.appendChild(document.createTextNode(text));
-  }
-}
-
-// Pasteボタンの挙動
-async function pasteFromClipboard() {
-  const editor = _nmEditor();
-
-  // 閲覧モードだと貼れないようにする（必要なら外してOK）
-  if (editor.contentEditable !== 'true') {
-    alert('Please turn ON Edit Mode (Mod) before pasting');
-    return;
-  }
-
-  editor.focus();
-
-  let text = '';
-  if (navigator.clipboard && window.isSecureContext) {
-    try {
-      text = await navigator.clipboard.readText();
-    } catch (e) {
-      // 権限が無い/拒否された等
-      text = '';
-    }
-  }
-
-  // fallback: どうしても読めない場合は手入力
-  if (!text) {
-    const manual = prompt('The browser does not allow clipboard reading.\nPlease enter the text you want to paste.');
-    if (manual === null) return;
-    text = manual;
-  }
-
-  _nmInsertTextAtCursor(text);
-}
-</script>
-
-<script>
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.php").catch(console.error)
-    })
-  }
 </script>
 
 </body>
