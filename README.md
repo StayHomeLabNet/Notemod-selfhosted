@@ -1,344 +1,434 @@
-# Notemod-selfhosted (v1.2.3)
+# Notemod-selfhosted (Modified Notemod) v1.3.0
 
-A self-hosted, API-driven fork of **[Notemod](https://github.com/orayemre/Notemod)** (MIT License), designed to run on simple shared hosting (no DB required) and integrate with external tools (iPhone Shortcuts, Windows apps, scripts, etc.).
+This is a fork of **[Notemod (upstream)](https://github.com/orayemre/Notemod)** (MIT License), extended into a **self-hosted note platform that works even on shared hosting**.  
+It runs **without a database** and supports not only text, but also **image** and **file** copy/paste workflows, cleanup from the management UI, backups, and Web UI authentication. It also works with the Windows Clipboard Sync app to make clipboard usage between iPhone and Windows PCs much more convenient.
 
-Upload the repository to your web server and set a secret key + tokens in two config files to start using it.
+Verified shared hosting environments: Xserver, Sakura Internet, XREA, InfinityFree  
+Tested PHP: 8.3.21 (**PHP 8.1 or later is required**)
 
-Tested on shared hosts: InfinityFree, Xserver, SAKURA Internet, XREA  
-Tested with PHP 8.3.21 (and **requires PHP 8.1+**)
-
-> **Single source of truth:** `notemod-data/data.json`
-
----
-
-## Purpose
-
-Make clipboard synchronization between an iPhone and a Windows PC as seamless as possible—close to the comfort level between an iPhone and a Mac—**without relying on external services**.
-
-- Text copied on Windows is instantly sent to Notemod-selfhosted (**via ClipboardSync**)
-- Running an iPhone Shortcut fetches that text so it can be pasted on iPhone
-- Text copied on the iPhone is instantly sent to Notemod-selfhosted when an iPhone shortcut is run
-- On a Windows PC, pressing a hotkey (e.g., Ctrl + Alt + R) allows you to paste it immediately (**via ClipboardSync**)
-
----
-## Highlights in v1.2.3
-
-### 1) Clipboard Sync added to the Settings (gear) menu
-- Added **Clipboard Sync** entry to the Settings (gear) menu
-- **ClipboardSync (Windows app) + iPhone Shortcuts setup has been greatly simplified**
-  - ClipboardSync app configuration is now mostly **copy & paste**
-  - iPhone Shortcut can be **downloaded** (no need to build it from scratch)
-  - Initial Shortcut setup is also mostly **copy & paste**
-
-### 2) Backup settings enhanced (Restore + “Backup now”)
-- In the Settings (gear) → backup settings page (`bak_settings.php`), added:
-  - **Restore feature**
-  - **“Create backup now” button**
-    - Copies the current `notemod-data/data.json` and saves it as a backup file (timestamped filename)
-
-### 3) Navigation links placed at both top and bottom on settings pages
-- On settings-related pages, common navigation links (e.g., “Back”, etc.) are placed **both at the top and bottom** to improve usability.
-
-### 4) Settings pages inherit Notemod’s language setting
-- Custom settings pages support **Japanese / English only**
-- Since Notemod itself supports additional languages, the settings pages now **inherit the Notemod language setting**
-  - If `selectedLanguage === "JA"` → Japanese
-  - Otherwise (including non-JA/non-EN languages) → **English**
-- Implemented using **localStorage** to keep it lightweight
-
-### 5) TIMEZONE applied to backups as well
-- Previously, `TIMEZONE` in `config/config.php` was applied mainly to logs
-- Now the same **TIMEZONE** is applied to:
-  - **backup filename timestamps**
-  - **backup date/time display**
-- This ensures backup timestamps follow the configured timezone rather than the server’s default timezone
-
-### 6) Log line limit (up to x lines)
-- Added an option to cap:
-  - **monthly raw logs**
-  - **Notemod Logs note**
-  to a maximum of **x lines**, preventing logs from growing indefinitely
-
-### 7) `read_api.php` performance improvement
-- Improved the processing in `api/read_api.php` to speed up read operations.
-
-## What’s new in v1.1.6
-
-- Added log settings and backup settings to the Web UI.
-- Added an email notification feature for first-time IP access (a notification is sent by email when access is made from a new IP address).
-- With this update, **config.php** and **config.api.php** can now be changed through the Web UI.
-  - For modifications that may require changing source code, such as altering data file paths, please edit **config.php** and **config.api.php** directly.
-- Add backup settings and log settings to the settings icon (gear).
-
-## What’s new in v1.1.0
-
-- **Web UI Initial setup** added
-- **Web UI Authentication** (for servers where Basic Auth cannot be used)
-- **Settings (gear) icon** added to the Notemod UI (links to Account/Auth pages)
-- Added support for automatic creation of **config.php** and **config.api.php** by `setup_auth.php`
-- `cleanup_api.php` supports **bulk delete of log files** and **backup files**
-- **PHP 8.1+ required**
-- **PWA support** (Add to Home Screen / app-like usage)
+> **Single source of data:** `notemod-data/data.json`
 
 ---
 
-## Quick Start
+## Highlights of this release (v1.3.0)
 
-### 1) Deploy to your server
-Upload the repository into your public web directory (e.g. `public_html/`).
+In v1.3.0, Notemod-selfhosted moves beyond the previous **text-centered clipboard workflow** and now supports **image and file copy/paste workflows** as well.
 
-> Keep `config/` and `api/` at the same level as `index.php`.  
-> If you change the directory structure, you must update PHP paths accordingly.
+- Added support for **image copy/paste workflows**
+- Added support for **file copy/paste workflows**
+- Added a **media / file management page** (`media_files.php`)
+- Added **upload / download / cleanup** support for images and files
+- Added **selective deletion and bulk deletion** for images / files
+- Added a **Clipboard Sync settings page**
+- Added a **backup settings page** and a **log settings page**
+- Continued support for **Web UI authentication** and **PWA support**
 
-### 2) Create configuration files (IMPORTANT)
-
-#### Configuration files auto-generation
-In v1.1.0, it is automatically generated during the initial setup in the Web UI.
-To configure the time zone, enable or disable logging, and enable or disable automatic creation of backup files, please edit the configuration file below.
-
-#### Common settings (config.php)
-Rename `config/config.sample.php` to `config/config.php`, then configure:
-- Replace `CHANGE_ME_SECRET` with a long random string (16+ characters recommended)
-- Set `TIMEZONE` if needed
-
-#### API settings (config.api.php)
-Rename `config/config.api.sample.php` to `config/config.api.php`, then configure:
-- Replace `CHANGE_ME_EXPECTED_TOKEN` with your token
-- Replace `CHANGE_ME_ADMIN_TOKEN` with a stronger token (recommended) used for cleanup operations
-
-### 3) Generate SECRET / TOKEN values
-You can use a password generator website, for example:
-https://passwords-generator.org/
-
-If you prefer not to rely on third-party sites, generate locally, e.g.:
-- `openssl rand -hex 32`
-
-> Note: The term “SECRET” may be deprecated in the future.
-
-### 4) First-time initialization (one time only)
-Open your site in a browser to launch **Notemod-selfhosted**.  
-Set the display language and create the first category.
-
-This will auto-generate the following if missing:
-- `notemod-data/data.json` (initial snapshot)
-- `notemod-data/.htaccess` (blocks direct access)
-- (optional, depending on config) `logs/` and `logs/.htaccess`
-- `api/.htaccess` (by default API access is allowed; authentication is recommended)
-
-![](Notemod-selfhosted.png)
+With this update, Notemod-selfhosted has become a **self-hosted environment that can handle text, images, and files together**.
 
 ---
 
-## Security (IMPORTANT)
+## Development goal
 
-### Basic Auth is strongly recommended (when available)
-Notemod-selfhosted handles personal information such as “clipboard contents” and “personal notes.”
-Even if you have `.htaccess` or `robots.txt` files in place, since the server is publicly accessible, it is strongly recommended to implement Basic Authentication for at least the `api/` directory.
+The goal is to make clipboard sharing between iPhone and Windows PC feel a little closer to the comfort of clipboard sharing between iPhone and Mac,  
+while doing so **without depending on external services**.
 
-**Why**
-- `robots.txt` is not access control (only a request to crawlers)
-- `/api/` endpoints are reachable from the internet on a public server
-- Long-lived tokens can be targeted (brute force, etc.)
-- Basic Auth adds a strong outer layer before PHP token checks
+Typical use cases:
 
-### If Basic Auth cannot be used: Web UI Authentication (v1.1.0)
-Some shared hosts do not provide Basic Auth.  
-In that case, enable **Web UI Authentication** and operate with **Web UI auth + API tokens**.
-
-- Setup/management page: `setup_auth.php`
-- Not logged in: sensitive values are masked / not editable
-- Logged in: account/auth management available
+- Send text copied on a Windows PC to Notemod-selfhosted (can be automated with the Windows app ClipboardSync)
+- Retrieve the latest text from an iPhone shortcut or app integration
+- Save and retrieve images
+- Save and retrieve PDFs and other files
+- Manage media and backups from the Web admin UI
+- Access from a web browser to make text and file exchange across different devices easier
 
 ---
 
-## Integrations / Guides
-Detailed usage (API calls / iPhone Shortcuts / ClipboardSender, etc.):
+## Main features
 
-- [StayHomeLab YouTube ch](https://www.youtube.com/@StayHomeLab)  
-- [Website](https://stayhomelab.net/notemod-selfhosted)  
-- [ClipboardSender](https://github.com/StayHomeLabNet/ClipboardSender)
+### 1. Self-hosted Notemod core
+- Run the Notemod UI on your own server
+- Data is stored in `notemod-data/data.json`
+- No database required
 
----
+### 2. Text write / read APIs
+- Add notes via `api/api.php`
+- Get the latest note via `api/read_api.php`
+- `latest_note` excludes the Logs category
+- `pretty=2` can return only the body text
 
-## What this project adds (summary)
+### 3. Image / file copy-paste support
+- Image upload
+- General file upload
+- Get the latest image / latest file
+- Detect the latest clip type
+- Manage images / files from the web management page
 
-- **Server-side sync endpoint** (`notemod_sync.php`)
-  - Token auth, `save` / `load`
-  - Initializes `data.json` from an initial snapshot when missing
-  - Auto-creates protective `.htaccess` in `notemod-data/` and `config/`
-  - Creates `api/.htaccess` if it doesn’t exist
-- **Write API** (`api/api.php`)
-  - Add notes into any category (auto-creates category if missing)
-- **Read API** (`api/read_api.php`)
-  - Read-only access
-  - `latest_note` always excludes the **Logs** category
-  - `pretty=2` returns *plain text* for Shortcuts / CLI usage
-- **Cleanup API** (`api/cleanup_api.php`) 
-  - Destructive delete-by-category (POST only)
-  - `dry_run` support
-  - Optional backup creation (configurable)
-  - **Bulk delete backup files** (`purge_bak=1`) (v1.1.0)
-  - **Bulk delete log files** (`purge_log=1`) (v1.1.0)
-- **Access logger** (`logger.php`)
-  - Optional file log to `/logs*/access-YYYY-MM.log`
-  - Optional Notemod **Logs** category logging (monthly note)
-  - Timezone from config
-  - Auto-creates log folder + `.htaccess` when enabled
-- **Toolbar additions** (`index.php`)
-  - Custom Copy / Paste buttons (disables original sag-tik buttons)
-  - Copy behavior: copy selection if selected, otherwise copy full note
-- **Web UI Authentication** (v1.1.0)
-  - Login-protect Notemod without Basic Auth
-  - Adds **settings gear icon** in UI
-- **PWA support** (v1.1.0)
-  - Add to Home Screen on iPhone/Android (HTTPS recommended/required)
+### 4. Cleanup API
+- Perform destructive operations with an admin token
+- Supports deletion with backup creation attached (or backup-only operation)
+- Bulk deletion of log files / backup files
+- Image / file cleanup functions
 
----
+### 5. Web UI authentication
+- Protect the UI with login-based auth even in environments where Basic auth is not available
+- Protect settings pages and management pages
 
-## Requirements
+### 6. Backup / restore
+- Change settings from `bak_settings.php`
+- Create a backup immediately
+- Keep the latest *n* backups and remove older ones
+- Restore `data.json` from the backup list
 
-- **PHP 8.1+ required**
-- Apache recommended (for `.htaccess`)
-- Writable directories (by PHP):
-  - `notemod-data/`
-  - (optional) `logs/` or your configured log directory
+### 7. Log settings
+- Change settings from `log_settings.php`
+- Enable / disable access logs
+- Enable / disable saving access logs into the Notemod Logs category
+- Configure maximum number of access log lines
+- Enable / disable notification for access from a first-time IP address
+- Configure the email address for IP access notifications
+
+### 8. PWA support
+- Supports Add to Home Screen on iPhone / Android
+- Can be launched like an app
 
 ---
 
-## Directory layout (recommended)
+## Who this is for
+
+- People who want their own private clip / note platform
+- People who do not want to rely on external cloud clipboard sync services
+- People who want something lightweight that runs on shared hosting
+- People who want to build their own bridge between iPhone and Windows
+- People who want to handle not only text, but also images and files
+
+---
+
+## Recommended directory structure
 
 ```text
 public_html/
-├─ index.php
-├─ notemod_sync.php
-├─ logger.php
-├─ auth_common.php
-├─ setup_auth.php
-├─ login.php
-├─ logout.php
-├─ account.php
-├─ bak_settings.php
-├─ clipboard_sync.php
-├─ log_settings.php
+├─ index.php                 # Notemod UI
+├─ logger.php                # Access log + append to Logs category
+├─ notemod_sync.php          # Sync endpoint (save/load)
+├─ setup_auth.php            # Initial Web UI setup
+├─ login.php / logout.php    # Login / logout
+├─ auth_common.php           # Shared auth helpers
+├─ account.php               # Account / admin menu
+├─ clipboard_sync.php        # Clipboard Sync settings page
+├─ bak_settings.php          # Backup settings page
+├─ log_settings.php          # Log settings page
+├─ media_files.php           # Image / file management page
 ├─ api/
-│  ├─ api.php
-│  ├─ read_api.php
-│  └─ cleanup_api.php
+│  ├─ api.php                # Add notes / receive images / receive files
+│  ├─ read_api.php           # Read API
+│  └─ cleanup_api.php        # Destructive operations (admin)
 ├─ config/
-│  ├─ config.php             # Create on server (secrets/config). Do not commit to Git.
-│  ├─ config.sample.php      # Sample
-│  ├─ config.api.php         # Create on server (tokens). Do not commit to Git.
-│  └─ config.api.sample.php  # Sample
+│  ├─ config.php             # Shared config (do not commit)
+│  └─ config.api.php         # API config (do not commit)
 ├─ notemod-data/
-│  └─ data.json              # Single source of truth
-└─ pwa/
-   └─ (PWA-related files)
+│  ├─ data.json              # Single source of data
+│  └─ .htaccess
+├─ pwa/
+│  ├─ icon-192.png
+│  └─ icon-512.png
+├─ manifest.php
+├─ service-worker.js / sw.php / sw-register.js
+└─ robots.txt
 ```
 
 ---
 
-## Configuration
+## Usage
 
-Create these files on the server (not committed):
+### 1. Upload to your server
+Upload the full contents of this repository to your server's public directory (for example, `public_html/`).
 
-### `config/config.php`
+> `config/` and `api/` are expected to exist at the same level as `index.php`.  
+> If you change the structure, you will need to adjust the PHP paths accordingly.
 
-```php
-<?php
-return [
-    'SECRET' => 'CHANGE_ME_SECRET',
-    'TIMEZONE' => 'Asia/Tokyo',
-    'DEBUG' => false,
+### 2. Create the config files
+After uploading the repository, **access `index.php` in your browser and the required files can be created automatically**.
 
-    'LOGGER_FILE_ENABLED' => true,
-    'LOGGER_NOTEMOD_ENABLED' => true,
+#### Shared config
+Copy or rename `config/config.sample.php` to `config/config.php`, then adjust it as needed.
 
-    // 'LOGGER_LOGS_DIRNAME' => 'logs',
+Main items:
+- `SECRET`
+- `TIMEZONE`
+- `DEBUG`
+- `LOGGER_FILE_ENABLED`
+- `LOGGER_NOTEMOD_ENABLED`
+- `INITIAL_SNAPSHOT`
 
-    'INITIAL_SNAPSHOT' => '{"categories":null,"hasSelectedLanguage":null,"notes":null,"selectedLanguage":null}',
-];
-```
+#### API config
+Copy or rename `config/config.api.sample.php` to `config/config.api.php`, then adjust it as needed.
 
-### `config/config.api.php`
+Main items:
+- `EXPECTED_TOKEN`
+- `ADMIN_TOKEN`
+- `DATA_JSON`
+- `DEFAULT_COLOR`
+- `CLEANUP_BACKUP_ENABLED`
+- `CLEANUP_BACKUP_SUFFIX`
 
-```php
-<?php
-return [
-    'EXPECTED_TOKEN' => 'CHANGE_ME_EXPECTED_TOKEN',
-    'ADMIN_TOKEN'    => 'CHANGE_ME_ADMIN_TOKEN',
+### 3. Change the SECRET / TOKEN values
+Do not leave the sample values as-is. Always replace them with long random values.
 
-    'DATA_JSON' => dirname(__DIR__) . '/notemod-data/data.json',
-    'DEFAULT_COLOR' => '3478bd',
+Example:
+- `openssl rand -hex 32`
 
-    'CLEANUP_BACKUP_ENABLED' => true,
-    'CLEANUP_BACKUP_SUFFIX'  => '.bak-',
-];
-```
+### 4. First launch
+Open the public URL in your browser and proceed with the initial setup.
+
+Depending on your environment and settings, the following files / directories may be created on first launch.
+
+- `notemod-data/data.json`
+- `notemod-data/.htaccess`
+- `api/.htaccess`
+- `config/config.php` / `config/config.api.php` (when using the Web UI setup)
+- Log-related files (depending on settings)
+
+---
+
+## Security (important)
+
+### If Basic authentication is available
+At minimum, **Basic authentication is strongly recommended** for the `api/` directory.
+
+Why:
+- `robots.txt` is not access control
+- `/api/` on a public server is reachable from outside
+- Long-lived tokens can become brute-force targets
+- Basic auth adds a wall in front of the PHP token check
+
+### If Basic authentication is not available
+Use **Web UI authentication + token-based operation**.
+
+- Initial setup / admin: `setup_auth.php`
+- After login: move to `account.php` and other settings pages
+
+---
+
+## Media / file management (major feature in v1.3.0)
+
+### Management page
+`media_files.php`
+
+This page allows you to:
+
+- View the image list
+- View the file list
+- Upload images by drag-and-drop
+- Upload files by drag-and-drop
+- Download files
+- Delete selected items using checkboxes
+- Select all / clear all
+- Bulk delete images / bulk delete files
+- Check server upload / download related settings
+
+### Storage locations
+- Images: `notemod-data/USER_NAME/images/`
+- Files: `notemod-data/USER_NAME/files/`
+
+*The exact handling of `USER_NAME` depends on the implementation and authentication state.*
+
+### JSON management model
+The image side and file side are managed a little differently.
+
+#### Image side
+- `image_latest.json`
+  - Stores information about the latest image
+- List display is based on scanning the folder directly
+- Images are assumed to be identifiable by thumbnail
+
+#### File side
+- `file.json`
+  - File history log
+- `file_index.json`
+  - Current file list
+- `file_latest.json`
+  - Latest file information
+
+The reason `file_index.json` is used on the file side is to **display the original uploaded file names instead of only the stored server-side names**.
+
+### About latest protection
+In the current implementation of `cleanup_api.php`, cleanup operations **protect the actual latest item**.  
+Because of this, a “delete all” operation may still leave the latest image or latest file in place.
+
+---
+
+## Backup settings
+
+### Management page
+`bak_settings.php`
+
+Main operations:
+- Enable / disable the backup function
+- Configure how many backups to keep
+- Create a backup immediately
+- Keep the latest *n* backups and delete older ones
+- Restore `data.json` from the backup list
+
+Features:
+- Automatically backs up the current `data.json` before restore
+- Uses `TIMEZONE` for date/time display and file naming
+
+---
+
+## Log settings
+
+### Management page
+`log_settings.php`
+
+Main settings:
+- Enable / disable access logs
+- Enable / disable appending logs to the Notemod Logs category
+- Save log-related settings
+- Enable / disable notifications for access from a first-time IP address
+- Configure the email address for IP access notifications
+
+---
+
+## Clipboard Sync settings
+
+### Management page
+`clipboard_sync.php`
+
+This page allows you to confirm the API URLs and tokens used to integrate with external clients such as the Windows app ClipboardSync.  
+It also provides a download link for ClipboardSync and a download link for the iOS Shortcut used for iPhone integration.
+
+Main uses:
+- Configure the Windows app
+- Copy URLs into an iPhone shortcut (used during initial shortcut setup)
+- Confirm the `/api/` directory URL
+- Confirm the URLs for `api.php`, `read_api.php`, and `cleanup_api.php`
+
+---
+
+## API overview
+
+### `api/api.php`
+Mainly the write-side endpoint.
+
+Examples of supported operations:
+- Add note
+- Upload image
+- Upload file
+- Handle WebP images
+- Update `image_latest.json` / `file.json` / `file_index.json` / `file_latest.json`
+
+### `api/read_api.php`
+The read-side endpoint.
+
+Examples of supported operations:
+- `latest_note`
+- `latest_image`
+- `latest_file`
+- `latest_clip_type`
+
+### `api/cleanup_api.php`
+The admin-side destructive-operation endpoint.
+
+Examples of supported operations:
+- Delete categories
+- Delete logs
+- Delete backups
+- Clean up images / files
+- Selective deletion / bulk deletion
+- Rebuild `file_index.json`
+- Repair `file_latest.json`
 
 ---
 
 ## API usage examples
 
-### Add a note (GET or POST)
+### Add a note
 ```text
 /api/api.php?token=EXPECTED_TOKEN&category=INBOX&text=Hello
 ```
 
-### Get latest note (excluding Logs) — plain text
+### Get the latest note (excluding Logs, body only)
 ```text
 /api/read_api.php?token=EXPECTED_TOKEN&action=latest_note&pretty=2
 ```
 
-### Cleanup (danger)
-- POST only
-- `dry_run=1` to preview
-- `confirm=YES` required when not dry_run
-
-#### Purge log files (POST) — v1.1.0
-```bash
-curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php"   -H "Content-Type: application/x-www-form-urlencoded"   --data-urlencode "token=ADMIN_TOKEN"   --data-urlencode "purge_log=1"   --data-urlencode "confirm=YES"
+### Get the latest image
+```text
+/api/read_api.php?token=EXPECTED_TOKEN&action=latest_image
 ```
 
-#### Purge backup files (POST) — v1.1.0
+### Get the latest file
+```text
+/api/read_api.php?token=EXPECTED_TOKEN&action=latest_file
+```
+
+### Get the latest clip type
+```text
+/api/read_api.php?token=EXPECTED_TOKEN&action=latest_clip_type
+```
+
+### Bulk delete log files (POST)
 ```bash
-curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php"   -H "Content-Type: application/x-www-form-urlencoded"   --data-urlencode "token=ADMIN_TOKEN"   --data-urlencode "purge_bak=1"   --data-urlencode "confirm=YES"
+curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "token=ADMIN_TOKEN" \
+  --data-urlencode "purge_log=1" \
+  --data-urlencode "confirm=YES"
+```
+
+### Bulk delete backup files (POST)
+```bash
+curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "token=ADMIN_TOKEN" \
+  --data-urlencode "purge_bak=1" \
+  --data-urlencode "confirm=YES"
 ```
 
 ---
 
-## ClipboardSender (Windows app) integration
+## External links
 
-This fork is designed to accept notes from external clients (optional):
+For more detailed usage examples, including API calls, iPhone Shortcuts, and Windows app integration, see:
 
-https://github.com/StayHomeLabNet/ClipboardSender  
-![](ClipboardSender.png)
+- [StayHomeLab YouTube ch](https://www.youtube.com/@StayHomeLab)
+- [Website](https://stayhomelab.net/notemod-selfhosted)
+- [ClipboardSender](https://github.com/StayHomeLabNet/ClipboardSender)
 
-Typical flow:
-1. ClipboardSender watches your clipboard
-2. When enabled, it sends clipboard text to `api/api.php`
-3. Notemod UI updates immediately
+---
 
-Recommended payload:
-- `token`
-- `category` (e.g. `INBOX` or `CLIPBOARD`)
-- `title` (optional)
-- `text` (clipboard content)
+## Requirements
+
+- **PHP 8.1 or later**
+- Apache recommended (because `.htaccess` is used)
+- Writable locations from PHP
+  - `notemod-data/`
+  - `config/` (during initial setup)
+  - `logs/` or the configured log directory (optional)
 
 ---
 
 ## About `robots.txt`
 
-This repository includes `robots.txt` to discourage indexing.
+Recommended:
 
-**Recommended**
 ```text
 User-agent: *
 Disallow: /
 ```
 
-**Important**
-- `robots.txt` is not access control  
-  → Use **Basic Auth** and/or **Web UI Authentication** and/or `.htaccess` rules.
+Notes:
+- `robots.txt` is not access control
+- Use protection such as Basic auth / Web UI auth / `.htaccess` together with it
+
+---
+
+## Role split between the README and the web manual
+
+- **README**: Overview of the whole project, installation, and guidance to the main features
+- **Web manual**: How to use each page, settings details, operational procedures, and checkpoints for troubleshooting
+
+Rather than trying to explain every operation inside the README alone, it is recommended to keep detailed operating instructions in the web manual.
 
 ---
 
@@ -346,11 +436,11 @@ Disallow: /
 
 MIT License.
 
-This project is based on **Notemod** by **Oray Emre Gündüz** (MIT).  
-Keep the upstream copyright notice and the MIT license text.
+This project is based on **Notemod (MIT) by Oray Emre Gündüz**.  
+As required by the MIT License, **keep the copyright notice and license text**.
 
 ---
 
 ## Credits
 
-- Original Notemod: https://github.com/orayemre/Notemod
+- Notemod (upstream): https://github.com/orayemre/Notemod

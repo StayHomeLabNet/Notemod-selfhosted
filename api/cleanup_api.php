@@ -41,13 +41,15 @@ function respond_json(array $payload, int $statusCode = 200): void
 }
 
 // =====================
-// 0. POST 強制
+// 0. POST 強制（ただし GET action=backup_now は許可）
 // =====================
-$method = $_SERVER['REQUEST_METHOD'] ?? '';
-if (strtoupper($method) !== 'POST') {
+$method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? ''));
+$getAction = trim((string)($_GET['action'] ?? ''));
+$isBackupNowGet = ($method === 'GET' && $getAction === 'backup_now');
+if ($method !== 'POST' && !$isBackupNowGet) {
     respond_json([
         'status'  => 'error',
-        'message' => 'Method Not Allowed (POST only)',
+        'message' => 'Method Not Allowed (POST only, except GET action=backup_now)',
     ], 405);
 }
 
@@ -75,6 +77,47 @@ if ($ADMIN_TOKEN === '' || $notemodFile === '') {
         'status'  => 'error',
         'message' => 'Server not configured (ADMIN_TOKEN/EXPECTED_TOKEN or DATA_JSON)',
     ], 500);
+}
+
+if (!function_exists('nm_create_backup_now')) {
+    function nm_create_backup_now(string $notemodFile, string $backupSuffix): array
+    {
+        if (!file_exists($notemodFile)) {
+            return ['ok' => false, 'message' => 'data.json not found'];
+        }
+        if (!is_readable($notemodFile)) {
+            return ['ok' => false, 'message' => 'data.json not readable'];
+        }
+        $backupFile = $notemodFile . $backupSuffix . date('Ymd-His');
+        if (!@copy($notemodFile, $backupFile)) {
+            return ['ok' => false, 'message' => 'failed to create backup'];
+        }
+        return [
+            'ok' => true,
+            'file' => basename($backupFile),
+            'path' => $backupFile,
+        ];
+    }
+}
+
+if ($isBackupNowGet) {
+    $r = nm_create_backup_now($notemodFile, $backupSuffix);
+    if (!$r['ok']) {
+        respond_json([
+            'status' => 'error',
+            'message' => $r['message'],
+            'action' => 'backup_now',
+        ], 500);
+    }
+    respond_json([
+        'status' => 'ok',
+        'message' => 'backup created',
+        'action' => 'backup_now',
+        'backup' => [
+            'enabled' => true,
+            'file' => $r['file'],
+        ],
+    ], 200);
 }
 
 // =====================
@@ -115,8 +158,29 @@ $dryRunRaw    = trim((string)($params['dry_run'] ?? '0'));
 $purgeBak     = trim((string)($params['purge_bak'] ?? $params['delete_bak'] ?? '0'));
 $purgeLog     = trim((string)($params['purge_log'] ?? '0'));
 
-$purgeBakBool = ($purgeBak === '1' || strtolower($purgeBak) === 'true');
-$purgeLogBool = ($purgeLog === '1' || strtolower($purgeLog) === 'true');
+// 追加機能：images/files の削除
+$purgeImages  = trim((string)($params['purge_images'] ?? '0'));
+$purgeFiles   = trim((string)($params['purge_files'] ?? '0'));
+$purgeMedia   = trim((string)($params['purge_media'] ?? '0'));
+$deleteImages = $_POST['delete_images'] ?? ($jsonBody['delete_images'] ?? []);
+$deleteFiles  = $_POST['delete_files'] ?? ($jsonBody['delete_files'] ?? []);
+
+$purgeBakBool    = ($purgeBak === '1' || strtolower($purgeBak) === 'true');
+$purgeLogBool    = ($purgeLog === '1' || strtolower($purgeLog) === 'true');
+$purgeImagesBool = ($purgeImages === '1' || strtolower($purgeImages) === 'true');
+$purgeFilesBool  = ($purgeFiles === '1' || strtolower($purgeFiles) === 'true');
+$purgeMediaBool  = ($purgeMedia === '1' || strtolower($purgeMedia) === 'true');
+
+$deleteImagesList = nm_normalize_name_list($deleteImages);
+$deleteFilesList = nm_normalize_name_list($deleteFiles);
+$deleteImagesBool = (count($deleteImagesList) > 0);
+$deleteFilesBool = (count($deleteFilesList) > 0);
+
+// purge_media=1 は images + files をまとめて削除
+if ($purgeMediaBool) {
+    $purgeImagesBool = true;
+    $purgeFilesBool = true;
+}
 
 // dry_run モード判定（NEW）
 // - 'true' は 1 扱い
@@ -131,6 +195,529 @@ if (!$dryRunBool && $confirm !== 'YES') {
         'status'  => 'error',
         'message' => 'This is a destructive action. Add confirm=YES (or use dry_run=1/2).',
     ], 400);
+}
+
+
+// =====================
+// 追加：<user> 判定（config/auth.php の USERNAME） + userDir 推定
+// =====================
+function nm_get_username(): string
+{
+    $u = 'default';
+    $authFile = dirname(__DIR__) . '/config/auth.php';
+    if (file_exists($authFile)) {
+        $auth = require $authFile;
+        if (is_array($auth) && isset($auth['USERNAME'])) {
+            $u = (string)$auth['USERNAME'];
+        } elseif (defined('USERNAME')) {
+            $u = (string)USERNAME;
+        }
+    }
+    $u = preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$u);
+    if ($u === '' || $u === null) $u = 'default';
+    return $u;
+}
+
+function nm_get_user_dir(string $dataJsonPath, string $username): string
+{
+    $dataJsonDir = realpath(dirname($dataJsonPath));
+    $root = $dataJsonDir ?: dirname($dataJsonPath);
+
+    // /notemod-data/<user>/data.json の場合は 1つ上を root とみなす
+    if ($dataJsonDir && basename($dataJsonDir) === $username) {
+        $parent = realpath(dirname($dataJsonDir));
+        if ($parent) $root = $parent;
+    }
+
+    return rtrim($root, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $username;
+}
+
+function nm_safe_basename(string $name): string
+{
+    $name = basename($name);
+    $name = preg_replace('/[\x00-\x1F\x7F]/', '', $name);
+    return $name;
+}
+
+function nm_read_json_file(string $path): ?array
+{
+    if (!is_file($path) || !is_readable($path)) return null;
+    $raw = file_get_contents($path);
+    $decoded = json_decode($raw ?: '', true);
+    return is_array($decoded) ? $decoded : null;
+}
+
+
+function nm_normalize_name_list($raw): array
+{
+    if (!is_array($raw)) return [];
+    $out = [];
+    foreach ($raw as $v) {
+        if (!is_scalar($v)) continue;
+        $name = nm_safe_basename((string)$v);
+        if ($name === '') continue;
+        $out[$name] = true;
+    }
+    return array_keys($out);
+}
+
+function nm_delete_selected_in_dir(string $dir, array $selectedNames, ?string $protectFilename, int $dryRunMode): array
+{
+    $targets = [];
+    $deleted = [];
+    $errors  = [];
+
+    if (!is_dir($dir)) {
+        return ['targets' => [], 'deleted' => [], 'errors' => []];
+    }
+
+    $baseReal = realpath($dir);
+    if (!$baseReal) {
+        return ['targets' => [], 'deleted' => [], 'errors' => [['message' => 'failed to resolve dir', 'dir' => $dir]]];
+    }
+
+    foreach ($selectedNames as $name) {
+        $name = nm_safe_basename((string)$name);
+        if ($name === '') continue;
+        if ($protectFilename !== null && $protectFilename !== '' && $name === $protectFilename) {
+            continue;
+        }
+        $full = $dir . DIRECTORY_SEPARATOR . $name;
+        $fullReal = realpath($full);
+        if (!$fullReal || strpos($fullReal, $baseReal) !== 0 || !is_file($fullReal)) {
+            continue;
+        }
+        $targets[] = $name;
+    }
+
+    if ($dryRunMode > 0) {
+        return ['targets' => $targets, 'deleted' => [], 'errors' => []];
+    }
+
+    foreach ($targets as $name) {
+        $path = $dir . DIRECTORY_SEPARATOR . $name;
+        if (@unlink($path)) {
+            $deleted[] = $name;
+        } else {
+            $errors[] = ['file' => $name, 'err' => error_get_last()];
+        }
+    }
+
+    return ['targets' => $targets, 'deleted' => $deleted, 'errors' => $errors];
+}
+
+function nm_purge_files_in_dir(string $dir, ?string $protectFilename, int $dryRunMode): array
+{
+    // 返却：['targets'=>[], 'deleted'=>[], 'errors'=>[]]
+    $targets = [];
+    $deleted = [];
+    $errors  = [];
+
+    if (!is_dir($dir)) {
+        return ['targets' => [], 'deleted' => [], 'errors' => []];
+    }
+
+    $baseReal = realpath($dir);
+    if (!$baseReal) {
+        return ['targets' => [], 'deleted' => [], 'errors' => [['message' => 'failed to resolve dir', 'dir' => $dir]]];
+    }
+
+    $it = new DirectoryIterator($dir);
+    foreach ($it as $f) {
+        if ($f->isDot() || !$f->isFile()) continue;
+        $name = $f->getFilename();
+
+        // latest実体は保護
+        if ($protectFilename !== null && $protectFilename !== '' && $name === $protectFilename) {
+            continue;
+        }
+
+        $full = $f->getPathname();
+        $fullReal = realpath($full);
+        if (!$fullReal || strpos($fullReal, $baseReal) !== 0) {
+            // 想定外パスは無視（安全側）
+            continue;
+        }
+        $targets[] = $name;
+    }
+
+    // dry_run=1/2 は削除しない
+    if ($dryRunMode > 0) {
+        return ['targets' => $targets, 'deleted' => [], 'errors' => []];
+    }
+
+    foreach ($targets as $name) {
+        $path = $dir . DIRECTORY_SEPARATOR . $name;
+        if (@unlink($path)) {
+            $deleted[] = $name;
+        } else {
+            $errors[] = ['file' => $name, 'err' => error_get_last()];
+        }
+    }
+
+    return ['targets' => $targets, 'deleted' => $deleted, 'errors' => $errors];
+}
+
+
+// =====================
+// 追加：file_index.json 再生成（方針A） + file_latest.json 補正
+// - purge_files 実行後に /files の現状を index 化
+// - file_latest.json が指す実体が無い場合は、indexの先頭（最新）に付け替える
+// - latestメタが壊れて読めない場合でも、削除後の補正として安全に作り直す（※削除処理自体は既存ルール通り）
+// =====================
+function nm_write_json_atomic(string $path, array $data): bool
+{
+    $dir = dirname($path);
+    if (!is_dir($dir)) {
+        if (!@mkdir($dir, 0755, true)) return false;
+    }
+    $tmp = $path . '.tmp';
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    if ($json === false) return false;
+    if (@file_put_contents($tmp, $json, LOCK_EX) === false) return false;
+    @chmod($tmp, 0644);
+    if (!@rename($tmp, $path)) {
+        @unlink($tmp);
+        return false;
+    }
+    @chmod($path, 0644);
+    return true;
+}
+
+function nm_detect_mime(string $path): string
+{
+    $mime = 'application/octet-stream';
+    if (function_exists('finfo_open')) {
+        $finfo = @finfo_open(FILEINFO_MIME_TYPE);
+        if ($finfo) {
+            $m = @finfo_file($finfo, $path);
+            if (is_string($m) && $m !== '') $mime = $m;
+            @finfo_close($finfo);
+        }
+    }
+    return $mime;
+}
+
+
+function nm_decode_rfc2047(string $s): string
+{
+    // "=?utf-8?B?...?=" のような MIME encoded-word を復号（存在すれば）
+    $s = (string)$s;
+    if ($s === '') return $s;
+    if (!preg_match('/^=\?utf-8\?[bq]\?.*\?=$/i', $s)) return $s;
+    if (function_exists('mb_decode_mimeheader')) {
+        $decoded = @mb_decode_mimeheader($s);
+        if (is_string($decoded) && $decoded !== '') return $decoded;
+    }
+    return $s;
+}
+
+
+function nm_load_file_history_map(string $fileJsonPath, int $maxLines = 20000): array
+{
+    // file.json は JSON Lines（1行=1JSON）想定
+    if (!is_file($fileJsonPath) || !is_readable($fileJsonPath)) return [];
+    $lines = @file($fileJsonPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if (!is_array($lines)) return [];
+
+    // 新しい行が後ろにある想定：後ろから見て最初に出たfilenameを採用
+    $map = [];
+    $cnt = 0;
+    for ($i = count($lines) - 1; $i >= 0; $i--) {
+        $cnt++;
+        if ($cnt > $maxLines) break;
+        $row = json_decode($lines[$i], true);
+        if (!is_array($row)) continue;
+        $fn = (string)($row['filename'] ?? '');
+        if ($fn === '') continue;
+        if (isset($map[$fn])) continue;
+        $map[$fn] = $row;
+    }
+    return $map;
+}
+
+function nm_rebuild_file_index_and_fix_latest(string $userDir): array
+{
+    $filesDir = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'files';
+    $indexPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'file_index.json';
+    $latestPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'file_latest.json';
+    $historyPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'file.json';
+
+    if (!is_dir($filesDir)) {
+        // files/ 自体が無い場合：indexは空で作り、latestは消す
+        nm_write_json_atomic($indexPath, [
+            'v' => 1,
+            'generated_at' => gmdate('c'),
+            'generated_at_unix' => time(),
+            'count' => 0,
+            'files' => [],
+        ]);
+        if (is_file($latestPath)) @unlink($latestPath);
+        return ['ok' => true, 'message' => 'no files dir; cleared file_latest.json', 'index_count' => 0];
+    }
+
+    // 履歴マップ（filename -> latest meta row）
+    $histMap = nm_load_file_history_map($historyPath);
+
+    // files/ 走査
+    $items = [];
+    $it = new DirectoryIterator($filesDir);
+    foreach ($it as $fi) {
+        if ($fi->isDot()) continue;
+        if (!$fi->isFile()) continue;
+
+        $stored = $fi->getFilename();
+        $stored = nm_safe_basename($stored);
+        if ($stored === '') continue;
+
+        $full = $fi->getPathname();
+        $size = $fi->getSize();
+        $mtime = $fi->getMTime();
+
+        $row = $histMap[$stored] ?? [];
+
+        $original = (string)($row['original_name'] ?? '');
+        $original = nm_decode_rfc2047($original);
+        $createdAt = (string)($row['created_at'] ?? '');
+        $createdUnix = (int)($row['created_at_unix'] ?? 0);
+        if ($createdUnix <= 0) $createdUnix = $mtime;
+
+        if ($createdAt === '') {
+            // UTCで保存
+            $createdAt = gmdate('c', $createdUnix);
+        }
+
+        $mime = (string)($row['mime'] ?? '');
+        if ($mime === '') $mime = nm_detect_mime($full);
+
+        $ext = (string)($row['ext'] ?? '');
+        if ($ext === '') $ext = strtolower(pathinfo($stored, PATHINFO_EXTENSION));
+
+        $sha = (string)($row['sha256'] ?? '');
+
+        $items[] = [
+            'filename' => $stored,
+            'original_name' => $original,
+            'ext' => $ext,
+            'mime' => $mime,
+            'size' => (int)$size,
+            'sha256' => $sha,
+            'created_at' => $createdAt,
+            'created_at_unix' => (int)$createdUnix,
+            'file_id' => (string)($row['file_id'] ?? ''),
+        ];
+    }
+
+    // created_at_unix desc
+    usort($items, function($a, $b){
+        $au = (int)($a['created_at_unix'] ?? 0);
+        $bu = (int)($b['created_at_unix'] ?? 0);
+        return $bu <=> $au;
+    });
+
+    $index = [
+        'v' => 1,
+        'generated_at' => gmdate('c'),
+        'generated_at_unix' => time(),
+        'count' => count($items),
+        'files' => $items,
+    ];
+
+    if (!nm_write_json_atomic($indexPath, $index)) {
+        return ['ok' => false, 'message' => 'failed to write file_index.json', 'index_count' => count($items)];
+    }
+
+    // latest補正：latestが無い or 指す実体が無い場合、index先頭へ付け替え
+    if (count($items) === 0) {
+        if (is_file($latestPath)) @unlink($latestPath);
+        return ['ok' => true, 'message' => 'file_index rebuilt; no files -> removed file_latest.json', 'index_count' => 0];
+    }
+
+    $needFix = false;
+    $latestFn = '';
+
+    if (is_file($latestPath)) {
+        $meta = nm_read_json_file($latestPath);
+        if ($meta === null) {
+            // 壊れてたら付け替え
+            $needFix = true;
+        } else {
+            $latestFn = nm_safe_basename((string)($meta['filename'] ?? ''));
+            if ($latestFn === '' || !is_file($filesDir . DIRECTORY_SEPARATOR . $latestFn)) {
+                $needFix = true;
+            }
+        }
+    } else {
+        $needFix = true;
+    }
+
+    if ($needFix) {
+        $top = $items[0];
+        $newLatest = [
+            'v' => 1,
+            'type' => 'file',
+            'file_id' => ($top['file_id'] !== '' ? $top['file_id'] : (string)pathinfo($top['filename'], PATHINFO_FILENAME)),
+            'filename' => $top['filename'],
+            'ext' => $top['ext'],
+            'mime' => $top['mime'],
+            'size' => (int)$top['size'],
+            'sha256' => $top['sha256'],
+            'original_name' => $top['original_name'],
+            'created_at' => $top['created_at'],
+            'created_at_unix' => (int)$top['created_at_unix'],
+        ];
+        if (!nm_write_json_atomic($latestPath, $newLatest)) {
+            return ['ok' => false, 'message' => 'file_index rebuilt but failed to update file_latest.json', 'index_count' => count($items)];
+        }
+        return ['ok' => true, 'message' => 'file_index rebuilt; file_latest.json updated', 'index_count' => count($items)];
+    }
+
+    return ['ok' => true, 'message' => 'file_index rebuilt; file_latest.json ok', 'index_count' => count($items)];
+}
+
+
+// =====================
+// 追加機能：images/files 削除（purge_images / purge_files / purge_media）
+// 絶対ルール：latest実体は削除しない／latestメタが壊れて読めない場合は削除しない
+// - dry_run=1: 対象一覧
+// - dry_run=2: 対象数のみ
+// =====================
+if ($purgeImagesBool || $purgeFilesBool || $deleteImagesBool || $deleteFilesBool) {
+
+    $username = nm_get_username();
+    $userDir  = nm_get_user_dir($notemodFile, $username);
+
+    $result = [
+        'status'  => 'ok',
+        'message' => 'purge completed',
+        'user'    => $username,
+        'dry_run' => $dryRunMode,
+        'images'  => ['enabled' => ($purgeImagesBool || $deleteImagesBool)],
+        'files'   => ['enabled' => ($purgeFilesBool || $deleteFilesBool)],
+    ];
+
+    // ---- images ----
+    if ($purgeImagesBool || $deleteImagesBool) {
+        $metaPath  = $userDir . DIRECTORY_SEPARATOR . 'image_latest.json';
+        $imagesDir = $userDir . DIRECTORY_SEPARATOR . 'images';
+
+        $protect = null;
+        if (is_file($metaPath)) {
+            $meta = nm_read_json_file($metaPath);
+            if ($meta === null) {
+                // latestメタが壊れている場合は削除しない（絶対ルール）
+                respond_json([
+                    'status'  => 'error',
+                    'message' => 'invalid image_latest.json - aborting purge_images to protect latest',
+                    'meta'    => $metaPath,
+                ], 500);
+            }
+            $fn = nm_safe_basename((string)($meta['filename'] ?? ''));
+            if ($fn === '' || !preg_match('/^[a-zA-Z0-9_-]+\.(png|jpg|jpeg|webp)$/i', $fn)) {
+                respond_json([
+                    'status'  => 'error',
+                    'message' => 'invalid image_latest.json filename - aborting purge_images to protect latest',
+                    'meta'    => $metaPath,
+                    'filename'=> $fn,
+                ], 500);
+            }
+            $protect = $fn;
+        }
+
+        $r = $deleteImagesBool
+            ? nm_delete_selected_in_dir($imagesDir, $deleteImagesList, $protect, $dryRunMode)
+            : nm_purge_files_in_dir($imagesDir, $protect, $dryRunMode);
+        $result['images'] += [
+            'dir'     => $imagesDir,
+            'protect' => $protect,
+            'mode'    => $deleteImagesBool ? 'selected' : 'purge',
+            'requested' => $deleteImagesBool ? $deleteImagesList : [],
+            'count'   => count($r['targets']),
+        ];
+        $result['image'] = ['count' => $result['images']['count']];
+
+        if ($dryRunMode === 1) {
+            $result['images']['files'] = $r['targets'];
+        }
+        if ($dryRunMode === 0) {
+            $result['images']['deleted'] = count($r['deleted']);
+            $result['images']['failed']  = count($r['errors']);
+            $result['images']['files']   = $r['deleted'];
+            $result['images']['errors']  = $r['errors'];
+        }
+        if ($dryRunMode === 2) {
+            // count only already set
+        }
+    }
+
+    // ---- files ----
+    if ($purgeFilesBool || $deleteFilesBool) {
+        $metaPath = $userDir . DIRECTORY_SEPARATOR . 'file_latest.json';
+        $filesDir = $userDir . DIRECTORY_SEPARATOR . 'files';
+
+        $protect = null;
+        if (is_file($metaPath)) {
+            $meta = nm_read_json_file($metaPath);
+            if ($meta === null) {
+                respond_json([
+                    'status'  => 'error',
+                    'message' => 'invalid file_latest.json - aborting purge_files to protect latest',
+                    'meta'    => $metaPath,
+                ], 500);
+            }
+            $fn = nm_safe_basename((string)($meta['filename'] ?? ''));
+            // files は拡張子が様々なので緩め（1-10文字）
+            if ($fn === '' || !preg_match('/^[a-zA-Z0-9_-]+\.[a-zA-Z0-9]{1,10}$/', $fn)) {
+                respond_json([
+                    'status'  => 'error',
+                    'message' => 'invalid file_latest.json filename - aborting purge_files to protect latest',
+                    'meta'    => $metaPath,
+                    'filename'=> $fn,
+                ], 500);
+            }
+            $protect = $fn;
+        }
+
+        $r = $deleteFilesBool
+            ? nm_delete_selected_in_dir($filesDir, $deleteFilesList, $protect, $dryRunMode)
+            : nm_purge_files_in_dir($filesDir, $protect, $dryRunMode);
+        $result['files'] += [
+            'dir'     => $filesDir,
+            'protect' => $protect,
+            'mode'    => $deleteFilesBool ? 'selected' : 'purge',
+            'requested' => $deleteFilesBool ? $deleteFilesList : [],
+            'count'   => count($r['targets']),
+        ];
+        $result['file'] = ['count' => $result['files']['count']];
+
+        if ($dryRunMode === 1) {
+            $result['files']['files'] = $r['targets'];
+        }
+        if ($dryRunMode === 0) {
+            $result['files']['deleted'] = count($r['deleted']);
+            $result['files']['failed']  = count($r['errors']);
+            $result['files']['files']   = $r['deleted'];
+            $result['files']['errors']  = $r['errors'];
+
+    // ---- post process: file_index.json 再生成 + latest補正（削除が実行された時のみ）----
+    if (($purgeFilesBool || $deleteFilesBool) && $dryRunMode === 0) {
+        $fix = nm_rebuild_file_index_and_fix_latest($userDir);
+        $result['files']['index_rebuild'] = $fix;
+    }
+
+        }
+    }
+
+    // メッセージ調整
+    if ($dryRunMode === 2) {
+        $result['message'] = 'dry run (count only) - delete would remove files';
+    } elseif ($dryRunMode === 1) {
+        $result['message'] = 'dry run - delete would remove these files';
+    } else {
+        $result['message'] = 'media cleanup completed';
+    }
+
+    respond_json($result, 200);
 }
 
 // =====================

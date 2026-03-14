@@ -42,8 +42,8 @@ $LINKS = [
   // 1行2つ表示：通常版 / BASIC認証対応版
   'shortcuts' => [
     'ja' => [
-      'pc_to_iphone' => ['label'=>'PC→iPhone', 'normal'=>'https://www.icloud.com/shortcuts/d47c8c55a73544dca641455fedc6bc99', 'basic'=>'https://www.icloud.com/shortcuts/bbc8dd894e7c4165a947ae21ff536ced'],
-      'iphone_to_pc' => ['label'=>'iPhone→PC', 'normal'=>'https://www.icloud.com/shortcuts/13e05e4e61184d3981f219a6fc1bcd51', 'basic'=>'https://www.icloud.com/shortcuts/164e49e144df48df8350c6c38eac4a69'],
+      'pc_to_iphone' => ['label'=>'PC→iPhone', 'normal'=>'https://www.icloud.com/shortcuts/573cd418a49643c88e8ff7806add37aa', 'basic'=>'https://www.icloud.com/shortcuts/f6184f480bea4c5f8d10c19e18a3a713'],
+      'iphone_to_pc' => ['label'=>'iPhone→PC', 'normal'=>'https://www.icloud.com/shortcuts/c8b275227fb94a35a447218b82642cab', 'basic'=>'https://www.icloud.com/shortcuts/2a7fc6dc71004d73aed8658191fc6e13'],
       'text_memo' => ['label'=>'テキストメモ', 'normal'=>'https://www.icloud.com/shortcuts/543147bbfdbf4a12867e5c8fe8cb16f3', 'basic'=>'https://www.icloud.com/shortcuts/76733675ddb541a38930d5fcdd9368a8'],
       'voice_text_memo' => ['label'=>'音声テキストメモ', 'normal'=>'https://www.icloud.com/shortcuts/9bed01c187564a18ae79a1c6ef3402c3', 'basic'=>'https://www.icloud.com/shortcuts/e403298c5a544d86bd0db3007f939c69'],
       'camera_text' => ['label'=>'カメラからテキスト', 'normal'=>'https://www.icloud.com/shortcuts/eeaf6141e166475ca3fc9df84bc4a52d', 'basic'=>'https://www.icloud.com/shortcuts/2334c413578b4897a4c9df5c98d1c2e5'],
@@ -74,6 +74,7 @@ $t = [
     'arm64_note' => 'win-arm64について',
 
     'section_api' => 'Notemod API（クリックでコピー）',
+    'api_dir' => 'APIディレクトリURL（末尾 / まで）',
     'api_php' => 'api.php URL',
     'read_api_php' => 'read_api.php URL',
     'cleanup_api_php' => 'cleanup_api.php URL',
@@ -105,6 +106,7 @@ $t = [
     'arm64_note' => 'About win-arm64',
 
     'section_api' => 'Notemod API (click to copy)',
+    'api_dir' => 'API directory URL (ending with /)',
     'api_php' => 'api.php URL',
     'read_api_php' => 'read_api.php URL',
     'cleanup_api_php' => 'cleanup_api.php URL',
@@ -197,9 +199,14 @@ $displayAdmin    = $isLoggedIn ? $adminToken    : nm_mask_token($adminToken);
 // Build API URLs (https)
 // --------------------
 $base = nm_https_base_url();
-$apiUrl        = nm_join_url($base, '/api/api.php');
-$readApiUrl    = nm_join_url($base, '/api/read_api.php');
-$cleanupApiUrl = nm_join_url($base, '/api/cleanup_api.php');
+
+// APIディレクトリ（末尾 / まで）
+$apiDirUrl     = nm_join_url($base, '/api/');
+
+// 個別API（ディレクトリから生成）
+$apiUrl        = nm_join_url($apiDirUrl, 'api.php');
+$readApiUrl    = nm_join_url($apiDirUrl, 'read_api.php');
+$cleanupApiUrl = nm_join_url($apiDirUrl, 'cleanup_api.php');
 
 // UI links
 $u = nm_ui_toggle_urls('/clipboard_sync.php', $lang, $theme);
@@ -581,6 +588,13 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
           <h3><?=htmlspecialchars($t[$lang]['section_api'], ENT_QUOTES, 'UTF-8')?></h3>
 
           <div class="kv">
+            <div class="row">
+              <div class="k"><?=htmlspecialchars($t[$lang]['api_dir'], ENT_QUOTES, 'UTF-8')?></div>
+              <div class="copy" data-copy="<?=htmlspecialchars($apiDirUrl, ENT_QUOTES, 'UTF-8')?>">
+                <?=htmlspecialchars($apiDirUrl, ENT_QUOTES, 'UTF-8')?>
+                <small>click to copy</small>
+              </div>
+            </div>
             <div class="row">
               <div class="k"><?=htmlspecialchars($t[$lang]['api_php'], ENT_QUOTES, 'UTF-8')?></div>
               <div class="copy" data-copy="<?=htmlspecialchars($apiUrl, ENT_QUOTES, 'UTF-8')?>">

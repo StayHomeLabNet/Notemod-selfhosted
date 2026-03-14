@@ -1,4 +1,6 @@
 <?php
+// VERIFIED: latest_image/latest_file return binary via respond_binary_file (2026-02-22)
+
 // read_api.php
 // Notemod の categories / notes を読み取るための簡易 API
 //
@@ -169,6 +171,116 @@ if ($EXPECTED_TOKEN === '' || $notemodFile === '') {
     respond_json(['status' => 'error', 'message' => 'Server not configured (EXPECTED_TOKEN / DATA_JSON)'], 500, '0');
 }
 
+
+// =====================
+// 追加：USERNAME（マルチユーザー想定・シングルでもOK）
+// =====================
+$USERNAME = 'default';
+$authFile = dirname(__DIR__) . '/config/auth.php';
+if (file_exists($authFile)) {
+    $auth = require $authFile;
+    if (is_array($auth) && isset($auth['USERNAME'])) {
+        $USERNAME = (string)$auth['USERNAME'];
+    } elseif (defined('USERNAME')) {
+        $USERNAME = (string)USERNAME;
+    }
+}
+// ディレクトリ名として安全な形に寄せる
+$USERNAME = preg_replace('/[^a-zA-Z0-9_-]/', '_', $USERNAME);
+if ($USERNAME === '' || $USERNAME === null) $USERNAME = 'default';
+
+// notemod-data のルートを推定（DATA_JSON が /notemod-data/<user>/data.json の場合にも対応）
+$dataJsonDir = realpath(dirname($notemodFile));
+$notemodDataRoot = $dataJsonDir ?: dirname($notemodFile);
+
+// 末尾が "/<user>" の場合はその1つ上をルート扱いにする
+if ($dataJsonDir && basename($dataJsonDir) === $USERNAME) {
+    $parent = realpath(dirname($dataJsonDir));
+    if ($parent) $notemodDataRoot = $parent;
+}
+
+// ユーザーディレクトリ（存在しない場合でも参照できるようにパス組み立て）
+$userDir = rtrim($notemodDataRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $USERNAME;
+
+// =====================
+// 追加：バイナリ応答ヘルパー
+// =====================
+function respond_binary_file(string $path, string $mime, ?string $downloadName = null): void
+{
+    if (!is_file($path) || !is_readable($path)) {
+        respond_json(['status' => 'error', 'message' => 'file not found'], 404, '0');
+    }
+
+    // キャッシュ抑制
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    header('Content-Type: ' . $mime);
+
+    if ($downloadName !== null && $downloadName !== '') {
+        // Content-Disposition はファイル受信時に便利（iOSは必ずしも反映しないが、ブラウザ等で有効）
+        $downloadName = preg_replace('/[\r\n]+/', ' ', $downloadName);
+        $downloadName = str_replace(['"', '\\'], '_', $downloadName);
+        header('Content-Disposition: attachment; filename="' . $downloadName . '"');
+    }
+
+    $size = filesize($path);
+    if ($size !== false) {
+        header('Content-Length: ' . $size);
+    }
+
+    // 出力
+    $fp = fopen($path, 'rb');
+    if ($fp === false) {
+        respond_json(['status' => 'error', 'message' => 'failed to open file'], 500, '0');
+    }
+    // 共有ロック（ベストエフォート）
+    @flock($fp, LOCK_SH);
+    while (!feof($fp)) {
+        $buf = fread($fp, 8192);
+        if ($buf === false) break;
+        echo $buf;
+    }
+    @flock($fp, LOCK_UN);
+    fclose($fp);
+    exit;
+}
+
+function safe_basename(string $name): string
+{
+    // ディレクトリ要素を除去
+    $name = basename($name);
+    // 制御文字など除去
+    $name = preg_replace('/[\x00-\x1F\x7F]/', '', $name);
+    return $name;
+}
+
+// =====================
+// 追加：時刻文字列/メタからUnix秒を得る（比較用）
+// =====================
+function nm_to_unix(?string $isoOrEmpty): int
+{
+    if ($isoOrEmpty === null) return 0;
+    $s = trim($isoOrEmpty);
+    if ($s === '') return 0;
+    $t = strtotime($s);
+    return ($t === false) ? 0 : (int)$t;
+}
+
+function nm_meta_time_unix(array $meta): int
+{
+    // created_at_unix を最優先、無ければ created_at を strtotime、無ければ 0
+    if (isset($meta['created_at_unix']) && is_numeric($meta['created_at_unix'])) {
+        return (int)$meta['created_at_unix'];
+    }
+    if (isset($meta['created_at'])) {
+        $u = nm_to_unix((string)$meta['created_at']);
+        if ($u > 0) return $u;
+    }
+    return 0;
+}
+
 // =====================
 // 1. パラメータ正規化（GET/POST/JSON）
 // =====================
@@ -320,7 +432,184 @@ switch ($action) {
         respond_json(['status' => 'ok', 'count' => count($filtered), 'notes' => $filtered], 200, $prettyMode === '1' ? '1' : '0');
     }
 
-    case 'latest_note': {
+    
+    
+    case 'latest_clip_type': {
+        // 最新の「クリップ（note / image / file）」がどれかを返す
+        // 判定基準：notemod-data/<user>/note_latest.json, image_latest.json, file_latest.json の created_at(_unix)
+        // 優先順位（同時刻の場合）：image > file > note
+
+        // 1) latest_note（テキスト）の時刻を計算（note_latest.json）
+        $noteMeta = null;
+        $noteUnix = 0;
+        $noteMetaPath = $userDir . DIRECTORY_SEPARATOR . 'note_latest.json';
+        if (is_file($noteMetaPath)) {
+            $raw = nm_read_file_with_lock($noteMetaPath);
+            if ($raw === '') { $raw = (string)@file_get_contents($noteMetaPath); }
+            $tmp = json_decode($raw ?: '', true);
+            if (is_array($tmp)) {
+                $noteMeta = $tmp;
+                $noteUnix = nm_meta_time_unix($noteMeta);
+            }
+        }
+
+        // 2) latest_image の時刻を計算（image_latest.json）
+        $imageMeta = null;
+        $imageUnix = 0;
+        $imageMetaPath = $userDir . DIRECTORY_SEPARATOR . 'image_latest.json';
+        if (is_file($imageMetaPath)) {
+            $raw = nm_read_file_with_lock($imageMetaPath);
+            if ($raw === '') { $raw = (string)@file_get_contents($imageMetaPath); }
+            $tmp = json_decode($raw ?: '', true);
+            if (is_array($tmp)) {
+                $imageMeta = $tmp;
+                $imageUnix = nm_meta_time_unix($imageMeta);
+            }
+        }
+
+        // 3) latest_file の時刻を計算（file_latest.json）
+        $fileMeta = null;
+        $fileUnix = 0;
+        $fileMetaPath = $userDir . DIRECTORY_SEPARATOR . 'file_latest.json';
+        if (is_file($fileMetaPath)) {
+            $raw = nm_read_file_with_lock($fileMetaPath);
+            if ($raw === '') { $raw = (string)@file_get_contents($fileMetaPath); }
+            $tmp = json_decode($raw ?: '', true);
+            if (is_array($tmp)) {
+                $fileMeta = $tmp;
+                $fileUnix = nm_meta_time_unix($fileMeta);
+            }
+        }
+
+        // 4) もっとも新しいものを選ぶ（同時刻なら優先順位：image > file > note）
+        $type = 'none';
+        $latestUnix = 0;
+
+        if ($noteUnix > 0) {
+            $type = 'note';
+            $latestUnix = $noteUnix;
+        }
+
+        if ($fileUnix > $latestUnix || ($fileUnix === $latestUnix && $fileUnix > 0 && $type !== 'image')) {
+            $type = 'file';
+            $latestUnix = $fileUnix;
+        }
+
+        if ($imageUnix > $latestUnix || ($imageUnix === $latestUnix && $imageUnix > 0)) {
+            $type = 'image';
+            $latestUnix = $imageUnix;
+        }
+
+        // 返却（メタは最小限）
+        $payload = [
+            'status' => 'ok',
+            'type' => $type,
+            'latest_unix' => $latestUnix,
+        ];
+
+        if ($type === 'note' && is_array($noteMeta)) {
+            // note_latest.json の内容は api.php 側で決める（最低限 created_at / created_at_unix があればOK）
+            $payload['note'] = [
+                'created_at' => $noteMeta['created_at'] ?? null,
+                'created_at_unix' => $noteMeta['created_at_unix'] ?? null,
+            ];
+        } elseif ($type === 'image' && is_array($imageMeta)) {
+            $payload['image'] = [
+                'image_id' => $imageMeta['image_id'] ?? null,
+                'filename' => $imageMeta['filename'] ?? null,
+                'mime' => $imageMeta['mime'] ?? null,
+                'size' => $imageMeta['size'] ?? null,
+                'created_at' => $imageMeta['created_at'] ?? null,
+                'created_at_unix' => $imageMeta['created_at_unix'] ?? null,
+                'sha256' => $imageMeta['sha256'] ?? null,
+            ];
+        } elseif ($type === 'file' && is_array($fileMeta)) {
+            $payload['file'] = [
+                'file_id' => $fileMeta['file_id'] ?? null,
+                'filename' => $fileMeta['filename'] ?? null,
+                'mime' => $fileMeta['mime'] ?? null,
+                'size' => $fileMeta['size'] ?? null,
+                'original_name' => $fileMeta['original_name'] ?? null,
+                'created_at' => $fileMeta['created_at'] ?? null,
+                'created_at_unix' => $fileMeta['created_at_unix'] ?? null,
+                'sha256' => $fileMeta['sha256'] ?? null,
+            ];
+        }
+
+        respond_json($payload, 200, $prettyMode === '1' ? '1' : '0');
+    }
+
+case 'latest_image': {
+        // image_latest.json から最新画像を探して、そのままバイナリを返す
+        $metaPath  = $userDir . DIRECTORY_SEPARATOR . 'image_latest.json';
+        $imagesDir = $userDir . DIRECTORY_SEPARATOR . 'images';
+
+        if (!is_file($metaPath)) {
+            respond_json(['status' => 'ok', 'exists' => false, 'message' => 'no image'], 200, $prettyMode === '1' ? '1' : '0');
+        }
+
+        $metaRaw = nm_read_file_with_lock($metaPath);
+        if ($metaRaw === '') { $metaRaw = (string)@file_get_contents($metaPath); }
+        $meta = json_decode($metaRaw ?: '', true);
+        if (!is_array($meta)) {
+            respond_json(['status' => 'error', 'message' => 'invalid image_latest.json'], 500, $prettyMode === '1' ? '1' : '0');
+        }
+
+        $filename = safe_basename((string)($meta['filename'] ?? ''));
+        $mime     = (string)($meta['mime'] ?? 'application/octet-stream');
+
+        if ($filename === '' || !preg_match('/^[a-zA-Z0-9_-]+\.(png|jpg|jpeg|webp)$/i', $filename)) {
+            respond_json(['status' => 'error', 'message' => 'invalid image filename'], 500, $prettyMode === '1' ? '1' : '0');
+        }
+
+        $baseReal = realpath($imagesDir);
+        $fullReal = realpath($imagesDir . DIRECTORY_SEPARATOR . $filename);
+
+        if (!$baseReal || !$fullReal || strpos($fullReal, $baseReal) !== 0) {
+            respond_json(['status' => 'ok', 'exists' => false, 'message' => 'image file not found'], 200, $prettyMode === '1' ? '1' : '0');
+        }
+
+        // 画像は downloadName なし（貼り付け用途が多いので）
+        respond_binary_file($fullReal, $mime, null);
+    }
+
+    case 'latest_file': {
+        // file_latest.json から最新ファイルを探して、そのままバイナリを返す
+        $metaPath  = $userDir . DIRECTORY_SEPARATOR . 'file_latest.json';
+        $filesDir  = $userDir . DIRECTORY_SEPARATOR . 'files';
+
+        if (!is_file($metaPath)) {
+            respond_json(['status' => 'ok', 'exists' => false, 'message' => 'no file'], 200, $prettyMode === '1' ? '1' : '0');
+        }
+
+        $metaRaw = nm_read_file_with_lock($metaPath);
+        if ($metaRaw === '') { $metaRaw = (string)@file_get_contents($metaPath); }
+        $meta = json_decode($metaRaw ?: '', true);
+        if (!is_array($meta)) {
+            respond_json(['status' => 'error', 'message' => 'invalid file_latest.json'], 500, $prettyMode === '1' ? '1' : '0');
+        }
+
+        $filename = safe_basename((string)($meta['filename'] ?? ''));
+        $mime     = (string)($meta['mime'] ?? 'application/octet-stream');
+        $origName = safe_basename((string)($meta['original_name'] ?? ''));
+
+        if ($filename === '' || !preg_match('/^[a-zA-Z0-9_-]+\.[a-zA-Z0-9]{1,10}$/', $filename)) {
+            respond_json(['status' => 'error', 'message' => 'invalid file filename'], 500, $prettyMode === '1' ? '1' : '0');
+        }
+
+        $baseReal = realpath($filesDir);
+        $fullReal = realpath($filesDir . DIRECTORY_SEPARATOR . $filename);
+
+        if (!$baseReal || !$fullReal || strpos($fullReal, $baseReal) !== 0) {
+            respond_json(['status' => 'ok', 'exists' => false, 'message' => 'file not found'], 200, $prettyMode === '1' ? '1' : '0');
+        }
+
+        // 元ファイル名が無い/不正なら、保存名を使う
+        $downloadName = $origName !== '' ? $origName : $filename;
+        respond_binary_file($fullReal, $mime, $downloadName);
+    }
+
+case 'latest_note': {
         $categoryName  = trim((string)($params['category'] ?? ''));
         $categoryIdStr = trim((string)($params['category_id'] ?? ''));
 

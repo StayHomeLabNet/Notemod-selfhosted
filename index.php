@@ -444,7 +444,7 @@ opacity: .35;filter: sepia(1) hue-rotate(173deg) saturate(1.5);-webkit-filter: s
 .gecerli_dil:before{content: '';width:10px;height:4px;top:6px;left:0;border-left:2px solid #6bb5ff;border-bottom:2px solid #6bb5ff;position:absolute;-webkit-transform:rotate(-45deg);transform:rotate(-45deg);}
 .dili_degistir{margin-bottom:5px;position: relative;cursor: pointer;}
 p#sync_kurulum {position: relative;cursor: pointer;}
-#uyariMesaji,#gistHataMesaji{color:#6dbaff;display:none;margin-top:14px;}
+#uyariMesaji{color:#6dbaff;display:none;margin-top:14px;}
 p.baglanti {font-size: 14px;color: #69baff;max-width: 270px;}
 #arrow:after,.togglediv:after,#sync_kurulum:after{content: '';background-image: url("data:image/svg+xml;utf8,<svg version='1.1' xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18' xml:space='preserve' style='vertical-align: middle;' id='left_arrow'><g><line x1='5.8' y1='2.6' x2='12.2' y2='9' style='fill: none; stroke: %23a2c1f4; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke-miterlimit: 10;'/><line x1='5.8' y1='15.4' x2='12.2' y2='9' style='fill: none; stroke: %23a2c1f4; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke-miterlimit: 10;'/></g></svg>");
 background-repeat: no-repeat;background-position: center;background-size: 20px;color: transparent;width: 20px;height:25px;position: absolute;right: 0;}
@@ -585,14 +585,186 @@ button.tab{padding: 6px 8px;width: 100%;}
 </style>
 </head>
 <body>
+
+<script>
+// ローカルストレージのクリア
+function clearNotemodKeysOnly() {
+  for (const key of NOTEMOD_KEYS) {
+    try { localStorage.removeItem(key) } catch {}
+  }
+}
+// 同期マネージャー（ロジックの集約）
+const SyncManager = {
+    isSaving: false,
+    async save() {
+        if (this.isSaving) return;
+        this.isSaving = true;
+        try {
+            const saveFn = (typeof syncSaveToServerBackground === 'function') 
+                ? syncSaveToServerBackground 
+                : (typeof syncSaveToServer === 'function' ? syncSaveToServer : null);
+            
+            if (saveFn) {
+                await saveFn();
+                console.log("Sync Success");
+            }
+        } catch (e) {
+            console.error('Sync Error:', e);
+        } finally {
+            this.isSaving = false;
+        }
+    },
+    async load(forceClear = false) {
+        if (forceClear) clearNotemodKeysOnly();
+        if (typeof syncLoadFromServer === 'function') await syncLoadFromServer();
+    }
+};
+
+window.addEventListener('DOMContentLoaded', function () {
+    // 確実にキャプチャするために document でイベントを待ち受ける
+    document.addEventListener('click', function (event) {
+        const target = event.target;
+
+        // 1. 同期（読み込み）ボタン
+        if (target.closest('#sync')) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            SyncManager.load(true);
+            return;
+        }
+
+        // 2. ADDボタン & 保存ボタン & 削除ボタンの判定
+        // target自体が消える可能性を考慮し、判定を「ID一致」または「closest」の両面待ちにする
+        const isAddBtn = target.id === 'confirmDelete' || target.closest('#confirmDelete');
+        const isSaveBtn = target.closest('#save-note-button, #saveTasksButton, .delete-task-button, .delete-confirm');
+
+        if (isAddBtn || isSaveBtn) {
+            // Note: ADDボタンは処理後にDOMから消えることが多いため、
+            // わずかに遅延（setTimeout）させて確実に裏側で同期を走らせる
+            setTimeout(() => SyncManager.save(), 50);
+        }
+    }, { capture: true, passive: false });
+});
+</script>
+
 <script>
 
-// ★ここに Notemod が使っている localStorage のキー名を全部並べる
+// スナップショットJSON → localStorage に戻す
+function notemodRestoreSnapshot(jsonStr) {
+  let obj
+  try {
+    obj = JSON.parse(jsonStr)
+  } catch (e) {
+    console.error('Restore failed: snapshot JSON parse error', e, jsonStr?.slice?.(0, 200))
+    return false
+  }
+
+  for (const key of NOTEMOD_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(obj, key)) continue
+
+    try {
+      const v = obj[key]
+      if (v === null || v === undefined) {
+        localStorage.removeItem(key)
+      } else {
+        localStorage.setItem(key, v)
+      }
+    } catch (e) {
+      console.error('Restore failed at key:', key, e)
+      // 続行（他のキーは復元する）
+    }
+  }
+  return true
+}
+
+
+// サーバーから読み込み
+async function syncLoadFromServer({ quiet = false } = {}) {
+  try {
+    const res = await fetch(NOTEMOD_SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      cache: 'no-store',
+      body: JSON.stringify({
+        action: 'load',
+        token: NOTEMOD_SYNC_TOKEN
+      })
+    })
+
+    if (!res.ok) {
+      if (!quiet) alert('Failed to load: HTTP ' + res.status)
+      return false
+    }
+
+    const json = await res.json()
+    if (json.status !== 'ok') {
+      if (!quiet) alert('Failed to load: ' + (json.message || 'unknown error'))
+      return false
+    }
+
+    if (!json.data) {
+      if (!quiet) alert('No data was found on the server.')
+      return false
+    }
+
+    const ok = notemodRestoreSnapshot(json.data)
+    if (!ok) {
+      if (!quiet) alert('Restore failed (snapshot may be broken)')
+      return false
+    }
+
+    sessionStorage.setItem('reloadedAfterSync', '1')
+    location.reload()
+    return true
+
+  } catch (e) {
+    console.error(e)
+    if (!quiet) alert('Failed to load due to a communication error.')
+    return false
+  }
+}
+
+async function autoLoadOnce() {
+  // 同期後リロード直後はスキップ（無限ループ防止）
+  if (sessionStorage.getItem('reloadedAfterSync') === '1') {
+    sessionStorage.removeItem('reloadedAfterSync')
+    return
+  }
+
+  // 成功済みならもうやらない
+  if (sessionStorage.getItem('autoLoadDone') === '1') return
+
+  // 実行中なら重ねない
+  if (sessionStorage.getItem('autoLoadInProgress') === '1') return
+  sessionStorage.setItem('autoLoadInProgress', '1')
+
+  try {
+    const ok = await syncLoadFromServer({ quiet: true })  // ← 成功したらtrue返す版
+    if (ok) sessionStorage.setItem('autoLoadDone', '1')
+  } finally {
+    sessionStorage.removeItem('autoLoadInProgress')
+  }
+}
+
+// どっちか1つでOK（おすすめはDOMContentLoaded）
+window.addEventListener('DOMContentLoaded', autoLoadOnce)
+// window.addEventListener('pageshow', autoLoadOnce)
+
+</script>
+
+<script>
+
+// Notemod が使っている localStorage のキー名
 const NOTEMOD_KEYS = [
   'categories',
+  'categoryOrder',
+  'selectedLanguage',
   'hasSelectedLanguage',
   'notes',
-  'selectedLanguage',
+  'noteOrder',
+  'sidebarState',
+  'thizaState',
   'tema',
 ];
 
@@ -605,22 +777,8 @@ function notemodCreateSnapshot() {
   return JSON.stringify(obj);
 }
 
-// スナップショットJSON → localStorage に戻す
-function notemodRestoreSnapshot(jsonStr) {
-  const obj = JSON.parse(jsonStr);
-  for (const key of NOTEMOD_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(obj, key)) {
-      if (obj[key] === null || obj[key] === undefined) {
-        localStorage.removeItem(key); // 無くしたい場合
-      } else {
-        localStorage.setItem(key, obj[key]);
-      }
-    }
-  }
-}
 
-
-const NOTEMOD_SYNC_URL   = './notemod_sync.php';
+const NOTEMOD_SYNC_URL = new URL('./notemod_sync.php', window.location.href).toString();
 const NOTEMOD_SYNC_TOKEN = <?php echo json_encode($SECRET, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 
 
@@ -632,12 +790,14 @@ async function syncSaveToServer() {
     const res = await fetch(NOTEMOD_SYNC_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      cache: 'no-store',
       body: JSON.stringify({
         action: 'save',
         token: NOTEMOD_SYNC_TOKEN,
-        data: snapshot,
+        data: snapshot
       })
-    });
+    })
 
     const json = await res.json();
     if (json.status === 'ok') {
@@ -666,12 +826,14 @@ async function syncSaveToServerBackground() {
     const res = await fetch(NOTEMOD_SYNC_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      cache: 'no-store',
       body: JSON.stringify({
         action: 'save',
         token: NOTEMOD_SYNC_TOKEN,
-        data: snapshot,
+        data: snapshot
       })
-    });
+    })
 
     if (!res.ok) {
       console.error('background sync failed: HTTP ' + res.status);
@@ -689,46 +851,8 @@ async function syncSaveToServerBackground() {
   }
 }
 
-
-// サーバーから読み込み
-async function syncLoadFromServer() {
-  try {
-    const res = await fetch(NOTEMOD_SYNC_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'load',
-        token: NOTEMOD_SYNC_TOKEN
-      })
-    });
-
-    const json = await res.json();
-    if (json.status !== 'ok') {
-      alert('Failed to load the content: ' + (json.message || 'unknown error'));
-      return;
-    }
-
-    if (!json.data) {
-      alert('No data was found on the server.');
-      return;
-    }
-
-    // スナップショットを localStorage に反映
-    notemodRestoreSnapshot(json.data);
-
-  // ★ このリロードは「サーバーから読み込んだあとのリロードだよ」という印をつける
-  sessionStorage.setItem('reloadedAfterSync', '1');
-
-  // 画面を最新状態で描き直す
-  location.reload();
-
-  } catch (e) {
-    console.error(e);
-    alert('Failed to load due to a communication error.');
-  }
-}
-
 </script>
+
 <script>let currentTheme = localStorage.getItem('tema');if (currentTheme){document.body.className = currentTheme;}</script>
 <div class="container">
 <div class="sidebar">
@@ -751,6 +875,7 @@ async function syncLoadFromServer() {
     <button id="log_settings">Log settings</button>
     <button id="bak_settings">Backup settings</button>
     <button id="clipboard_sync">Clipboard Sync</button>
+    <button id="media_files">Media & Files</button>
   </div>
 </div>
 
@@ -823,6 +948,7 @@ async function syncLoadFromServer() {
 <div class="arkaplan logo" style="display: none;"></div>
 </div>
 </div>
+
 <script>
 document.addEventListener('DOMContentLoaded', () => {
 window.onload = function() {
@@ -898,6 +1024,7 @@ setup_auth:{AR:"إعدادات المصادقة",DE:"Authentifizierungseinstellu
 log_settings:{AR:"إعدادات السجل",DE:"Protokolleinstellungen",EN:"Log settings",ES:"Configuración de registros",FA:"تنظیمات لاگ",FR:"Paramètres des journaux",HI:"लॉग सेटिंग्स",ID:"Pengaturan log",IT:"Impostazioni log",JA:"ログ設定",KO:"로그 설정",SW:"Mipangilio ya logi",PL:"Ustawienia logów",PT:"Configurações de log",RU:"Настройки журнала",VI:"Cài đặt nhật ký",TR:"Günlük ayarları",UR:"لاگ سیٹنگز",UZ:"Log sozlamalari",ZH:"日志设置",NL:"Loginstellingen",SV:"Logginställningar",EL:"Ρυθμίσεις καταγραφής",CS:"Nastavení protokolu",HU:"Naplóbeállítások",RO:"Setări jurnal",BG:"Настройки на логовете",DA:"Logindstillinger",FI:"Lokiasetukset",SL:"Nastavitve dnevnika"},
 bak_settings:{AR:"إعدادات النسخ الاحتياطي",DE:"Backup-Einstellungen",EN:"Backup settings",ES:"Configuración de copia de seguridad",FA:"تنظیمات پشتیبان‌گیری",FR:"Paramètres de sauvegarde",HI:"बैकअप सेटिंग्स",ID:"Pengaturan cadangan",IT:"Impostazioni di backup",JA:"バックアップ設定",KO:"백업 설정",SW:"Mipangilio ya chelezo",PL:"Ustawienia kopii zapasowej",PT:"Configurações de backup",RU:"Настройки резервного копирования",VI:"Cài đặt sao lưu",TR:"Yedekleme ayarları",UR:"بیک اپ سیٹنگز",UZ:"Zaxira sozlamalari",ZH:"备份设置",NL:"Back-upinstellingen",SV:"Säkerhetskopieringsinställningar",EL:"Ρυθμίσεις αντιγράφων ασφαλείας",CS:"Nastavení zálohování",HU:"Biztonsági mentés beállításai",RO:"Setări de backup",BG:"Настройки за архивиране",DA:"Backupindstillinger",FI:"Varmuuskopioinnin asetukset",SL:"Nastavitve varnostne kopije"},
 clipboard_sync:{AR:"مزامنة الحافظة",DE:"Zwischenablagen-Synchronisierung",EN:"Clipboard Sync",ES:"Sincronización del portapapeles",FA:"همگام‌سازی کلیپ‌بورد",FR:"Synchronisation du presse-papiers",HI:"क्लिपबोर्ड सिंक",ID:"Sinkronisasi Papan Klip",IT:"Sincronizzazione degli appunti",JA:"クリップボード同期",KO:"클립보드 동기화",SW:"Usawazishaji wa Ubao wa Kunakili",PL:"Synchronizacja schowka",PT:"Sincronização da área de transferência",RU:"Синхронизация буфера обмена",VI:"Đồng bộ khay nhớ tạm",TR:"Pano senkronizasyonu",UR:"کلپ بورڈ ہم وقت سازی",UZ:"Klipbordni sinxronlash",ZH:"剪贴板同步",NL:"Klembordsynchronisatie",SV:"Urklippssynkronisering",EL:"Συγχρονισμός Πρόχειρου",CS:"Synchronizace schránky",HU:"Vágólap szinkronizálás",RO:"Sincronizare clipboard",BG:"Синхронизиране на клипборда",DA:"Udklipssynkronisering",FI:"Leikepöydän synkronointi",SL:"Sinhronizacija odložišča"},
+media_files:{AR:"الوسائط والملفات",DE:"Medien & Dateien",EN:"Media & Files",ES:"Medios y archivos",FA:"رسانه‌ها و فایل‌ها",FR:"Médias et fichiers",HI:"मीडिया और फ़ाइलें",ID:"Media & File",IT:"Media e file",JA:"メディア＆ファイル",KO:"미디어 및 파일",SW:"Midia na Faili",PL:"Multimedia i pliki",PT:"Mídia e arquivos",RU:"Медиа и файлы",VI:"Phương tiện & Tệp",TR:"Medya ve Dosyalar",UR:"میڈیا اور فائلیں",UZ:"Media va fayllar",ZH:"媒体和文件",NL:"Media en bestanden",SV:"Media och filer",EL:"Μέσα & Αρχεία",CS:"Média a soubory",HU:"Média és fájlok",RO:"Media și fișiere",BG:"Медия и файлове",DA:"Medier og filer",FI:"Media ja tiedostot",SL:"Mediji in datoteke"},
 reading_mode:{AR:"وضع القراءة",DE:"Lesemodus",EN:"Reading mode",ES:"Modo de lectura",FA:"حالت خواندن",FR:"Mode lecture",HI:"रीडिंग मोड",ID:"Mode membaca",IT:"Modalità lettura",JA:"リーディングモード",KO:"읽기 모드",SW:"Mpango wa kusoma",PL:"Tryb czytania",PT:"Modo de leitura",RU:"Режим чтения",VI:"Chế độ đọc",TR:"Okuma modu",UR:"پڑھنے کا طریقہ",UZ:"O'qish rejimi",ZH:"阅读模式",NL:"Leesmodus",SV:"Läsläge",EL:"Λειτουργία ανάγνωσης",CS:"Režim čtení",HU:"Olvasási mód",RO:"Mod de citire",BG:"Режим на четене",DA:"Læsetilstand",FI:"Lukutila",SL:"Način branja"},
 today:{AR:"اليوم",DE:"Heute",EN:"Today",ES:"Hoy",FA:"امروز",FR:"Aujourd'hui",HI:"आज",ID:"Hari ini",IT:"Oggi",JA:"今日",KO:"오늘",SW:"Leo",PL:"Dzisiaj",PT:"Hoje",RU:"Сегодня",VI:"Hôm nay",TR:"Bugün",UR:"آج",UZ:"Bugun",ZH:"今天",NL:"Vandaag",SV:"Idag",EL:"Σήμερα",CS:"Dnes",HU:"Ma",RO:"Astăzi",BG:"Днес",DA:"I dag",FI:"Tänään",SL:"Danes"},
 tomorrow:{AR:"غدًا",DE:"Morgen",EN:"Tomorrow",ES:"Mañana",FA:"فردا",FR:"Demain",HI:"कल",ID:"Besok",IT:"Domani",JA:"明日",KO:"내일",SW:"Kesho",PL:"Jutro",PT:"Amanhã",RU:"Завтра",VI:"Ngày mai",TR:"Yarın",UR:"کل",UZ:"Ertaga",ZH:"明天",NL:"Morgen",SV:"I morgon",EL:"Αύριο",CS:"Zítra",HU:"Holnap",RO:"Mâine",BG:"Утре",DA:"I morgen",FI:"Huomenna",SL:"Jutri"},
@@ -918,27 +1045,18 @@ create_github_account:{AR:"أولاً، قم بإنشاء حساب على GitHub
 open_app_creation_page:{AR:"ثم افتح صفحة إنشاء التطبيق:",DE:"Öffnen Sie dann die App-Erstellungsseite:",EN:"Then open the app creation page:",ES:"Luego abre la página de creación de la aplicación:",FA:"سپس صفحه ایجاد برنامه را باز کنید:",FR:"Ensuite, ouvrez la page de création de l'application :",HI:"फिर ऐप निर्माण पृष्ठ खोलें:",ID:"Kemudian buka halaman pembuatan aplikasi:",IT:"Quindi apri la pagina di creazione dell'applicazione:",JA:"次に、アプリ作成ページを開きます:",KO:"그런 다음 앱 생성 페이지를 엽니다:",SW:"Kisha fungua ukurasa wa kuunda programu:",PL:"Następnie otwórz stronę tworzenia aplikacji:",PT:"Em seguida, abra a página de criação do aplicativo:",RU:"Затем откройте страницу создания приложения:",VI:"Sau đó mở trang tạo ứng dụng:",TR:"Sonra uygulama oluşturma sayfasını açın:",UR:"پھر ایپ تخلیق صفحہ کھولیں:",UZ:"Keyin ilova yaratish sahifasini oching:",ZH:"然后打开应用程序创建页面:",NL:"Open dan de app-aanmaakpagina:",SV:"Öppna sedan sidan för att skapa appen:",EL:"Στη συνέχεια, ανοίξτε τη σελίδα δημιουργίας εφαρμογής:",CS:"Poté otevřete stránku pro vytvoření aplikace:",HU:"Ezután nyissa meg az alkalmazás létrehozási oldalt:",RO:"Apoi deschide pagina de creare a aplicației:",BG:"След това отворете страницата за създаване на приложение:",DA:"Åbn derefter siden til oprettelse af appen:",FI:"Avaa sitten sovelluksen luontisivu:",SL:"Nato odprite stran za ustvarjanje aplikacije:"},
 select_personal_access_tokens:{AR:"في الجانب الأيسر، حدد خيار 'Personal access tokens' داخل قسم 'Tokens (classic)'.",DE:"Wählen Sie auf der linken Seite die Option 'Personal access tokens' im Abschnitt 'Tokens (classic)' aus.",EN:"On the left side, select the 'Personal access tokens' option inside the 'Tokens (classic)' section.",ES:"En el lado izquierdo, seleccione la opción 'Personal access tokens' dentro de la sección 'Tokens (classic)'.",FA:"در سمت چپ، گزینه 'Personal access tokens' را در بخش 'Tokens (classic)' انتخاب کنید.",FR:"Sur le côté gauche, sélectionnez l'option 'Personal access tokens' dans la section 'Tokens (classic)'.",HI:"बाईं ओर, 'Tokens (classic)' खंड के अंदर 'Personal access tokens' विकल्प चुनें।",ID:"Di sisi kiri, pilih opsi 'Personal access tokens' di dalam bagian 'Tokens (classic)'.",IT:"Sul lato sinistro, seleziona l'opzione 'Personal access tokens' all'interno della sezione 'Tokens (classic)'.",JA:"左側で、'Tokens (classic)' セクション内の 'Personal access tokens' オプションを選択します。",KO:"왼쪽에서 'Tokens (classic)' 섹션 내의 'Personal access tokens' 옵션을 선택합니다.",SW:"Upande wa kushoto, chagua chaguo la 'Personal access tokens' ndani ya sehemu ya 'Tokens (classic)'.",PL:"Po lewej stronie wybierz opcję 'Personal access tokens' w sekcji 'Tokens (classic)'.",PT:"No lado esquerdo, selecione a opção 'Personal access tokens' dentro da seção 'Tokens (classic)'.",RU:"Слева выберите опцию 'Personal access tokens' в разделе 'Tokens (classic)'.",VI:"Ở bên trái, chọn tùy chọn 'Personal access tokens' bên trong phần 'Tokens (classic)'.",TR:"Sol tarafta, 'Personal access tokens' seçeneğinin içindeki 'Tokens (classic)' kısmını seçin.",UR:"بائیں جانب، 'Tokens (classic)' حصے کے اندر 'Personal access tokens' آپشن منتخب کریں۔",UZ:"Chap tomonda, 'Tokens (classic)' bo'limidagi 'Personal access tokens' ni tanlang.",ZH:"在左侧，选择'Tokens (classic)'部分中的'Personal access tokens'选项。",NL:"Selecteer aan de linkerkant de optie 'Personal access tokens' in de sectie 'Tokens (classic)'.",SV:"Välj alternativet 'Personal access tokens' på vänster sida i sektionen 'Tokens (classic)'.",EL:"Στην αριστερή πλευρά, επιλέξτε την επιλογή 'Personal access tokens' μέσα στην ενότητα 'Tokens (classic)'.",CS:"Na levé straně vyberte možnost 'Personal access tokens' v sekci 'Tokens (classic)'.",HU:"A bal oldalon válassza a 'Personal access tokens' opciót a 'Tokens (classic)' részen belül.",RO:"Pe partea stângă, selectează opțiunea 'Personal access tokens' din secțiunea 'Tokens (classic)'.",BG:"От лявата страна изберете опцията 'Personal access tokens' в раздела 'Tokens (classic)'.",DA:"På venstre side vælg muligheden 'Personal access tokens' inde i afsnittet 'Tokens (classic)'.",FI:"Valitse vasemmalta puolelta 'Personal access tokens' -vaihtoehto 'Tokens (classic)' -osiossa.",SL:"Na levi strani izberite možnost 'Personal access tokens' znotraj razdelka 'Tokens (classic)'."},
 click_generate_new_token:{AR:"انقر فوق زر 'Generate new token (classic)'.",DE:"Klicken Sie auf die Schaltfläche 'Generate new token (classic)'.",EN:"Click the 'Generate new token (classic)' button.",ES:"Haz clic en el botón 'Generate new token (classic)'.",FA:"روی دکمه 'Generate new token (classic)' کلیک کنید.",FR:"Cliquez sur le bouton 'Generate new token (classic)'.",HI:"'Generate new token (classic)' बटन पर क्लिक करें।",ID:"Klik tombol 'Generate new token (classic)'.",IT:"Fai clic sul pulsante 'Generate new token (classic)'.",JA:"「Generate new token (classic)」ボタンをクリックします。",KO:"'Generate new token (classic)' 버튼을 클릭합니다.",SW:"Bofya kifungo cha 'Generate new token (classic)'.",PL:"Kliknij przycisk 'Generate new token (classic)'.",PT:"Clique no botão 'Generate new token (classic)'.",RU:"Нажмите кнопку 'Generate new token (classic)'.",VI:"Nhấn vào nút 'Generate new token (classic)'.",TR:"'Generate new token (classic)' butonuna tıklayın.",UR:"'Generate new token (classic)' بٹن پر کلک کریں۔",UZ:"'Generate new token (classic)' tugmasini bosing.",ZH:"点击“Generate new token (classic)”按钮。",NL:"Klik op de knop 'Generate new token (classic)'.",SV:"Klicka på knappen 'Generate new token (classic)'.",EL:"Κάντε κλικ στο κουμπί 'Generate new token (classic)'.",CS:"Klikněte na tlačítko 'Generate new token (classic)'.",HU:"Kattintson a 'Generate new token (classic)' gombra.",RO:"Apasă pe butonul 'Generate new token (classic)'.",BG:"Кликнете върху бутона 'Generate new token (classic)'.",DA:"Klik på knappen 'Generate new token (classic)'.",FI:"Napsauta 'Generate new token (classic)' -painiketta.",SL:"Kliknite na gumb 'Generate new token (classic)'."},
-name_your_token:{AR:"أعطِ الاسم لرمزك (على سبيل المثال، 'عمليات Gist').",DE:"Geben Sie Ihrem Token einen Namen (z. B. 'Gist-Operationen').",EN:"Name your token (e.g., 'Gist operations').",ES:"Asigne un nombre a su token (por ejemplo, 'Operaciones de Gist').",FA:"برای توکن خود یک نام انتخاب کنید (به عنوان مثال، 'عملیات Gist').",FR:"Nommez votre jeton (par exemple, 'Opérations Gist').",HI:"अपने टोकन का नाम दें (उदाहरण के लिए, 'Gist ऑपरेशन').",ID:"Berikan nama untuk token Anda (misalnya, 'Operasi Gist').",IT:"Dai un nome al tuo token (ad esempio, 'Operazioni Gist').",JA:"トークンに名前を付けます（例: 'Gist 操作'）。",KO:"토큰에 이름을 지정하세요 (예: 'Gist 작업').",SW:"Jina la funguo lako (kwa mfano, 'Shughuli za Gist').",PL:"Nazwij swój token (np. 'Operacje Gist').",PT:"Dê um nome ao seu token (por exemplo, 'Operações Gist').",RU:"Назовите ваш токен (например, 'Операции Gist').",VI:"Đặt tên cho token của bạn (ví dụ: 'Hoạt động Gist').",TR:"Token'ınıza bir ad verin (örneğin, 'Gist işlemleri').",UR:"اپنے ٹوکن کو نام دیں (مثال کے طور پر، 'Gist عملیات').",UZ:"Tokeningizga nom bering (masalan, 'Gist operatsiyalari').",ZH:"为您的令牌命名（例如，“Gist操作”）。",NL:"Geef je token een naam (bijv. 'Gist-operaties').",SV:"Namnge din token (t.ex. 'Gist-operationer').",EL:"Ονομάστε το token σας (π.χ. 'Λειτουργίες Gist').",CS:"Pojmenujte svůj token (např. 'Operace Gist').",HU:"Nevezze el a tokenjét (pl. 'Gist műveletek').",RO:"Denumiți-vă token-ul (de ex. 'Operațiuni Gist').",BG:"Дайте име на вашия токен (напр. 'Операции с Gist').",DA:"Navngiv din token (f.eks. 'Gist-operationer').",FI:"Nimeä tokenisi (esim. 'Gist-toiminnot').",SL:"Poimenujte svoj žeton (npr. 'Operacije Gist')."},
 set_expiration_no_expiration:{AR:"حدد 'Expiration' كـ 'No expiration'.",DE:"Legen Sie 'Expiration' auf 'No expiration' fest.",EN:"Set 'Expiration' to 'No expiration'.",ES:"Establezca 'Expiration' en 'No expiration'.",FA:"'Expiration' را روی 'No expiration' تنظیم کنید.",FR:"Réglez 'Expiration' sur 'No expiration'.",HI:"'Expiration' को 'No expiration' पर सेट करें।",ID:"Atur 'Expiration' ke 'No expiration'.",IT:"Imposta 'Expiration' su 'No expiration'.",JA:"'Expiration' を 'No expiration' に設定します。",KO:"'Expiration'을 'No expiration'으로 설정합니다.",SW:"Weka 'Expiration' kuwa 'Hakuna mwisho'.",PL:"Ustaw 'Expiration' na 'No expiration'.",PT:"Defina 'Expiration' como 'No expiration'.",RU:"Установите 'Expiration' на 'No expiration'.",VI:"Đặt 'Expiration' thành 'No expiration'.",TR:"'Expiration' kısmını 'No expiration' olarak seçin.",UR:"'Expiration' کو 'No expiration' پر سیٹ کریں۔",UZ:"'Expiration' ni 'No expiration' ga sozlang.",ZH:"将'Expiration'设置为'No expiration'。",NL:"Stel 'Expiration' in op 'No expiration'.",SV:"Sätt 'Expiration' till 'No expiration'.",EL:"Ορίστε το 'Expiration' σε 'No expiration'.",CS:"Nastavte 'Expiration' na 'No expiration'.",HU:"Állítsa be az 'Expiration'-t 'No expiration'-ra.",RO:"Setează 'Expiration' la 'No expiration'.",BG:"Задайте 'Expiration' на 'No expiration'.",DA:"Indstil 'Expiration' til 'No expiration'.",FI:"Aseta 'Expiration' arvoon 'No expiration'.",SL:"Nastavite 'Expiration' na 'No expiration'."},
 repository_access_public_repos:{AR:"يمكن أن تبقى خانة 'Repository access' كما هي 'Public Repositories'.",DE:"Die Option 'Repository access' kann als 'Public Repositories' belassen werden.",EN:"The 'Repository access' part can remain as 'Public Repositories'.",ES:"La parte de 'Repository access' puede permanecer como 'Public Repositories'.",FA:"بخش 'Repository access' می‌تواند به صورت 'Public Repositories' باقی بماند.",FR:"La partie 'Repository access' peut rester définie sur 'Public Repositories'.",HI:"'Repository access' भाग 'Public Repositories' के रूप में रह सकता है।",ID:"Bagian 'Repository access' dapat tetap sebagai 'Public Repositories'.",IT:"La parte 'Repository access' può rimanere come 'Public Repositories'.",JA:"'Repository access' の部分は 'Public Repositories' のままにしておけます。",KO:"'Repository access' 부분은 'Public Repositories'로 유지할 수 있습니다.",SW:"Sehemu ya 'Repository access' inaweza kuendelea kuwa 'Public Repositories'.",PL:"Część 'Repository access' może pozostać jako 'Public Repositories'.",PT:"A parte 'Repository access' pode permanecer como 'Public Repositories'.",RU:"Часть 'Repository access' может оставаться как 'Public Repositories'.",VI:"Phần 'Repository access' có thể giữ nguyên là 'Public Repositories'.",TR:"'Repository access' kısmı 'Public Repositories' şeklinde kalabilir.",UR:"'Repository access' حصہ 'Public Repositories' کی شکل میں رہ سکتا ہے۔",UZ:"'Repository access' qismi 'Public Repositories' shaklida qolishi mumkin.",ZH:"'Repository access'部分可以保留为'Public Repositories'。",NL:"Het deel 'Repository access' kan als 'Public Repositories' blijven.",SV:"Del 'Repository access' kan förbli som 'Public Repositories'.",EL:"Το μέρος 'Repository access' μπορεί να παραμείνει ως 'Public Repositories'.",CS:"Část 'Repository access' může zůstat jako 'Public Repositories'.",HU:"A 'Repository access' rész 'Public Repositories' maradhat.",RO:"Partea 'Repository access' poate rămâne ca 'Public Repositories'.",BG:"Частта 'Repository access' може да остане като 'Public Repositories'.",DA:"'Repository access'-delen kan forblive som 'Public Repositories'.",FI:"'Repository access' -osa voi pysyä 'Public Repositories' -muodossa.",SL:"Del 'Repository access' lahko ostane kot 'Public Repositories'."},
-set_permissions_for_gist:{AR:"بعد ذلك، في قسم 'Permissions'، ابحث عن قسم 'Gist' وقم بتعيين الأذونات إلى 'Read and write'.",DE:"Suchen Sie anschließend im Abschnitt 'Permissions' nach dem Abschnitt 'Gist' und setzen Sie die Berechtigungen auf 'Read and write'.",EN:"Then, in the 'Permissions' section, find the 'Gist' section and set the permissions to 'Read and write'.",ES:"Luego, en la sección 'Permissions', encuentre la sección 'Gist' y establezca los permisos en 'Read and write'.",FA:"سپس، در بخش 'Permissions'، بخش 'Gist' را پیدا کرده و مجوزها را روی 'Read and write' تنظیم کنید.",FR:"Ensuite, dans la section 'Permissions', trouvez la section 'Gist' et réglez les autorisations sur 'Read and write'.",HI:"फिर, 'Permissions' खंड में, 'Gist' खंड ढूँढें और अनुमतियों को 'Read and write' पर सेट करें।",ID:"Kemudian, di bagian 'Permissions', temukan bagian 'Gist' dan atur izin menjadi 'Read and write'.",IT:"Quindi, nella sezione 'Permissions', trova la sezione 'Gist' e imposta i permessi su 'Read and write'.",JA:"次に、'Permissions' セクションで 'Gist' セクションを見つけ、権限を 'Read and write' に設定します。",KO:"그런 다음 'Permissions' 섹션에서 'Gist' 섹션을 찾아 권한을 'Read and write'로 설정합니다.",SW:"Kisha, katika sehemu ya 'Permissions', tafuta sehemu ya 'Gist' na weka ruhusa kuwa 'Read and write'.",PL:"Następnie w sekcji 'Permissions' znajdź sekcję 'Gist' i ustaw uprawnienia na 'Read and write'.",PT:"Depois, na seção 'Permissions', encontre a seção 'Gist' e defina as permissões para 'Read and write'.",RU:"Затем в разделе 'Permissions' найдите раздел 'Gist' и установите разрешения на 'Read and write'.",VI:"Sau đó, trong phần 'Permissions', tìm phần 'Gist' và đặt quyền thành 'Read and write'.",TR:"Ardından 'Permissions' kısmında 'Gist' kısmını bulup izinleri 'Read and write' olarak ayarlayın.",UR:"پھر، 'Permissions' حصے میں، 'Gist' حصہ تلاش کریں اور اجازتیں 'Read and write' پر سیٹ کریں۔",UZ:"Keyin 'Permissions' bo'limida 'Gist' bo'limini topib, ruxsatlarni 'Read and write' ga sozlang.",ZH:"然后，在'Permissions'部分中，找到'Gist'部分并将权限设置为'Read and write'。",NL:"Zoek vervolgens in de 'Permissions'-sectie naar de 'Gist'-sectie en stel de rechten in op 'Read and write'.",SV:"Sök sedan i 'Permissions'-sektionen efter 'Gist'-sektionen och ställ in behörigheterna till 'Read and write'.",EL:"Στη συνέχεια, στην ενότητα 'Permissions', βρείτε την ενότητα 'Gist' και ορίστε τα δικαιώματα σε 'Read and write'.",CS:"Poté v sekci 'Permissions' najděte sekci 'Gist' a nastavte oprávnění na 'Read and write'.",HU:"Ezután a 'Permissions' részen belül keresse meg a 'Gist' részt, és állítsa a jogosultságokat 'Read and write'-ra.",RO:"Apoi, în secțiunea 'Permissions', găsește secțiunea 'Gist' și setează permisiunile la 'Read and write'.",BG:"След това в раздела 'Permissions' намерете раздела 'Gist' и задайте разрешенията на 'Read and write'.",DA:"Find derefter 'Gist'-sektionen i 'Permissions'-afsnittet og indstil tilladelserne til 'Read and write'.",FI:"Etsi sitten 'Permissions'-osiosta 'Gist'-osio ja aseta oikeudet arvoon 'Read and write'.",SL:"Nato v razdelku 'Permissions' poiščite razdelek 'Gist' in nastavite dovoljenja na 'Read and write'."},
 click_generate_token:{AR:"انقر فوق الزر 'Generate token'.",DE:"Klicken Sie auf die Schaltfläche 'Generate token'.",EN:"Click the 'Generate token' button.",ES:"Haz clic en el botón 'Generate token'.",FA:"روی دکمه 'Generate token' کلیک کنید.",FR:"Cliquez sur le bouton 'Generate token'.",HI:"'Generate token' बटन पर क्लिक करें।",ID:"Klik tombol 'Generate token'.",IT:"Fai clic sul pulsante 'Generate token'.",JA:"「Generate token」ボタンをクリックします。",KO:"'Generate token' 버튼을 클릭합니다.",SW:"Bofya kifungo cha 'Generate token'.",PL:"Kliknij przycisk 'Generate token'.",PT:"Clique no botão 'Generate token'.",RU:"Нажмите кнопку 'Generate token'.",VI:"Nhấn vào nút 'Generate token'.",TR:"'Generate token' butonuna tıklayın.",UR:"'Generate token' بٹن پر کلک کریں۔",UZ:"'Generate token' tugmasini bosing.",ZH:"点击“Generate token”按钮。",NL:"Klik op de 'Generate token'-knop.",SV:"Klicka på 'Generate token'-knappen.",EL:"Κάντε κλικ στο κουμπί 'Generate token'.",CS:"Klikněte na tlačítko 'Generate token'.",HU:"Kattintson a 'Generate token' gombra.",RO:"Apasă pe butonul 'Generate token'.",BG:"Кликнете върху бутона 'Generate token'.",DA:"Klik på 'Generate token'-knappen.",FI:"Napsauta 'Generate token' -painiketta.",SL:"Kliknite na gumb 'Generate token'."},
-enter_token_in_setup:{AR:"ستقوم بإدخال هذا في جزء 'Gist Token' أثناء التثبيت.",DE:"Dies geben Sie im Abschnitt 'Gist Token' während der Installation ein.",EN:"You will enter this in the 'Gist Token' part during setup.",ES:"Lo ingresará en la parte 'Gist Token' durante la configuración.",FA:"این را در بخش 'Gist Token' هنگام نصب وارد خواهید کرد.",FR:"Vous entrerez cela dans la partie 'Gist Token' lors de l'installation.",HI:"आप इसे सेटअप के दौरान 'Gist Token' भाग में दर्ज करेंगे।",ID:"Anda akan memasukkan ini di bagian 'Gist Token' selama pengaturan.",IT:"Lo inserirai nella parte 'Gist Token' durante la configurazione.",JA:"これをセットアップ中に 'Gist Token' の部分に入力します。",KO:"이 토큰은 설치 중 'Gist Token' 부분에 입력합니다.",SW:"Utaweka hii katika sehemu ya 'Gist Token' wakati wa usanidi.",PL:"To wprowadzisz w części 'Gist Token' podczas konfiguracji.",PT:"Você irá inserir isso na parte 'Gist Token' durante a configuração.",RU:"Вы введете это в разделе 'Gist Token' во время установки.",VI:"Bạn sẽ nhập cái này vào phần 'Gist Token' trong quá trình thiết lập.",TR:"Bunu kurulumdaki Gist Token kısmına gireceksiniz.",UR:"اسے نصب کے دوران 'Gist Token' حصہ میں داخل کریں گے۔",UZ:"Buni o'rnatish jarayonida 'Gist Token' qismiga kiritasiz.",ZH:"您将在设置过程中输入此内容到'Gist Token'部分。",NL:"Dit voer je in bij het 'Gist Token'-gedeelte tijdens de installatie.",SV:"Du anger detta i 'Gist Token'-delen under installationen.",EL:"Θα το εισαγάγετε στο μέρος 'Gist Token' κατά την εγκατάσταση.",CS:"Toto zadáte v části 'Gist Token' během instalace.",HU:"Ezt a 'Gist Token' résznél adja meg a telepítés során.",RO:"Vei introduce asta în secțiunea 'Gist Token' în timpul configurării.",BG:"Ще въведете това в частта 'Gist Token' по време на инсталацията.",DA:"Du indtaster dette i 'Gist Token'-delen under opsætningen.",FI:"Syötät tämän 'Gist Token' -osaan asennuksen aikana.",SL:"To boste vnesli v del 'Gist Token' med nastavitvijo."},
 create_file_for_sync:{AR:"إنشاء ملف للتزامن:",DE:"Datei für die Synchronisierung erstellen:",EN:"Create file for sync:",ES:"Crear archivo para sincronización:",FA:"ایجاد فایل برای همگام‌سازی:",FR:"Créer un fichier pour la synchronisation :",HI:"सिंक के लिए फ़ाइल बनाएँ:",ID:"Buat berkas untuk sinkronisasi:",IT:"Crea file per la sincronizzazione:",JA:"同期用のファイルを作成:",KO:"동기화를 위한 파일 생성:",SW:"Unda faili kwa ajili ya usawa:",PL:"Utwórz plik do synchronizacji:",PT:"Criar arquivo para sincronização:",RU:"Создать файл для синхронизации:",VI:"Tạo tệp để đồng bộ:",TR:"Senkronizasyon için dosya oluşturma:",UR:"مزامنت کے لیے فائل تخلیق کریں:",UZ:"Sinхronizatsiya uchun fayl yarating:",ZH:"创建同步文件:",NL:"Bestand aanmaken voor synchronisatie:",SV:"Skapa fil för synkronisering:",EL:"Δημιουργία αρχείου για συγχρονισμό:",CS:"Vytvořit soubor pro synchronizaci:",HU:"Fájl létrehozása szinkronizáláshoz:",RO:"Creează fișier pentru sincronizare:",BG:"Създаване на файл за синхронизация:",DA:"Opret fil til synkronisering:",FI:"Luo tiedosto synkronointia varten:",SL:"Ustvari datoteko za sinhronizacijo:"},
-go_to_gist_page:{AR:"انتقل إلى صفحة Gist على GitHub:",DE:"Gehen Sie zur Gist-Seite auf GitHub:",EN:"Go to the Gist page on GitHub:",ES:"Ve a la página de Gist en GitHub:",FA:"به صفحه Gist در GitHub بروید:",FR:"Allez sur la page Gist sur GitHub :",HI:"GitHub पर Gist पृष्ठ पर जाएँ:",ID:"Pergi ke halaman Gist di GitHub:",IT:"Vai alla pagina Gist su GitHub:",JA:"GitHubのGistページに移動します:",KO:"GitHub의 Gist 페이지로 이동합니다:",SW:"Nenda ukurasa wa Gist kwenye GitHub:",PL:"Przejdź do strony Gist na GitHub:",PT:"Vá para a página Gist no GitHub:",RU:"Перейдите на страницу Gist на GitHub:",VI:"Đi tới trang Gist trên GitHub:",TR:"GitHub'da Gist sayfasına gidin:",UR:"GitHub پر Gist صفحہ پر جائیں:",UZ:"GitHub'dagi Gist sahifasiga o'ting:",ZH:"前往GitHub上的Gist页面:",NL:"Ga naar de Gist-pagina op GitHub:",SV:"Gå till Gist-sidan på GitHub:",EL:"Μεταβείτε στη σελίδα Gist στο GitHub:",CS:"Přejděte na stránku Gist na GitHubu:",HU:"Látogasson el a GitHub Gist oldalára:",RO:"Mergi la pagina Gist de pe GitHub:",BG:"Отидете на страницата Gist в GitHub:",DA:"Gå til Gist-siden på GitHub:",FI:"Siirry GitHubin Gist-sivulle:",SL:"Pojdite na stran Gist na GitHubu:"},
 specify_filename:{AR:"في المربع الذي يبدأ بـ 'Filename'، حدد اسم ملف (مثل: note1).",DE:"Geben Sie im Feld, das mit 'Filename' beginnt, einen Dateinamen an (z. B.: note1).",EN:"In the box starting with 'Filename', specify a file name (e.g., note1).",ES:"En el cuadro que comienza con 'Filename', especifique un nombre de archivo (por ejemplo, note1).",FA:"در کادری که با 'Filename' شروع می‌شود، یک نام فایل مشخص کنید (به عنوان مثال، note1).",FR:"Dans la zone commençant par 'Filename', spécifiez un nom de fichier (par exemple, note1).",HI:"'Filename' से शुरू होने वाले बॉक्स में, एक फ़ाइल नाम निर्दिष्ट करें (उदाहरण के लिए, note1).",ID:"Di kotak yang dimulai dengan 'Filename', tentukan nama file (misalnya, note1).",IT:"Nella casella che inizia con 'Filename', specifica un nome file (ad esempio, note1).",JA:"'Filename'で始まるボックスに、ファイル名を指定します（例: note1）。",KO:"'Filename'으로 시작하는 상자에 파일 이름을 지정합니다 (예: note1).",SW:"Katika sanduku ambalo linapoanza na 'Filename', taja jina la faili (mfano, note1).",PL:"W polu zaczynającym się od 'Filename' określ nazwę pliku (np. note1).",PT:"Na caixa que começa com 'Filename', especifique um nome de arquivo (por exemplo, note1).",RU:"В поле, начинающемся с 'Filename', укажите имя файла (например, note1).",VI:"Trong hộp bắt đầu bằng 'Filename', hãy chỉ định tên tệp (ví dụ: note1).",TR:"'Filename' ile başlayan kutucuğa bir dosya adı belirtin örneğin: (note1).",UR:"'Filename' سے شروع ہونے والے باکس میں، فائل کا نام مقرر کریں (مثال کے طور پر، note1)۔",UZ:"'Filename' bilan boshlanadigan katakka fayl nomini kiriting (masalan, note1).",ZH:"在以'Filename'开头的框中，指定一个文件名（例如，note1）。",NL:"Geef in het vak dat begint met 'Filename' een bestandsnaam op (bijv. note1).",SV:"Ange ett filnamn i rutan som börjar med 'Filename' (t.ex. note1).",EL:"Στο κουτί που ξεκινά με 'Filename', καθορίστε ένα όνομα αρχείου (π.χ. note1).",CS:"V poli začínajícím 'Filename' zadejte název souboru (např. note1).",HU:"A 'Filename'-nel kezdődő mezőben adjon meg egy fájlnevet (pl. note1).",RO:"În caseta care începe cu 'Filename', specifică un nume de fișier (de ex. note1).",BG:"В полето, започващо с 'Filename', укажете име на файл (напр. note1).",DA:"Angiv et filnavn i feltet, der starter med 'Filename' (f.eks. note1).",FI:"Määritä tiedostonimi 'Filename'-alkavaan ruutuun (esim. note1).",SL:"V polje, ki se začne z 'Filename', vnesite ime datoteke (npr. note1)."},
-enter_gist_name_in_setup:{AR:"ستقوم بإدخال هذا في جزء 'Gist Name' أثناء التثبيت.",DE:"Dies geben Sie im Abschnitt 'Gist Name' während der Installation ein.",EN:"You will enter this in the 'Gist Name' part during setup.",ES:"Lo ingresará en la parte 'Gist Name' durante la configuración.",FA:"این را در بخش 'Gist Name' هنگام نصب وارد خواهید کرد.",FR:"Vous entrerez cela dans la partie 'Gist Name' lors de l'installation.",HI:"आप इसे सेटअप के दौरान 'Gist Name' भाग में दर्ज करेंगे।",ID:"Anda akan memasukkan ini di bagian 'Gist Name' selama pengaturan.",IT:"Lo inserirai nella parte 'Gist Name' durante la configurazione.",JA:"これをセットアップ中に 'Gist Name' の部分に入力します。",KO:"이것은 설치 중 'Gist Name' 부분에 입력합니다.",SW:"Utaweka hii katika sehemu ya 'Gist Name' wakati wa usanidi.",PL:"To wprowadzisz w części 'Gist Name' podczas konfiguracji.",PT:"Você irá inserir isso na parte 'Gist Name' durante a configuração.",RU:"Вы введете это в разделе 'Gist Name' во время установки.",VI:"Bạn sẽ nhập cái này vào phần 'Gist Name' trong quá trình thiết lập.",TR:"Bunu kurulumdaki Gist Name kısmına gireceksiniz.",UR:"اسے نصب کے دوران 'Gist Name' حصہ میں داخل کریں گے۔",UZ:"Buni o'rnatish jarayonida 'Gist Name' qismiga kiritasiz.",ZH:"您将在设置过程中输入此内容到'Gist Name'部分。",NL:"Dit voer je in bij het 'Gist Name'-gedeelte tijdens de installatie.",SV:"Du anger detta i 'Gist Name'-delen under installationen.",EL:"Θα το εισαγάγετε στο μέρος 'Gist Name' κατά την εγκατάσταση.",CS:"Toto zadáte v části 'Gist Name' během instalace.",HU:"Ezt a 'Gist Name' résznél adja meg a telepítés során.",RO:"Vei introduce asta în secțiunea 'Gist Name' în timpul configurării.",BG:"Ще въведете това в частта 'Gist Name' по време на инсталацията.",DA:"Du indtaster dette i 'Gist Name'-delen under opsætningen.",FI:"Syötät tämän 'Gist Name' -osaan asennuksen aikana.",SL:"To boste vnesli v del 'Gist Name' med nastavitvijo."},
 write_something_below_filename:{AR:"اكتب شيئًا ما في المربع أسفل اسم الملف. (مطلوب للحفظ)",DE:"Schreiben Sie etwas in das Feld unter dem Dateinamen. (Erforderlich zum Speichern)",EN:"Write something in the box below the filename. (Required for saving)",ES:"Escribe algo en el cuadro debajo del nombre del archivo. (Requerido para guardar)",FA:"چیزی در کادر زیر نام فایل بنویسید. (برای ذخیره کردن ضروری است)",FR:"Écrivez quelque chose dans la zone sous le nom du fichier. (Requis pour l'enregistrement)",HI:"फ़ाइल नाम के नीचे के बॉक्स में कुछ लिखें। (सहेजने के लिए आवश्यक)",ID:"Tulis sesuatu di kotak di bawah nama file. (Diperlukan untuk penyimpanan)",IT:"Scrivi qualcosa nella casella sotto il nome del file. (Richiesto per il salvataggio)",JA:"ファイル名の下のボックスに何かを入力してください。（保存に必要です）",KO:"파일 이름 아래의 상자에 무언가를 작성하십시오. (저장에 필요함)",SW:"Andika kitu katika sanduku chini ya jina la faili. (Inahitajika kwa ajili ya kuhifadhi)",PL:"Napisz coś w polu poniżej nazwy pliku. (Wymagane do zapisania)",PT:"Escreva algo na caixa abaixo do nome do arquivo. (Necessário para salvar)",RU:"Напишите что-нибудь в поле под именем файла. (Требуется для сохранения)",VI:"Viết gì đó vào ô bên dưới tên tệp. (Cần thiết để lưu)",TR:"Kutucuğun hemen altındaki kutucuğa birşeyler yazın. (Kaydetmek için gerekli)",UR:"فائل نام کے نیچے والے باکس میں کچھ لکھیں۔ (محفوظ کرنے کے لیے ضروری)",UZ:"Fayl nomining ostidagi katakka nimadir yozing. (Saqlash uchun talab qilinadi)",ZH:"在文件名下方的框中写点东西。（保存所需）",NL:"Schrijf iets in het vak onder de bestandsnaam. (Vereist om op te slaan)",SV:"Skriv något i rutan under filnamnet. (Krävs för att spara)",EL:"Γράψτε κάτι στο κουτί κάτω από το όνομα αρχείου. (Απαιτείται για αποθήκευση)",CS:"Napište něco do pole pod názvem souboru. (Vyžadováno pro uložení)",HU:"Írjon valamit a fájlnév alatti mezőbe. (Szükséges a mentéshez)",RO:"Scrie ceva în caseta de sub numele fișierului. (Necesar pentru salvare)",BG:"Напишете нещо в полето под името на файла. (Необходимо за запазване)",DA:"Skriv noget i feltet under filnavnet. (Påkrævet for at gemme)",FI:"Kirjoita jotain tiedostonimen alapuolella olevaan ruutuun. (Vaaditaan tallentamiseen)",SL:"Zapišite nekaj v polje pod imenom datoteke. (Potrebno za shranjevanje)"},
-select_create_secret_gist:{AR:"ثم حدد خيار 'Create secret gist' وأنشئ الملف.",DE:"Wählen Sie dann die Option 'Create secret gist' aus und erstellen Sie die Datei.",EN:"Then select the 'Create secret gist' option and create the file.",ES:"Luego selecciona la opción 'Create secret gist' y crea el archivo.",FA:"سپس گزینه 'Create secret gist' را انتخاب کرده و فایل را ایجاد کنید.",FR:"Ensuite, sélectionnez l'option 'Create secret gist' et créez le fichier.",HI:"फिर 'Create secret gist' विकल्प चुनें और फ़ाइल बनाएँ।",ID:"Kemudian pilih opsi 'Create secret gist' dan buat berkas.",IT:"Quindi seleziona l'opzione 'Create secret gist' e crea il file.",JA:"次に「Create secret gist」オプションを選択し、ファイルを作成します。",KO:"그런 다음 'Create secret gist' 옵션을 선택하고 파일을 생성합니다.",SW:"Kisha chagua chaguo la 'Create secret gist' na uunda faili.",PL:"Następnie wybierz opcję 'Create secret gist' i utwórz plik.",PT:"Em seguida, selecione a opção 'Create secret gist' e crie o arquivo.",RU:"Затем выберите опцию 'Create secret gist' и создайте файл.",VI:"Sau đó chọn tùy chọn 'Create secret gist' và tạo tệp.",TR:"Ardından 'Create secret gist' seçeneğini seçin ve dosyayı oluşturun.",UR:"پھر 'Create secret gist' آپشن منتخب کریں اور فائل بنائیں۔",UZ:"Keyin 'Create secret gist' ni tanlang va faylni yarating.",ZH:"然后选择“Create secret gist”选项并创建文件。",NL:"Selecteer dan de optie 'Create secret gist' en maak het bestand aan.",SV:"Välj sedan alternativet 'Create secret gist' och skapa filen.",EL:"Στη συνέχεια επιλέξτε την επιλογή 'Create secret gist' και δημιουργήστε το αρχείο.",CS:"Poté vyberte možnost 'Create secret gist' a vytvořte soubor.",HU:"Ezután válassza a 'Create secret gist' opciót, és hozza létre a fájlt.",RO:"Apoi selectează opțiunea 'Create secret gist' și creează fișierul.",BG:"След това изберете опцията 'Create secret gist' и създайте файла.",DA:"Vælg derefter muligheden 'Create secret gist' og opret filen.",FI:"Valitse sitten 'Create secret gist' -vaihtoehto ja luo tiedosto.",SL:"Nato izberite možnost 'Create secret gist' in ustvarite datoteko."},
 copy_embed_content:{AR:"بعد ذلك، انسخ محتوى 'Embed'. يبدو المحتوى كما يلي:",DE:"Kopieren Sie als Nächstes den Inhalt von 'Embed'. Der Inhalt sieht wie folgt aus:",EN:"Next, copy the 'Embed' content. The content looks like this:",ES:"A continuación, copia el contenido de 'Embed'. El contenido se ve así:",FA:"بعد، محتوای 'Embed' را کپی کنید. محتوا به این شکل است:",FR:"Ensuite, copiez le contenu de 'Embed'. Le contenu ressemble à ceci :",HI:"अगला, 'Embed' सामग्री की प्रतिलिपि बनाएँ। सामग्री इस प्रकार दिखती है:",ID:"Selanjutnya, salin konten 'Embed'. Kontennya terlihat seperti ini:",IT:"Successivamente, copia il contenuto di 'Embed'. Il contenuto appare così:",JA:"次に、'Embed' のコンテンツをコピーします。コンテンツは次のようになります：",KO:"다음으로 'Embed' 내용을 복사합니다. 콘텐츠는 다음과 같습니다:",SW:"Ifuatayo, nakili maudhui ya 'Embed'. Yanaonekana kama hivi:",PL:"Następnie skopiuj zawartość 'Embed'. Zawartość wygląda następująco:",PT:"Em seguida, copie o conteúdo de 'Embed'. O conteúdo parece com isto:",RU:"Далее скопируйте содержимое 'Embed'. Содержимое выглядит так:",VI:"Tiếp theo, sao chép nội dung 'Embed'. Nội dung trông như thế này:",TR:"Ardından 'Embed' içeriğini kopyalayın. İçerik buna benzer:",UR:"اگلے، 'Embed' مواد کاپی کریں۔ مواد اس طرح دکھائی دیتا ہے:",UZ:"Keyin 'Embed' kontentini nusxa oling. Kontent quyidagicha ko'rinadi:",ZH:"接下来，复制'Embed'内容。内容如下所示:",NL:"Kopieer vervolgens de inhoud van 'Embed'. De inhoud ziet er zo uit:",SV:"Kopiera sedan innehållet i 'Embed'. Innehållet ser ut så här:",EL:"Στη συνέχεια, αντιγράψτε το περιεχόμενο του 'Embed'. Το περιεχόμενο μοιάζει έτσι:",CS:"Dále zkopírujte obsah 'Embed'. Obsah vypadá takto:",HU:"Ezután másolja ki az 'Embed' tartalmát. A tartalom így néz ki:",RO:"Apoi copiază conținutul 'Embed'. Conținutul arată astfel:",BG:"След това копирайте съдържанието на 'Embed'. Съдържанието изглежда така:",DA:"Kopier derefter indholdet af 'Embed'. Indholdet ser sådan ud:",FI:"Kopioi seuraavaksi 'Embed'-sisältö. Sisältö näyttää tältä:",SL:"Nato kopirajte vsebino 'Embed'. Vsebina izgleda takole:"},
 copy_id_after_username:{AR:"انسخ الجزء بعد اسم المستخدم حتى '.js'.",DE:"Kopieren Sie den Teil nach dem Benutzernamen bis zu '.js'.",EN:"Copy the part after the username up to '.js'.",ES:"Copia la parte después del nombre de usuario hasta '.js'.",FA:"بخشی را که بعد از نام کاربری و تا '.js' است کپی کنید.",FR:"Copiez la partie après le nom d'utilisateur jusqu'à '.js'.",HI:"उपयोगकर्ता नाम के बाद के भाग को '.js' तक कॉपी करें।",ID:"Salin bagian setelah nama pengguna hingga '.js'.",IT:"Copia la parte dopo il nome utente fino a '.js'.",JA:"ユーザー名の後の部分を '.js' までコピーします。",KO:"사용자 이름 뒤의 부분을 '.js'까지 복사합니다.",SW:"Nakili sehemu baada ya jina la mtumiaji hadi '.js'.",PL:"Skopiuj część po nazwie użytkownika aż do '.js'.",PT:"Copie a parte após o nome de usuário até '.js'.",RU:"Скопируйте часть после имени пользователя до '.js'.",VI:"Sao chép phần sau tên người dùng cho đến '.js'.",TR:"Kullanıcı adından sonraki kısmını .js kısmına kadar kopyalayın ve not edin.",UR:"صارف نام کے بعد کا حصہ '.js' تک کاپی کریں۔",UZ:"Foydalanuvchi nomidan keyingi qismni '.js' gacha nusxa oling.",ZH:"复制用户名后面直到'.js'的部分。",NL:"Kopieer het deel na de gebruikersnaam tot aan '.js'.",SV:"Kopiera delen efter användarnamnet fram till '.js'.",EL:"Αντιγράψτε το μέρος μετά το όνομα χρήστη μέχρι το '.js'.",CS:"Zkopírujte část za uživatelským jménem až do '.js'.",HU:"Másolja ki a felhasználónév utáni részt a '.js'-ig.",RO:"Copiază partea de după numele de utilizator până la '.js'.",BG:"Копирайте частта след потребителското име до '.js'.",DA:"Kopiér delen efter brugernavnet op til '.js'.",FI:"Kopioi käyttäjänimen jälkeinen osa '.js'-kohtaan asti.",SL:"Kopirajte del za uporabniškim imenom do '.js'."},
 example_id:{AR:"على سبيل المثال، هذا: 1bae985fef7d26eca0a0a8128fbb97e8",DE:"Beispiel: Dies: 1bae985fef7d26eca0a0a8128fbb97e8",EN:"For example, this: 1bae985fef7d26eca0a0a8128fbb97e8",ES:"Por ejemplo, esto: 1bae985fef7d26eca0a0a8128fbb97e8",FA:"به عنوان مثال، این: 1bae985fef7d26eca0a0a8128fbb97e8",FR:"Par exemple, ceci : 1bae985fef7d26eca0a0a8128fbb97e8",HI:"उदाहरण के लिए, यह: 1bae985fef7d26eca0a0a8128fbb97e8",ID:"Contohnya, ini: 1bae985fef7d26eca0a0a8128fbb97e8",IT:"Ad esempio, questo: 1bae985fef7d26eca0a0a8128fbb97e8",JA:"例えば、これ: 1bae985fef7d26eca0a0a8128fbb97e8",KO:"예를 들어, 이것: 1bae985fef7d26eca0a0a8128fbb97e8",SW:"Kwa mfano, hii: 1bae985fef7d26eca0a0a8128fbb97e8",PL:"Na przykład, to: 1bae985fef7d26eca0a0a8128fbb97e8",PT:"Por exemplo, isto: 1bae985fef7d26eca0a0a8128fbb97e8",RU:"Например, это: 1bae985fef7d26eca0a0a8128fbb97e8",VI:"Ví dụ, cái này: 1bae985fef7d26eca0a0a8128fbb97e8",TR:"Üstteki örnek için bu: 1bae985fef7d26eca0a0a8128fbb97e8",UR:"مثال کے طور پر، یہ: 1bae985fef7d26eca0a0a8128fbb97e8",UZ:"Masalan, bu: 1bae985fef7d26eca0a0a8128fbb97e8",ZH:"例如，这个：1bae985fef7d26eca0a0a8128fbb97e8",NL:"Bijvoorbeeld dit: 1bae985fef7d26eca0a0a8128fbb97e8",SV:"Till exempel detta: 1bae985fef7d26eca0a0a8128fbb97e8",EL:"Για παράδειγμα, αυτό: 1bae985fef7d26eca0a0a8128fbb97e8",CS:"Například toto: 1bae985fef7d26eca0a0a8128fbb97e8",HU:"Például ez: 1bae985fef7d26eca0a0a8128fbb97e8",RO:"De exemplu, acesta: 1bae985fef7d26eca0a0a8128fbb97e8",BG:"Например това: 1bae985fef7d26eca0a0a8128fbb97e8",DA:"For eksempel dette: 1bae985fef7d26eca0a0a8128fbb97e8",FI:"Esimerkiksi tämä: 1bae985fef7d26eca0a0a8128fbb97e8",SL:"Na primer tole: 1bae985fef7d26eca0a0a8128fbb97e8"},
-enter_gist_id_in_setup:{AR:"(ستقوم بإدخال هذا في جزء 'Gist ID' أثناء التثبيت.)",DE:"(Dies geben Sie im Abschnitt 'Gist ID' während der Installation ein.)",EN:"(You will enter this in the 'Gist ID' part during setup.)",ES:"(Lo ingresará en la parte 'Gist ID' durante la configuración.)",FA:"(این را در بخش 'Gist ID' هنگام نصب وارد خواهید کرد.)",FR:"(Vous entrerez cela dans la partie 'Gist ID' lors de l'installation.)",HI:"(आप इसे सेटअप के दौरान 'Gist ID' भाग में दर्ज करेंगे।)",ID:"(Anda akan memasukkan ini di bagian 'Gist ID' selama pengaturan.)",IT:"(Lo inserirai nella parte 'Gist ID' durante la configurazione.)",JA:"（セットアップ中に 'Gist ID' の部分に入力します。）",KO:"(설치 중 'Gist ID' 부분에 입력합니다.)",SW:"(Utaweka hii katika sehemu ya 'Gist ID' wakati wa usanidi.)",PL:"(To wprowadzisz w części 'Gist ID' podczas konfiguracji.)",PT:"(Você irá inserir isso na parte 'Gist ID' durante a configuração.)",RU:"(Вы введете это в разделе 'Gist ID' во время установки.)",VI:"(Bạn sẽ nhập cái này vào phần 'Gist ID' trong quá trình thiết lập.)",TR:"(Bunu kurulumdaki Gist ID kısmına gireceksiniz.)",UR:"(اسے نصب کے دوران 'Gist ID' حصہ میں داخل کریں گے۔)",UZ:"(Buni o'rnatish jarayonida 'Gist ID' qismiga kiritasiz.)",ZH:"（您将在设置过程中输入此内容到'Gist ID'部分。）",NL:"(Dit voer je in bij het 'Gist ID'-gedeelte tijdens de installatie.)",SV:"(Du anger detta i 'Gist ID'-delen under installationen.)",EL:"(Θα το εισαγάγετε στο μέρος 'Gist ID' κατά την εγκατάσταση.)",CS:"(Toto zadáte v části 'Gist ID' během instalace.)",HU:"(Ezt a 'Gist ID' résznél adja meg a telepítés során.)",RO:"(Vei introduce asta în secțiunea 'Gist ID' în timpul configurării.)",BG:"(Ще въведете това в частта 'Gist ID' по време на инсталацията.)",DA:"(Du indtaster dette i 'Gist ID'-delen under opsætningen.)",FI:"(Syötät tämän 'Gist ID' -osaan asennuksen aikana.)",SL:"(To boste vnesli v del 'Gist ID' med nastavitvijo.)"},
 setup_details:{AR:"تفاصيل التثبيت",DE:"Setup-Details",EN:"Setup details",ES:"Detalles de la configuración",FA:"جزئیات نصب",FR:"Détails de l'installation",HI:"सेटअप विवरण",ID:"Detail pengaturan",IT:"Dettagli di configurazione",JA:"セットアップの詳細",KO:"설치 세부 정보",SW:"Maelezo ya usanidi",PL:"Szczegóły konfiguracji",PT:"Detalhes da configuração",RU:"Детали установки",VI:"Chi tiết cài đặt",TR:"Kurulum detayları",UR:"ترتیب کے تفصیلات",UZ:"O'rnatish tafsilotlari",ZH:"安装详情",NL:"Installatiedetails",SV:"Inställningsdetaljer",EL:"Λεπτομέρειες εγκατάστασης",CS:"Detaily nastavení",HU:"Telepítési részletek",RO:"Detalii de configurare",BG:"Детайли за настройка",DA:"Opsætningsdetaljer",FI:"Asennuksen tiedot",SL:"Podrobnosti nastavitve"},
 backup_data_before_connection:{AR:"يرجى عمل نسخة احتياطية من بياناتك قبل الاتصال.",DE:"Bitte sichern Sie Ihre Daten vor der Verbindung.",EN:"Back up your data before connecting.",ES:"Realice una copia de seguridad de sus datos antes de conectar.",FA:"قبل از اتصال، اطلاعات خود را پشتیبان بگیرید.",FR:"Sauvegardez vos données avant la connexion.",HI:"कनेक्ट करने से पहले अपना डेटा बैकअप लें।",ID:"Cadangkan data Anda sebelum terhubung.",IT:"Esegui il backup dei tuoi dati prima di connetterti.",JA:"接続前にデータをバックアップしてください。",KO:"연결 전에 데이터를 백업하십시오.",SW:"Hifadhi nakala ya data yako kabla ya kuunganisha.",PL:"Wykonaj kopię zapasową danych przed połączeniem.",PT:"Faça backup dos seus dados antes de conectar.",RU:"Сделайте резервную копию данных перед подключением.",VI:"Sao lưu dữ liệu của bạn trước khi kết nối.",TR:"Bağlantı öncesinde cihazınızdaki verilerinizi yedekleyin.",UR:"کنکشن سے پہلے اپنے ڈیٹا کا بیک اپ لیں۔",UZ:"Ulanishdan oldin ma'lumotlaringizni zaxiralang.",ZH:"连接前请备份您的数据。",NL:"Maak een back-up van je gegevens voordat je verbinding maakt.",SV:"Säkerhetskopiera dina data innan du ansluter.",EL:"Δημιουργήστε αντίγραφο ασφαλείας των δεδομένων σας πριν συνδεθείτε.",CS:"Zálohujte si data před připojením.",HU:"Készítsen biztonsági másolatot adatairól az összekapcsolás előtt.",RO:"Fă o copie de rezervă a datelor tale înainte de conectare.",BG:"Направете резервно копие на данните си преди свързване.",DA:"Lav en sikkerhedskopi af dine data, før du opretter forbindelse.",FI:"Varmuuskopioi tietosi ennen yhteyden muodostamista.",SL:"Pred povezavo naredite varnostno kopijo podatkov."},
 please_fill_all_fields:{AR:"يرجى ملء جميع الحقول!",DE:"Bitte füllen Sie alle Felder aus!",EN:"Please fill in all fields!",ES:"¡Por favor, complete todos los campos!",FA:"لطفاً همه فیلدها را پر کنید!",FR:"Veuillez remplir tous les champs!",HI:"कृपया सभी फ़ील्ड भरें!",ID:"Silakan isi semua bidang!",IT:"Si prega di compilare tutti i campi!",JA:"すべてのフィールドに入力してください！",KO:"모든 필드를 채워주세요!",SW:"Tafadhali jaza visanduku vyote!",PL:"Proszę wypełnić wszystkie pola!",PT:"Por favor, preencha todos os campos!",RU:"Пожалуйста, заполните все поля!",VI:"Vui lòng điền vào tất cả các trường!",TR:"Lütfen tüm alanları doldurun!",UR:"براہ کرم تمام خانوں کو بھریں!",UZ:"Iltimos, barcha maydonlarni to'ldiring!",ZH:"请填写所有字段！",NL:"Vul alle velden in!",SV:"Fyll i alla fält!",EL:"Παρακαλώ συμπληρώστε όλα τα πεδία!",CS:"Vyplňte prosím všechna pole!",HU:"Kérjük, töltse ki az összes mezőt!",RO:"Vă rugăm să completați toate câmpurile!",BG:"Моля, попълнете всички полета!",DA:"Udfyld venligst alle felter!",FI:"Täytä kaikki kentät!",SL:"Prosimo, izpolnite vsa polja!"},
-gist_info_error_or_server_unreachable:{AR:"معلومات Gist خاطئة أو لا يمكن الوصول إلى الخادم.",DE:"Gist-Informationen fehlerhaft oder Server nicht erreichbar.",EN:"Gist info is incorrect or the server is unreachable.",ES:"La información de Gist es incorrecta o el servidor no está disponible.",FA:"اطلاعات Gist اشتباه است یا به سرور دسترسی ندارید.",FR:"Les informations de Gist sont incorrectes ou le serveur est inaccessible.",HI:"Gist जानकारी गलत है या सर्वर तक पहुँचा नहीं जा सकता।",ID:"Informasi Gist salah atau server tidak dapat dijangkau.",IT:"Le informazioni di Gist sono errate o il server non è raggiungibile.",JA:"Gist情報が間違っているか、サーバーに接続できません。",KO:"Gist 정보가 잘못되었거나 서버에 연결할 수 없습니다.",SW:"Taarifa za Gist zinakosa au haifiki kwa seva.",PL:"Informacje o Gist są nieprawidłowe lub serwer jest niedostępny.",PT:"As informações do Gist estão incorretas ou o servidor está inacessível.",RU:"Информация о Gist неверна или сервер недоступен.",VI:"Thông tin Gist không chính xác hoặc không thể kết nối đến máy chủ.",TR:"Gist bilgileri hatalı ya da sunucuya ulaşılmıyor.",UR:"Gist کی معلومات غلط ہیں یا سرور تک پہنچ نہیں ہو رہا ہے۔",UZ:"Gist ma'lumotlari noto'g'ri yoki serverga ulanish mumkin emas.",ZH:"Gist信息有误或无法连接到服务器。",NL:"Gist-info is onjuist of de server is onbereikbaar.",SV:"Gist-informationen är felaktig eller servern är onåbar.",EL:"Οι πληροφορίες Gist είναι λανθασμένες ή ο διακομιστής δεν είναι προσβάσιμος.",CS:"Informace o Gist jsou nesprávné nebo server není dostupný.",HU:"A Gist információk hibásak, vagy a szerver nem érhető el.",RO:"Informațiile Gist sunt incorecte sau serverul nu este accesibil.",BG:"Информацията за Gist е неправилна или сървърът е недостъпен.",DA:"Gist-oplysningerne er forkerte, eller serveren kan ikke nås.",FI:"Gist-tiedot ovat virheelliset tai palvelimeen ei saada yhteyttä.",SL:"Informacije o Gist so napačne ali strežnik ni dosegljiv."},
-sync_error_message: {AR:"تعذر بدء المزامنة بسبب عدم تطابق معرف Gist-كلمة المرور، أو ازدحام الخادم، أو خطأ في اتصال الإنترنت.\nلا تقم بإجراء تعديلات على أجهزة أخرى حتى يتم حل المشكلة.\nسيتم إعلامك عند استعادة الاتصال.",DE:"Die Synchronisierung konnte aufgrund von Gist-ID-Passwort-Unstimmigkeiten, Serverüberlastung oder Internetverbindungsfehlern nicht gestartet werden.\nFühren Sie keine Bearbeitungen auf anderen Geräten durch, bis das Problem behoben ist.\nSie werden benachrichtigt, sobald die Verbindung wiederhergestellt ist.",EN:"Synchronization could not be initiated due to Gist ID-password mismatch, server congestion, or internet connection error.\nDo not make edits on another device until the issue is resolved.\nYou will be notified when the connection is restored.",ES:"No se pudo iniciar la sincronización debido a una discrepancia en el ID/contraseña de Gist, congestión del servidor o error de conexión a internet.\nNo realice ediciones en otro dispositivo hasta que se resuelva el problema.\nSe le notificará cuando se restablezca la conexión.",FA:"به دلیل عدم تطابق شناسه یا رمز عبور Gist، ازدحام سرور یا خطای اتصال اینترنت، همگام‌سازی آغاز نشد.\nتا زمانی که مشکل برطرف شود، ویرایش در دستگاه دیگری انجام ندهید.\nهنگام بازگرداندن اتصال، به شما اطلاع داده خواهد شد.",FR:"La synchronisation n'a pas pu être initiée en raison d'une incohérence entre l'ID et le mot de passe Gist, de la congestion du serveur ou d'une erreur de connexion Internet.\nNe faites pas de modifications sur un autre appareil tant que le problème n'est pas résolu.\nVous serez informé lorsque la connexion sera rétablie.",HI:"Gist ID-पासवर्ड मिसमैच, सर्वर भीड़ या इंटरनेट कनेक्शन त्रुटि के कारण सिंक्रनाइज़ेशन शुरू नहीं किया जा सका।\nसमस्या का समाधान होने तक किसी अन्य उपकरण पर संपादन न करें।\nजब कनेक्शन पुनः स्थापित हो जाएगा तब आपको सूचित किया जाएगा।",ID:"Sinkronisasi tidak dapat dimulai karena ketidakcocokan ID-Password Gist, kepadatan server, atau kesalahan koneksi internet.\nJangan melakukan pengeditan di perangkat lain sampai masalah teratasi.\nAnda akan diberitahu saat koneksi dipulihkan.",IT:"La sincronizzazione non è stata avviata a causa di una mancata corrispondenza tra ID e password di Gist, congestione del server o errore di connessione a Internet.\nNon apportare modifiche su un altro dispositivo fino a quando il problema non sarà risolto.\nVerrai avvisato quando la connessione verrà ripristinata.",JA:"Gist IDとパスワードの不一致、サーバーの混雑、またはインターネット接続エラーにより、同期を開始できませんでした。\n問題が解決するまで他のデバイスで編集を行わないでください。\n接続が復元されると通知されます。",KO:"Gist ID-비밀번호 불일치, 서버 혼잡 또는 인터넷 연결 오류로 인해 동기화를 시작할 수 없습니다.\n문제가 해결될 때까지 다른 장치에서 편집하지 마십시오.\n연결이 복구되면 알림을 받게 됩니다.",SW:"Usawa haukuweza kuanzishwa kwa sababu ya usambazaji wa nambari ya Gist-na nywila, mwingi wa mitandao au hitilafu ya muunganisho wa intaneti.\nUsihariri kwenye kifaa kingine mpaka tatizo litatatuliwa.\nUtataarifiwa wakati muunganisho utaponyolewa.",PL:"Nie udało się rozpocząć synchronizacji z powodu niezgodności identyfikatora Gist-hasła, przeciążenia serwera lub błędu połączenia internetowego.\nNie dokonuj edycji na innym urządzeniu, dopóki problem nie zostanie rozwiązany.\nZostaniesz powiadomiony, gdy połączenie zostanie przywrócone.",PT:"A sincronização não pôde ser iniciada devido à incompatibilidade de ID-senha do Gist, congestionamento do servidor ou erro de conexão com a internet.\nNão faça edições em outro dispositivo até que o problema seja resolvido.\nVocê será notificado quando a conexão for restaurada.",RU:"Синхронизация не была запущена из-за несоответствия идентификатора Gist-пароля, перегрузки сервера или ошибки подключения к Интернету.\nНе вносите правки на другом устройстве, пока проблема не будет решена.\nВы получите уведомление, когда соединение будет восстановлено.",VI:"Không thể khởi động đồng bộ hóa do không khớp ID-Mật khẩu Gist, tắc nghẽn máy chủ hoặc lỗi kết nối internet.\nĐừng chỉnh sửa trên thiết bị khác cho đến khi vấn đề được giải quyết.\nBạn sẽ được thông báo khi kết nối được khôi phục.",TR:"Gist ID-Şifre uyuşmazlığı, sunucu yoğunluğu ya da internet bağlantısı hatası sebebiyle senkronizasyon başlatılamadı.\nSorun çözülene kadar başka bir cihazda düzenleme yapmayın.\nBağlantı sağlandığında bilgi verilecek.",UR:"Gist ID-پاس ورڈ عدم مطابقت، سرور کی بھیڑ یا انٹرنیٹ کنکشن کی خرابی کی وجہ سے مطابقت شروع نہیں ہو سکی۔\nمسائل دور ہونے تک کسی اور آلے پر ترمیم نہ کریں۔\nجب کنکشن قائم ہو جائے گا تو آپ کو مطلع کیا جائے گا۔",UZ:"Gist ID-parol mos kelmasligi, server zo'rlik yoki internet ulanish xatosi tufayli sinxronizatsiya boshlanmadi.\nMuammo hal bo'lguncha boshqa qurilmada tahrirlashni boshlamang.\nUlanish tiklanganda sizga xabar beriladi.",ZH:"由于Gist ID-密码不匹配、服务器拥堵或互联网连接错误，同步无法启动。\n在问题解决之前，请勿在其他设备上进行编辑。\n连接恢复时会通知您。",NL:"Synchronisatie kon niet worden gestart vanwege een mismatch tussen Gist-ID en wachtwoord, serverdrukte of een internetverbindingsfout.\nBreng geen wijzigingen aan op andere apparaten totdat het probleem is opgelost.\nU wordt geïnformeerd wanneer de verbinding is hersteld.",SV:"Synkronisering kunde inte påbörjas på grund av mismatch mellan Gist-ID och lösenord, serveröverbelastning eller internetanslutningsfel.\nGör inga ändringar på andra enheter tills problemet är löst.\nDu meddelas när anslutningen är återställd.",EL:"Η συγχρονισμός δεν μπόρεσε να ξεκινήσει λόγω ασυμφωνίας ID-Κωδικού Gist, υπερφόρτωσης του διακομιστή ή σφάλματος σύνδεσης στο διαδίκτυο.\nΜην κάνετε επεξεργασίες σε άλλες συσκευές μέχρι να επιλυθεί το πρόβλημα.\nΘα ειδοποιηθείτε όταν αποκατασταθεί η σύνδεση.",CS:"Synchronizace nemohla být zahájena kvůli nesouladu ID a hesla Gist, přetížení serveru nebo chybě internetového připojení.\nNeprovádějte úpravy na jiných zařízeních, dokud nebude problém vyřešen.\nBudete upozorněni, jakmile bude spojení obnoveno.",HU:"A szinkronizálás nem indulhatott el a Gist ID-jelszó eltérése, a szerver túlterheltsége vagy internetkapcsolati hiba miatt.\nNe végezzen módosításokat más eszközökön, amíg a probléma meg nem oldódik.\nÉrtesítést kap, amikor a kapcsolat helyreáll.",RO:"Sincronizarea nu a putut fi inițiată din cauza nepotrivirii ID-ului și parolei Gist, a congestiei serverului sau a unei erori de conexiune la internet.\nNu efectuați modificări pe alte dispozitive până când problema nu este rezolvată.\nVeți fi notificat când conexiunea va fi restabilită.",BG:"Синхронизацията не можа да започне поради несъответствие между ID и парола на Gist, претоварване на сървъра или грешка в интернет връзката.\nНе правете промени на други устройства, докато проблемът не бъде разрешен.\nЩе бъдете уведомени, когато връзката бъде възстановена.",DA:"Synkronisering kunne ikke startes på grund af uoverensstemmelse mellem Gist-ID og adgangskode, serveroverbelastning eller internetforbindelsesfejl.\nForetag ingen redigeringer på andre enheder, før problemet er løst.\nDu vil blive underrettet, når forbindelsen er genoprettet.",FI:"Synkronointia ei voitu aloittaa Gist-ID-salasanan ristiriidan, palvelimen ruuhkautumisen tai internet-yhteyden virheen vuoksi.\nÄlä tee muokkauksia muilla laitteilla, ennen kuin ongelma on ratkaistu.\nSinulle ilmoitetaan, kun yhteys on palautettu.",SL:"Sinhronizacija se ni mogla začeti zaradi neskladja ID-ja in gesla Gist, preobremenjenosti strežnika ali napake v internetni povezavi.\nNe urejajte na drugih napravah, dokler težava ni odpravljena.\nObveščeni boste, ko bo povezava obnovljena."},
 sync_successful: {AR:"المزامنة ناجحة.",DE:"Synchronisierung erfolgreich.",EN:"Sync successful.",ES:"Sincronización exitosa.",FA:"همگام‌سازی موفق بود.",FR:"Synchronisation réussie.",HI:"सिंक सफल।",ID:"Sinkronisasi berhasil.",IT:"Sincronizzazione completata.",JA:"同期が成功しました。",KO:"동기화 성공.",SW:"Usawa mafanikiwa.",PL:"Synchronizacja zakończona pomyślnie.",PT:"Sincronização bem-sucedida.",RU:"Синхронизация прошла успешно.",VI:"Đồng bộ hóa thành công.",TR:"Senkronizasyon başarılı.",UR:"مطابقت کامیاب ہوئی۔",UZ:"Sinxronizatsiya muvaffaqiyatli amalga oshirildi.",ZH:"同步成功。",NL:"Synchronisatie geslaagd.",SV:"Synkronisering lyckad.",EL:"Ο συγχρονισμός ολοκληρώθηκε επιτυχώς.",CS:"Synchronizace úspěšná.",HU:"Szinkronizálás sikeres.",RO:"Sincronizare reușită.",BG:"Синхронизацията е успешна.",DA:"Synkronisering vellykket.",FI:"Synkronointi onnistui.",SL:"Sinhronizacija uspešna."},
 sync_active: {AR:"المزامنة نشطة",DE:"Synchronisierung aktiv",EN:"Sync active",ES:"Sincronización activa",FA:"همگام‌سازی فعال است",FR:"Synchronisation active",HI:"सिंक सक्रिय है",ID:"Sinkronisasi aktif",IT:"Sincronizzazione attiva",JA:"同期が有効です",KO:"동기화 활성화됨",SW:"Usawa unashughulikia",PL:"Synchronizacja aktywna",PT:"Sincronização ativa",RU:"Синхронизация активна",VI:"Đồng bộ hóa đang hoạt động",TR:"Senkronizasyon etkin",UR:"مطابقت فعال ہے",UZ:"Sinxronizatsiya faol",ZH:"同步已激活",NL:"Synchronisatie actief",SV:"Synkronisering aktiv",EL:"Ο συγχρονισμός είναι ενεργός",CS:"Synchronizace aktivní",HU:"Szinkronizálás aktív",RO:"Sincronizare activă",BG:"Синхронизацията е активна",DA:"Synkronisering aktiv",FI:"Synkronointi aktiivinen",SL:"Sinhronizacija aktivna"},
 fetch_data: {AR:"جلب البيانات",DE:"Daten abrufen",EN:"Fetch Data",ES:"Obtener datos",FA:"دریافت داده‌ها",FR:"Récupérer les données",HI:"डेटा प्राप्त करें",ID:"Ambil Data",IT:"Recupera dati",JA:"データを取得",KO:"데이터 가져오기",SW:"Pata Data",PL:"Pobierz dane",PT:"Buscar dados",RU:"Получить данные",VI:"Lấy dữ liệu",TR:"Verileri Getir",UR:"ڈیٹا لے آؤ",UZ:"Ma'lumotlarni olish",ZH:"获取数据",NL:"Gegevens ophalen",SV:"Hämta data",EL:"Ανάκτηση δεδομένων",CS:"Načíst data",HU:"Adatok lekérése",RO:"Obține date",BG:"Извличане на данни",DA:"Hent data",FI:"Hae tiedot",SL:"Pridobi podatke"},
@@ -1008,6 +1126,7 @@ const buttonRules = {
 'log_settings':{content:`"${translate("log_settings")}"`,top:'-37px',left:'-4px',transform:'none'},
 'bak_settings':{content:`"${translate("bak_settings")}"`,top:'-37px',left:'-4px',transform:'none'},
 'clipboard_sync':{content:`"${translate("clipboard_sync")}"`,top:'-37px',left:'-4px',transform:'none'},
+'media_files':{content:`"${translate("media_files")}"`,top:'-37px',left:'-4px',transform:'none'},
 'omod_toggle':{content:`"${translate("reading_mode")}"!important`,right:'-6px',transform:'none',left:'auto'}
 };
 const editorButtons = {'h1':translate("heading_1"),'h2':translate("heading_2"),'bold':translate("bold"),'italic':translate("italic"),'list-ul':translate("bulleted_list"),'list-ol':translate("numbered_list"),'strike':translate("strikethrough"),'left':translate("align_left"),'center':translate("align_center"),'right':translate("align_right"),'erase':translate("remove_formatting"),'horizontalrule':translate("horizontal_line"),'link':translate("add_link"),'unlink':translate("remove_link"),'html':translate("add_html"),'table':translate("add_table"),'select':translate("select_all"),'kucult':translate("decrease_font_size"),'buyut':translate("increase_font_size"),'undo':translate("undo"),'redo':translate("redo"),'copy':translate("custom_copy"),'paste':translate("custom_paste")};
@@ -1024,12 +1143,9 @@ document.head.appendChild(style);
 createCSSRules();
 
 document.addEventListener('DOMContentLoaded', function () {
-  if (localStorage.getItem('sync') === '1') {
-document.querySelector('button#sync').classList.add('aktif');
-  }
 const SPECIAL_KEYS = new Set([
-  'sidebarState', 'thizaState', 'tema', 'gistFile', 'gistId', 'gistToken',
-  'hasSelectedLanguage', 'selectedLanguage', 'sync'
+  'sidebarState', 'thizaState', 'tema',
+  'hasSelectedLanguage', 'selectedLanguage'
 ]);
 const deepEqual = (obj1, obj2) => {
   if (obj1 === obj2) return true;
@@ -1061,71 +1177,6 @@ const saveDataToLocalStorage = (data) => {
     localStorage.setItem(key, SPECIAL_KEYS.has(key) ? (value === null ? 'null' : value) : JSON.stringify(value));
   });
 };
-const loadDataFromGist = async () => {
-  if (sessionStorage.getItem('justSynced') === 'true') {
-    console.log('Sayfa zaten senkronize edildi, döngü engellendi.');
-    sessionStorage.removeItem('justSynced');
-    return;
-  }
-  if (localStorage.getItem('sync') !== '1') {
-    console.log('Sync değeri 1 değil, Gist\'ten veri yükleme yapılmadı.');
-    return;
-  }
-  const gistId = localStorage.getItem('gistId');
-  const gistToken = localStorage.getItem('gistToken');
-  const gistFile = localStorage.getItem('gistFile');
-  if (!gistId || !gistToken || !gistFile) {
-    console.log('Gist bilgileri eksik, otomatik senkronizasyon yapılamıyor.');
-    return;
-  }
-  try {
-    const response = await fetch(`https://api.github.com/gists/${gistId}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${gistToken}`,
-        Accept: 'application/vnd.github.v3+json'
-      },
-      cache: 'no-store'
-    });
-    if (!response.ok) {
-      console.log('Gist\'ten veri çekme başarısız');
-    if (localStorage.getItem('sync') === '1') {
-document.querySelector('button#sync').classList.remove('aktif');
-alert(translate("sync_failed_or_no_data_on_server_check_setup_info"));
-      localStorage.setItem('sync', '0');
-    }
-      return;
-    }
-    const gistData = await response.json();
-    if (!gistData.files?.[gistFile]) {
-      throw new Error(`Belirtilen dosya '${gistFile}' Gist içinde bulunamadı.`);
-    }
-    const gistParsedData = JSON.parse(gistData.files[gistFile].content);
-    const localData = getLocalStorageData();
-    if (deepEqual(gistParsedData, localData)) {
-      console.log('Gist\'teki veriler localStorage ile aynı, yükleme yapılmadı.');
-      return;
-    }
-    clearOrderKeys();
-    saveDataToLocalStorage(gistParsedData);
-    console.log('Gist\'ten veriler başarıyla yüklendi');
-    sessionStorage.setItem('justSynced', 'true');
-location.reload();
-  } catch (error) {
-    console.log('Gist\'ten veri yükleme hatası:', error);
-    if (localStorage.getItem('sync') === '1') {
-document.querySelector('button#sync').classList.remove('aktif');
-setTimeout(() => {
-alert(translate("sync_failed_or_no_data_on_server_check_setup_info"));
-      localStorage.setItem('sync', '0');
-}, 150);
-    }
-  }
-};
-setTimeout(() => {
-  loadDataFromGist();
-}, 150);
-
 //languege
 const languageButton = document.getElementById("languege");
 const languages = [{name: "العربية",code: "AR"},{name: "Deutsch",code: "DE"},{name: "English",code: "EN"},{name: "Español",code: "ES"},{name: "فارسی",code: "FA"},{name: "Français",code: "FR"},{name: "हिन्दी",code: "HI"},{name: "Indonesian",code: "ID"},{name: "Italiano",code: "IT"},{name: "日本語",code: "JA"},{name: "한국어",code: "KO"},{name: "Kiswahili",code: "SW"},{name: "Polski",code: "PL"},{name: "Português",code: "PT"},{name: "Русский",code: "RU"},{name: "Tiếng Việt",code: "VI"},{name: "Türkçe",code: "TR"},{name: "اردو",code: "UR"},{name: "Oʻzbekcha",code: "UZ"},{name: "中文",code: "ZH"},{name: "Nederlands",code: "NL"},{name: "Svenska",code: "SV"},{name: "Ελληνικά",code: "EL"},{name: "Čeština",code: "CS"},{name: "Magyar",code: "HU"},{name: "Română",code: "RO"},{name: "Български",code: "BG"},{name: "Dansk",code: "DA"},{name: "Suomi",code: "FI"},{name: "Slovenščina",code: "SL"}];
@@ -1184,7 +1235,6 @@ function saveLanguage(event) {
     selectedLanguage = languages.find(lang => lang.code === selectLangCode)?.name || "English";
     localStorage.setItem("selectedLanguage", selectLangCode);
     localStorage.setItem("hasSelectedLanguage", "true"); 
-    setTimeout(() => {updateGist();}, 200);
     modal_dil.querySelector(".gecerli_dil").textContent = selectedLanguage;
     document.documentElement.lang = selectLangCode.toLowerCase();
     modal_dil.querySelector(".close_main_modal").textContent = translate("close_button");
@@ -1219,7 +1269,6 @@ document.getElementById('toggle-sidebar-button').addEventListener('click', () =>
 const sidebar = document.querySelector('.sidebar');
 sidebar.style.width = '220px';
 localStorage.setItem('sidebarState', sidebar.classList.toggle('collapsed') ? 'collapsed' : 'expanded');
-updateGist();
 });
 const geriNotebar = document.getElementsByClassName('geriNotebar')[0];
 const geriContent = document.getElementsByClassName('geriContent')[0];
@@ -1265,7 +1314,6 @@ temaDegis.addEventListener('click', () => {
   document.body.className = currentTheme;
 // サーバーにSAVE
 syncSaveToServerBackground();
-updateGist();
 });
 
 function handleWindowResize() {
@@ -1405,7 +1453,6 @@ function saveData(showMessage = true) {
         saveStatus.style.display = 'none';
         }, 2000);
     }
-updateGist();
 }
 function renderCategories() {
     categoryList.innerHTML = '';
@@ -2286,7 +2333,6 @@ const thiza = document.querySelector('.thiza_button');
 taskList.classList.toggle('thiza', localStorage.getItem('thizaState') === 'two');
 thiza.addEventListener('click', function() { 
 localStorage.setItem('thizaState', taskList.classList.toggle('thiza') ? 'two' : 'one');
-updateGist();
 });
 }
 function toggleTaskCompletion(task) {
@@ -3082,7 +3128,6 @@ function updateCategoryOrder() {
             .filter(li => li.dataset.id)
             .map(li => li.dataset.id);
         localStorage.setItem('categoryOrder', JSON.stringify(categoryOrder));
-updateGist();
     }
 }
 function updateNoteOrder() {
@@ -3092,7 +3137,6 @@ function updateNoteOrder() {
             .filter(li => li.dataset.id)
             .map(li => li.dataset.id); 
         localStorage.setItem(`noteOrder-${selectedCategory.id}`, JSON.stringify(noteOrder));
-updateGist();
     }
 }
 function saveNote() {
@@ -3523,10 +3567,6 @@ const removeModalChild = () => {
       sidebarState: localStorage.getItem('sidebarState'),
       thizaState: localStorage.getItem('thizaState'),
       tema: localStorage.getItem('tema'),
-      gistFile: localStorage.getItem('gistFile'),
-      gistId: localStorage.getItem('gistId'),
-      gistToken: localStorage.getItem('gistToken'),
-      sync: localStorage.getItem('sync'),
       hasSelectedLanguage: localStorage.getItem('hasSelectedLanguage'),
       selectedLanguage: localStorage.getItem('selectedLanguage')
     };
@@ -3561,9 +3601,7 @@ document.getElementById('import').addEventListener('click', () => {
         }
       });
       Object.entries(data).forEach(([k, v]) => {
-        if (k === 'sidebarState' || k === 'thizaState' || k === 'tema' || 
-            k === 'gistFile' || k === 'gistId' || k === 'gistToken' || 
-            k === 'hasSelectedLanguage' || k === 'selectedLanguage' || k === 'sync') {
+        if (k === 'sidebarState' || k === 'thizaState' || k === 'tema') {
           localStorage.setItem(k, v);
         } else {
           localStorage.setItem(k, JSON.stringify(v));
@@ -3573,7 +3611,7 @@ document.getElementById('import').addEventListener('click', () => {
       // サーバーにSAVE
       syncSaveToServerBackground();
       // ==== Local Storage をクリア
-      localStorage.clear();
+      clearNotemodKeysOnly();
       
       alert(translate("data_imported_successfully"));
       syncLoadFromServer();   // ←「サーバーから読み込み」関数
@@ -3643,6 +3681,10 @@ document.getElementById('clipboard_sync')?.addEventListener('click', () => {
   location.href = './clipboard_sync.php';
 });
 
+document.getElementById('media_files')?.addEventListener('click', () => {
+  location.href = './media_files.php';
+});
+
 function nmT(key){
   try{
     if (typeof translate === 'function') return translate(key);
@@ -3657,217 +3699,18 @@ function nmUpdateSettingsMenuLabels(){
   const bLogset  = document.getElementById('log_settings');
   const bBakset  = document.getElementById('bak_settings');
   const bCsync   = document.getElementById('clipboard_sync');
+  const bMfiles  = document.getElementById('media_files');
   
   if (bLogout)  bLogout.textContent  = nmT('logout');
   if (bAccount) bAccount.textContent = nmT('account');
   if (bCred)    bCred.textContent    = nmT('setup_auth');
   if (bLogset)  bLogset.textContent  = nmT('log_settings');
   if (bBakset)  bBakset.textContent  = nmT('bak_settings');
-  if (bCsync)   bCsync.textContent  = nmT('clipboard_sync');
+  if (bCsync)   bCsync.textContent   = nmT('clipboard_sync');
+  if (bMfiles)  bMfiles.textContent  = nmT('media_files');
 }
-
-
-
-//gist veri ekleme
-let gistUpdateTimeout;
-let isUpdating = false;
-const updateGist = () => {
-  clearTimeout(gistUpdateTimeout);
-  gistUpdateTimeout = setTimeout(async () => {
-    if (isUpdating) return; 
-    isUpdating = true;
-    try {
-      const yeniIcerik = JSON.stringify(getStorageData(), null, 2);
-      const gistId = localStorage.getItem('gistId');
-      const gistToken = localStorage.getItem('gistToken');
-      const gistFile = localStorage.getItem('gistFile');
-      if (gistId) {
-        await gistGuncelle(gistId, gistFile, yeniIcerik, gistToken);
-      }
-    } finally {
-      isUpdating = false;
-    }
-  }, 500);
-};
-async function gistGuncelle(gistId, dosyaAdi, yeniIcerik, token) {
-  try {
-    const eskiSyncDegeri = localStorage.getItem('sync');
-    let parsedIcerik;
-    try {
-      parsedIcerik = JSON.parse(yeniIcerik);
-    } catch (e) {
-      throw new Error('yeniIcerik JSON formatında değil');
-    }
-    parsedIcerik.sync = '1';
-    const guncelIcerik = JSON.stringify(parsedIcerik, null, 2);
-    const response = await fetch(`https://api.github.com/gists/${gistId}`, {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        files: {
-          [dosyaAdi]: {
-            content: guncelIcerik,
-          },
-        },
-      }),
-    });
-    if (!response.ok) {
-      throw new Error('Gist güncelleme hatası');
-    }
-    localStorage.setItem('sync', '1');
-    document.querySelector('button#sync').classList.add('aktif');
-    if (eskiSyncDegeri === '0') {
-      alert(translate("sync_active"));
-    }
-    return true;
-  } catch (error) {
-    if (localStorage.getItem('sync') === '1') {
-      document.querySelector('button#sync').classList.remove('aktif');
-      alert(translate("sync_error_message"));
-      localStorage.setItem('sync', '0');
-    }
-    console.log('Gist güncelleme hatası:', error.message);
-    return false;
-  }
-}
-async function gistKontrol(gistId, token, gistFile) {
-  try {
-    const response = await fetch(`https://api.github.com/gists/${gistId}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Gist kontrol hatası: ${response.status}`);
-    }
-    const gistData = await response.json();
-    if (!gistData.files || !gistData.files[gistFile]) {
-      throw new Error(`Dosya bulunamadı: ${gistFile}`);
-    }
-    return true;
-  } catch (error) {
-    console.error("Gist kontrolünde hata mevcut", error);
-    return false;
-  }
-}
-const gistId = localStorage.getItem('gistId');
-const gistToken = localStorage.getItem('gistToken');
-const gistFile = localStorage.getItem('gistFile');
-//gist end
-const sync = document.getElementById('sync');
-sync.addEventListener('click', () => {
-  const modal = document.createElement('div');
-  modal.classList.add('modal');
-  modal.innerHTML = `
-        <div class="modal-content">
-            <p>${translate("sync")}</p>
-            <label for="gistId">Gist ID:</label>
-            <input type="text" id="gistId">
-            <label for="gistToken">Gist Token:</label>
-            <input type="text" id="gistToken">
-            <label for="gistFile">Gist Name:</label>
-            <input type="text" id="gistFile">
-        <p id="sync_kurulum">${translate("setup_details")}</p>
-        <p class="baglanti">${translate("backup_data_before_connection")}</p>
-            <button id="saveSync" class="delete-confirm">${translate("save")}</button>
-            <button id="cancelDelete">${translate("cancel")}</button>
-        <p id="uyariMesaji">${translate("please_fill_all_fields")}</p>
-        <p id="gistHataMesaji">${translate("gist_info_error_or_server_unreachable")}</p>
-        </div>
-    `;
-  document.body.appendChild(modal);
-document.getElementById('sync_kurulum').addEventListener('click', () => {
-  const modal_kurulum = document.createElement('div');
-  modal_kurulum.classList.add('modal');
-modal_kurulum.innerHTML = `
-<div class="modal-content">
-<h1>${translate("installation_steps")}</h1>
-<p>${translate("create_github_account")} <a href="https://github.com/signup" target="_blank">https://github.com/signup</a></p>
-<p>${translate("open_app_creation_page")} <a href="https://github.com/settings/apps" target="_blank">https://github.com/settings/apps</a></p>
-<p>${translate("select_personal_access_tokens")}</p>
-<p>${translate("click_generate_new_token")}</p>
-<p>${translate("name_your_token")}</p>
-<p>${translate("set_expiration_no_expiration")}</p>
-<p>${translate("repository_access_public_repos")}</p>
-<p>${translate("set_permissions_for_gist")}</p>
-<p>${translate("click_generate_token")}</p>
-<p style="color: #d6adff;">${translate("enter_token_in_setup")}</p>
-<h2>${translate("create_file_for_sync")}</h2>
-<p>${translate("go_to_gist_page")} <a href="https://gist.github.com" target="_blank">gist.github.com</a></p>
-<p>${translate("specify_filename")}</p>
-<p style="color: #d6adff;">${translate("enter_gist_name_in_setup")}</p>
-<p>${translate("write_something_below_filename")}</p>
-<p>${translate("select_create_secret_gist")}</p>
-<p>${translate("copy_embed_content")}</p>
-<p><code>&lt;script src="https://gist.github.com/user/1bae985fef7d26eca0a0a8128fbb97e8.js"&gt;&lt;/script&gt;</code></p>
-<p>${translate("copy_id_after_username")}</p>
-<p>${translate("example_id")} 1bae985fef7d26eca0a0a8128fbb97e8</p>
-<p style="color: #d6adff;">${translate("enter_gist_id_in_setup")}</p>
-<button id="veriGetir" class="delete-confirm">${translate("understood")}</button>
-</div>
-`;
-  document.body.appendChild(modal_kurulum);
-
-document.getElementById('veriGetir').addEventListener('click', () => {
-    document.body.removeChild(modal_kurulum);
-  });
-
-  });
-  if (gistId) document.getElementById('gistId').value = gistId;
-  if (gistToken) document.getElementById('gistToken').value = gistToken;
-  if (gistFile) document.getElementById('gistFile').value = gistFile;
-  const cancelDelete = document.getElementById('cancelDelete');
-  cancelDelete.addEventListener('click', () => {
-    document.body.removeChild(modal);
-  });
-  const saveSync = document.getElementById('saveSync');
-  saveSync.addEventListener('click', async () => {
-    const gistId = document.getElementById('gistId').value.trim();
-    const gistToken = document.getElementById('gistToken').value.trim();
-    const gistFile = document.getElementById('gistFile').value.trim();
-    const uyariMesaji = document.getElementById('uyariMesaji');
-    const gistHataMesaji = document.getElementById('gistHataMesaji');
-    if (gistId === '' || gistToken === '' || gistFile === '') {
-      uyariMesaji.style.display = 'block';
-      gistHataMesaji.style.display = 'none';
-      return;
-    }
-    uyariMesaji.style.display = 'none';
-    const testResult = await gistKontrol(gistId, gistToken, gistFile);
-    if (testResult) {
-      localStorage.setItem('gistId', gistId);
-      localStorage.setItem('gistToken', gistToken);
-      localStorage.setItem('gistFile', gistFile);
-      document.body.removeChild(modal);
-document.querySelector('button#sync').classList.add('aktif');
-      localStorage.setItem('sync', '1');
-  const modalveri = document.createElement('div');
-  modalveri.classList.add('modal');
-modalveri.innerHTML = `
-    <div class="modal-content">
-        <p>${translate("sync_successful")}</p>
-        <button id="veriGetir" class="delete-confirm">${translate("fetch_data")}</button>
-        <button id="cancelDelete">${translate("initial_setup")}</button>
-    </div>
-`;
-  document.body.appendChild(modalveri);
-document.getElementById('veriGetir').addEventListener('click', () => {
-    window.location.reload(true);
-  });
-document.getElementById('cancelDelete').addEventListener('click', () => {
-          updateGist();
-    document.body.removeChild(modalveri);
-  });
-    } else {
-      gistHataMesaji.style.display = 'block';
-    }
-  });
 });
-});
+
 // Editör fonksiyonları
 function formatDoc(cmd, value = null) {
     document.execCommand(cmd, false, value);
@@ -4226,71 +4069,157 @@ document.getElementById('color-picker').addEventListener('input', function (even
     const colorButton = document.getElementById('color-button');
     colorButton.style.backgroundColor = selectedColor;
 });
-</script>
 
 
-<script>
-// 同期マネージャー（ロジックの集約）
-const SyncManager = {
-    isSaving: false,
-    async save() {
-        if (this.isSaving) return;
-        this.isSaving = true;
-        try {
-            const saveFn = (typeof syncSaveToServerBackground === 'function') 
-                ? syncSaveToServerBackground 
-                : (typeof syncSaveToServer === 'function' ? syncSaveToServer : null);
-            
-            if (saveFn) {
-                await saveFn();
-                console.log("Sync Success");
-            }
-        } catch (e) {
-            console.error('Sync Error:', e);
-        } finally {
-            this.isSaving = false;
-        }
-    },
-    async load(forceClear = false) {
-        if (forceClear) localStorage.clear();
-        if (typeof syncLoadFromServer === 'function') await syncLoadFromServer();
+// =========================
+// Clipboard: Copy / Paste
+// (ported from old index (v).php)
+// =========================
+function _nmEditor() {
+  return document.getElementById('note-editor');
+}
+
+function _nmSelectedTextInEditor() {
+  const editor = _nmEditor();
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return '';
+  if (sel.isCollapsed) return '';
+
+  const range = sel.getRangeAt(0);
+  const common = range.commonAncestorContainer;
+  const commonEl = (common.nodeType === 1) ? common : common.parentNode;
+
+  // 選択範囲が editor 外なら無視
+  if (!editor || !commonEl || !editor.contains(commonEl)) return '';
+
+  return sel.toString() || '';
+}
+
+async function _nmCopyText(text) {
+  // secure context(https) なら Clipboard API 優先
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  // fallback: execCommand copy（古い環境用）
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  ta.style.top = '0';
+  document.body.appendChild(ta);
+  ta.select();
+
+  try {
+    document.execCommand('copy');
+  } finally {
+    document.body.removeChild(ta);
+  }
+}
+
+// Copyボタンの挙動
+async function copyNoteOrSelection() {
+  const editor = _nmEditor();
+  if (!editor) return;
+
+  const selected = _nmSelectedTextInEditor();
+  const textToCopy = (selected && selected.length > 0)
+    ? selected
+    : (editor.innerText || editor.textContent || '');
+
+  try {
+    await _nmCopyText(textToCopy);
+    // 必要ならここでトースト/メッセージ
+  } catch (e) {
+    alert('Failed to copy (possible browser permission or HTTPS issue)');
+  }
+}
+
+function _nmRestoreCaretIfPossible() {
+  const editor = _nmEditor();
+  if (!editor) return false;
+  if (typeof lastCaretPosition === 'undefined' || !lastCaretPosition) return false;
+
+  try {
+    const rng = lastCaretPosition.cloneRange();
+    const common = rng.commonAncestorContainer;
+    const commonEl = (common.nodeType === 1) ? common : common.parentNode;
+
+    if (!commonEl || !editor.contains(commonEl)) return false;
+
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(rng);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function _nmInsertTextAtCursor(text) {
+  const editor = _nmEditor();
+  if (!editor) return;
+
+  // クリックしてない状態でも貼れるように、最後のキャレットを復元できたら復元
+  _nmRestoreCaretIfPossible();
+
+  // まず execCommand insertText（改行とかが扱いやすい）
+  try {
+    if (document.queryCommandSupported && document.queryCommandSupported('insertText')) {
+      document.execCommand('insertText', false, text);
+      return;
     }
-};
+  } catch (e) {}
 
-window.addEventListener('DOMContentLoaded', function () {
-    // 確実にキャプチャするために document でイベントを待ち受ける
-    document.addEventListener('click', function (event) {
-        const target = event.target;
+  // fallback: Range操作
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(document.createTextNode(text));
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } else {
+    editor.appendChild(document.createTextNode(text));
+  }
+}
 
-        // 1. 同期（読み込み）ボタン
-        if (target.closest('#sync')) {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            SyncManager.load(true);
-            return;
-        }
+// Pasteボタンの挙動
+async function pasteFromClipboard() {
+  const editor = _nmEditor();
+  if (!editor) return;
 
-        // 2. ADDボタン & 保存ボタン & 削除ボタンの判定
-        // target自体が消える可能性を考慮し、判定を「ID一致」または「closest」の両面待ちにする
-        const isAddBtn = target.id === 'confirmDelete' || target.closest('#confirmDelete');
-        const isSaveBtn = target.closest('#save-note-button, #saveTasksButton, .delete-task-button, .delete-confirm');
+  // 閲覧モードだと貼れないようにする（必要なら外してOK）
+  if (editor.contentEditable !== 'true') {
+    alert('Please turn ON Edit Mode (Mod) before pasting');
+    return;
+  }
 
-        if (isAddBtn || isSaveBtn) {
-            // Note: ADDボタンは処理後にDOMから消えることが多いため、
-            // わずかに遅延（setTimeout）させて確実に裏側で同期を走らせる
-            setTimeout(() => SyncManager.save(), 50);
-        }
-    }, { capture: true, passive: true });
-});
+  editor.focus();
 
-// ページ表示時の読み込み
-window.addEventListener('pageshow', function () {
-    if (sessionStorage.getItem('reloadedAfterSync') === '1') {
-        sessionStorage.removeItem('reloadedAfterSync');
-        return;
+  let text = '';
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (e) {
+      // 権限が無い/拒否された等
+      text = '';
     }
-    SyncManager.load(false);
-});
+  }
+
+  // fallback: どうしても読めない場合は手入力
+  if (!text) {
+    const manual = prompt('The browser does not allow clipboard reading.\nPlease enter the text you want to paste.');
+    if (manual === null) return;
+    text = manual;
+  }
+
+  _nmInsertTextAtCursor(text);
+}
+
 </script>
 
 </body>
