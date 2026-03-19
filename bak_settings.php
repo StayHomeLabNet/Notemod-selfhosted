@@ -34,6 +34,10 @@ $t = [
     'logged_as' => 'ログイン中:',
     'back' => '戻る',
     'logout' => 'ログアウト',
+    'lang_label' => '言語',
+    'theme_label' => 'テーマ',
+    'dark' => 'Dark',
+    'light' => 'Light',
 
     'saved' => '保存しました',
     'save_failed' => 'config/config.api.php の保存に失敗しました（権限を確認）',
@@ -74,6 +78,10 @@ $t = [
     'logged_as' => 'Logged in as:',
     'back' => 'Back',
     'logout' => 'Logout',
+    'lang_label' => 'Language',
+    'theme_label' => 'Theme',
+    'dark' => 'Dark',
+    'light' => 'Light',
 
     'saved' => 'Saved',
     'save_failed' => 'Failed to write config/config.api.php (permission?)',
@@ -609,11 +617,12 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
       background:linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent);
       border-bottom:1px solid var(--line);
       display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
-      padding-right: 120px;
       padding-bottom: 10px;
     }
-    .title{ font-weight:900; letter-spacing:.3px; }
-    .meta{ color:var(--muted); font-size:13px; margin-top:6px; }
+    .title{ font-weight:900; letter-spacing:.3px; font-size:18px; margin:0; }
+    .sub{ color:var(--muted); font-size:12px; margin-top:6px; }
+    .left{ display:flex; flex-direction:column; gap:4px; }
+    .head .right{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 
     .body{ padding:16px 18px 18px; display:grid; gap:14px; }
     .box{
@@ -639,6 +648,30 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
     }
 
     .btn{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:10px 12px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:color-mix(in srgb, var(--card2) 70%, transparent);
+      color:var(--text);
+      cursor:pointer; text-decoration:none;
+      font-size:13px; font-weight:700;
+      transition: .15s ease;
+      user-select:none;
+      width:auto;
+      box-shadow:none;
+      margin-top:0;
+    }
+    .btn:hover{ transform: translateY(-1px); filter:none; border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); text-decoration:none; }
+    .btn:active{ transform: translateY(0); filter:none; }
+    .btn.red{
+      border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+      color: color-mix(in srgb, var(--danger) 75%, var(--text));
+      background:color-mix(in srgb, var(--card2) 70%, transparent);
+    }
+    .btn.red:hover{ border-color: color-mix(in srgb, var(--danger) 60%, var(--line)); }
+
+    .btn-primary{
       border:none; border-radius:14px;
       padding:12px 14px;
       font-weight:900;
@@ -650,8 +683,8 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
       box-shadow: 0 10px 25px color-mix(in srgb, var(--accent) 20%, transparent);
       margin-top:12px;
     }
-    .btn:hover{ transform: translateY(-1px); filter: brightness(1.03); }
-    .btn:active{ transform: translateY(0); filter: brightness(.98); }
+    .btn-primary:hover{ transform: translateY(-1px); filter: brightness(1.03); }
+    .btn-primary:active{ transform: translateY(0); filter: brightness(.98); }
 
     .btn-danger{
       background: linear-gradient(135deg, color-mix(in srgb, var(--danger) 85%, #fff), color-mix(in srgb, var(--danger) 65%, #fb7185));
@@ -682,48 +715,31 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
     a{ color:var(--accent); text-decoration:none; }
     a:hover{ text-decoration:underline; }
 
-    .toggles{
-      position:absolute;
-      top:8px;
-      right:8px;
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-      align-items:flex-end;
-      user-select:none;
-      transform: scale(.86);
-      transform-origin: top right;
-      opacity:.96;
-      z-index: 5;
-    }
-    .toggle-row{ display:flex; gap:6px; align-items:center; justify-content:flex-end; }
-    .toggle-row span{ font-size:10px; color:var(--muted); margin-right:2px; line-height:1; }
     .pill{
-      display:inline-flex;
-      gap:3px;
-      background: color-mix(in srgb, var(--card2) 60%, transparent);
-      border:1px solid color-mix(in srgb, var(--line) 105%, transparent);
-      padding:2px;
+      display:inline-flex; gap:10px; align-items:center; flex-wrap:wrap;
+      padding:10px 12px;
       border-radius:999px;
+      border:1px solid var(--line);
+      background:color-mix(in srgb, var(--card2) 75%, transparent);
+      font-size:13px;
     }
+    .toggles{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .toggle-row{ display:flex; align-items:center; gap:8px; }
+    .toggle-row span{ font-size:12px; color:var(--muted); }
     .pill a{
-      font-size:10px;
-      padding:4px 8px;
-      border-radius:999px;
-      color:var(--muted);
-      text-decoration:none;
+      text-decoration:none; color:var(--muted);
+      font-weight:800; font-size:12px;
+      padding:6px 8px; border-radius:999px;
       border:1px solid transparent;
       white-space:nowrap;
-      line-height:1.1;
     }
     .pill a.active{
-      background: color-mix(in srgb, var(--accent) 16%, transparent);
-      color: var(--text);
-      border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+      color:var(--text);
+      border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
     }
     @media (max-width: 600px){
-      .toggles{ top:6px; right:6px; transform: scale(.82); }
-      .head{ padding-right: 18px; }
+      .wrap{ width:min(720px, 100%); }
     }
 
     .action-row{
@@ -820,39 +836,39 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
   <div class="wrap">
     <div class="card">
 
-      <div class="toggles">
-        <div class="toggle-row">
-          <span><?=htmlspecialchars($t[$lang]['lang_label'] ?? 'Language', ENT_QUOTES, 'UTF-8')?></span>
-          <div class="pill">
-            <a href="<?=htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='ja'?'active':'' ?>">JP</a>
-            <a href="<?=htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='en'?'active':'' ?>">EN</a>
-          </div>
-        </div>
-
-        <div class="toggle-row">
-          <span><?=htmlspecialchars($t[$lang]['theme_label'] ?? 'Theme', ENT_QUOTES, 'UTF-8')?></span>
-          <div class="pill">
-            <a href="<?=htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='dark'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['dark'] ?? 'Dark', ENT_QUOTES, 'UTF-8')?></a>
-            <a href="<?=htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='light'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['light'] ?? 'Light', ENT_QUOTES, 'UTF-8')?></a>
-          </div>
-        </div>
-      </div>
-
       <div class="head">
-        <div>
-          <div class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></div>
-          <div class="meta"><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b></div>
+        <div class="left">
+          <h1 class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></h1>
+          <div class="sub"><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b></div>
+        </div>
+
+        <div class="right">
+          <a class="btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+
+          <div class="toggles">
+            <div class="toggle-row">
+              <span><?=htmlspecialchars($t[$lang]['lang_label'], ENT_QUOTES, 'UTF-8')?></span>
+              <div class="pill">
+                <a href="<?=htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='ja'?'active':'' ?>">JP</a>
+                <a href="<?=htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='en'?'active':'' ?>">EN</a>
+              </div>
+            </div>
+
+            <div class="toggle-row">
+              <span><?=htmlspecialchars($t[$lang]['theme_label'], ENT_QUOTES, 'UTF-8')?></span>
+              <div class="pill">
+                <a href="<?=htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='dark'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['dark'], ENT_QUOTES, 'UTF-8')?></a>
+                <a href="<?=htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='light'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['light'], ENT_QUOTES, 'UTF-8')?></a>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       <div class="body">
         <?php if ($msg): ?><div class="notice ok"><?=htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
         <?php if ($err): ?><div class="notice bad"><?=htmlspecialchars($err, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
-
-        <div class="action-row">
-          <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
-          <a href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
-        </div>
 
         <div class="box">
           <h3><?=htmlspecialchars($t[$lang]['section_backup'], ENT_QUOTES, 'UTF-8')?></h3>
@@ -879,7 +895,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
 
             <form method="post" class="inline-form" style="margin: 8px 0 14px 0;">
               <input type="hidden" name="mode" value="backup_now">
-              <button type="submit" class="btn" style="width:100%; padding:10px 12px; font-size:13px; border-radius:12px;">
+              <button type="submit" class="btn-primary" style="width:100%; padding:10px 12px; font-size:13px; border-radius:12px;">
                 <?=htmlspecialchars($t[$lang]['backup_now'], ENT_QUOTES, 'UTF-8')?>
               </button>
             </form>
@@ -899,7 +915,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
             <input type="hidden" name="CLEANUP_BACKUP_ENABLED" value="<?= $prefEnabled ? '1' : '0' ?>">
             <input type="hidden" name="CLEANUP_BACKUP_KEEP" value="<?=htmlspecialchars((string)$prefKeep, ENT_QUOTES, 'UTF-8')?>">
 
-            <button class="btn btn-danger" type="submit"
+            <button class="btn-primary btn-danger" type="submit"
               onclick="return confirm('<?=htmlspecialchars($lang==='ja' ? '最新から指定数を残して削除します。よろしいですか？' : 'This will delete backups except the newest n. Continue?', ENT_QUOTES, 'UTF-8')?>');">
               <?=htmlspecialchars($t[$lang]['btn_delete'], ENT_QUOTES, 'UTF-8')?>
             </button>
@@ -970,8 +986,8 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
           </script>
 
           <div class="action-row bottom-left">
-            <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
-            <a href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+            <a class="btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
+            <a class="btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
           </div>
 
         </div>

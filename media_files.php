@@ -7,10 +7,10 @@ require_once __DIR__ . '/auth_common.php';
  * media_files.php
  * - UIは bak_settings.php と揃える（JP/EN, Dark/Light、右上トグル、上部にログイン中ユーザー名）
  * - 機能はそのまま：
- *   - サーバー設定（折りたたみ）
- *   - images/files 件数表示（cleanup_api.php dry_run=2 優先）
- *   - 画像一覧（サムネ + ダウンロード） + ドロップアップロード
- *   - ファイル一覧（file.json: JSON Lines） + ドロップアップロード
+ * - サーバー設定（折りたたみ）
+ * - images/files 件数表示（cleanup_api.php dry_run=2 優先）
+ * - 画像一覧（サムネ + ダウンロード） + ドロップアップロード
+ * - ファイル一覧（file.json: JSON Lines） + ドロップアップロード
  */
 
 nm_auth_require_login();
@@ -80,6 +80,7 @@ $t = [
     'btn_delete_selected_files' => '選択したファイルを削除',
     'confirm_delete_selected_images' => '選択した画像ファイルを削除します。よろしいですか？',
     'confirm_delete_selected_files' => '選択したファイルを削除します。よろしいですか？',
+    'copied_image' => '画像をコピーしました',
   ],
   'en' => [
     'title' => 'Media / Files',
@@ -131,6 +132,7 @@ $t = [
     'btn_delete_selected_files' => 'Delete selected files',
     'confirm_delete_selected_images' => 'Delete the selected image files. Continue?',
     'confirm_delete_selected_files' => 'Delete the selected files. Continue?',
+    'copied_image' => 'Image copied to clipboard',
   ],
 ];
 if (!isset($t[$lang])) $lang = 'ja';
@@ -732,7 +734,9 @@ $backUrl = rtrim($base, '/') . '/';
                   ?>
                   <tr>
                     <td><input type="checkbox" class="media-check media-check-image" value="<?=h($fname)?>"></td>
-                    <td><img class="thumb" src="<?=h($_SERVER['PHP_SELF'])?>?thumb=1&f=<?=h(urlencode($fname))?>" alt=""></td>
+                    <td>
+                      <img class="thumb copy-thumb" style="cursor:pointer;" title="<?=htmlspecialchars($t[$lang]['copied_image'], ENT_QUOTES, 'UTF-8')?>" src="<?=h($_SERVER['PHP_SELF'])?>?thumb=1&f=<?=h(urlencode($fname))?>" alt="" data-filename="<?=h($fname)?>">
+                    </td>
                     <td><?=h($fname)?></td>
                     <td><?=h(fmt_local_time_from_unix($mtime))?></td>
                     <td class="right"><?=h(number_format($size))?></td>
@@ -850,6 +854,12 @@ const TEXT_BTN_DELETE_SELECTED_IMAGES = <?=json_encode($t[$lang]['btn_delete_sel
 const TEXT_BTN_DELETE_SELECTED_FILES = <?=json_encode($t[$lang]['btn_delete_selected_files'])?>;
 const TEXT_CONFIRM_DELETE_SELECTED_IMAGES = <?=json_encode($t[$lang]['confirm_delete_selected_images'])?>;
 const TEXT_CONFIRM_DELETE_SELECTED_FILES = <?=json_encode($t[$lang]['confirm_delete_selected_files'])?>;
+
+// --- 画像コピーツール用変数 ---
+const IMAGE_API_BASE = <?=json_encode($apiDirUrl . '/image_api.php')?>;
+const CURRENT_USER = <?=json_encode($USERNAME)?>;
+const TEXT_COPIED_IMAGE = <?=json_encode($t[$lang]['copied_image'])?>;
+// ------------------------------
 
 function humanErr(e) {
   try { return (typeof e === 'string') ? e : JSON.stringify(e); } catch { return String(e); }
@@ -1029,6 +1039,68 @@ updateDeleteButtons();
 
 document.getElementById('btnDeleteAllImages')?.addEventListener('click', handleDeleteImages);
 document.getElementById('btnDeleteAllFiles')?.addEventListener('click', handleDeleteFiles);
+
+// --- 画像コピーツールの処理開始 ---
+function showToast(msg) {
+  let toast = document.getElementById('img-copy-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'img-copy-toast';
+    toast.style.cssText = 'position:fixed; bottom:30px; left:50%; transform:translateX(-50%); background:var(--ok); color:#fff; padding:10px 20px; border-radius:999px; font-weight:bold; z-index:9999; box-shadow:var(--shadow); opacity:0; transition:opacity 0.3s ease; pointer-events:none;';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  setTimeout(() => { toast.style.opacity = '0'; }, 3000);
+}
+
+async function copyImageToClipboard(filename) {
+  try {
+    const url = `${IMAGE_API_BASE}?user=${encodeURIComponent(CURRENT_USER)}&file=${encodeURIComponent(filename)}`;
+    
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Network response was not ok');
+    const blob = await response.blob();
+
+    // クリップボードAPIの仕様でPNGが最も確実なため、canvasを経由してPNGバイナリに変換する
+    const img = new Image();
+    const imgLoadPromise = new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+    });
+    img.src = URL.createObjectURL(blob);
+    await imgLoadPromise;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+
+    canvas.toBlob(async (pngBlob) => {
+      try {
+        const item = new ClipboardItem({ "image/png": pngBlob });
+        await navigator.clipboard.write([item]);
+        showToast(TEXT_COPIED_IMAGE);
+      } catch (err) {
+        console.error("Clipboard write failed:", err);
+        alert("クリップボードへのコピーに失敗しました。\n(ブラウザが対応していないか、HTTPS環境でない可能性があります)");
+      }
+    }, 'image/png');
+  } catch (e) {
+    console.error(e);
+    alert("画像取得に失敗しました");
+  }
+}
+
+document.querySelectorAll('.copy-thumb').forEach(el => {
+  el.addEventListener('click', () => {
+    const filename = el.getAttribute('data-filename');
+    if (filename) copyImageToClipboard(filename);
+  });
+});
+// --- 画像コピーツールの処理終了 ---
+
 </script>
 </body>
 </html>

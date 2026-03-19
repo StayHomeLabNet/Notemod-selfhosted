@@ -31,9 +31,9 @@ $t = [
     'pw_mismatch' => '新しいパスワードが一致しません',
     'pw_short' => '新しいパスワードは10文字以上にしてください',
     'pw_hash_fail' => 'パスワードの保存に失敗しました',
-    'note_api' => 'API は Basic 認証を使用してください。この画面は Notemod-selfhosted へのログインにのみ使用されます',
-    'lang_label' => 'Language',
-    'theme_label' => 'Theme',
+    'note_api' => 'API ディレクトリに Basic 認証を使用することをおすすめします。この画面は Notemod-selfhosted へのログインにのみ使用されます',
+    'lang_label' => '言語',
+    'theme_label' => 'テーマ',
     'dark' => 'Dark',
     'light' => 'Light',
   ],
@@ -57,9 +57,9 @@ $t = [
     'pw_mismatch' => 'New passwords do not match',
     'pw_short' => 'New password must be at least 10 characters',
     'pw_hash_fail' => 'Failed to hash password',
-    'note_api' => 'Please use Basic Authentication for the API. This screen is only used for logging in to Notemod-selfhosted.',
-    'lang_label' => 'Language',
-    'theme_label' => 'Theme',
+    'note_api' => 'It is recommended to use Basic Authentication for the API directory. This screen is only used for logging in to Notemod-selfhosted.',
+    'lang_label' => '言語',
+    'theme_label' => 'テーマ',
     'dark' => 'Dark',
     'light' => 'Light',
   ],
@@ -162,7 +162,7 @@ $backUrl   = rtrim($base, '/') . '/';
       padding:18px;
     }
 
-    .wrap{ width:min(720px, 100%); display:grid; gap:14px; }
+    .wrap{ width:min(1024px, 100%); display:grid; gap:14px; }
     .card{
       background:var(--card);
       border:1px solid var(--line);
@@ -177,11 +177,42 @@ $backUrl   = rtrim($base, '/') . '/';
       background:linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent);
       border-bottom:1px solid var(--line);
       display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
-      padding-right: 120px; /* トグルとかぶりにくく */
       padding-bottom: 10px;
     }
-    .title{ font-weight:900; letter-spacing:.3px; }
+    .head-left{ display:flex; flex-direction:column; gap:4px; }
+    .head-right{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .title{ font-weight:900; letter-spacing:.3px; font-size:18px; margin:0; }
     .meta{ color:var(--muted); font-size:13px; margin-top:6px; }
+    .toolbar-label{ font-size:12px; color:var(--muted); }
+    .header-btn{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:10px 12px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:color-mix(in srgb, var(--card2) 70%, transparent);
+      color:var(--text);
+      cursor:pointer; text-decoration:none;
+      font-size:13px; font-weight:700;
+      transition:.15s ease;
+      user-select:none; white-space:nowrap;
+    }
+    .header-btn:hover{ transform:translateY(-1px); border-color:color-mix(in srgb, var(--accent) 38%, var(--line)); text-decoration:none; }
+    .header-btn.red{ border-color:color-mix(in srgb, var(--danger) 35%, var(--line)); color:color-mix(in srgb, var(--danger) 75%, var(--text)); }
+    .header-btn.red:hover{ border-color:color-mix(in srgb, var(--danger) 60%, var(--line)); }
+    .header-pill{
+      display:inline-flex; gap:10px; align-items:center; flex-wrap:wrap;
+      padding:10px 12px; border-radius:999px; border:1px solid var(--line);
+      background:color-mix(in srgb, var(--card2) 75%, transparent); font-size:13px;
+    }
+    .header-pill a{
+      text-decoration:none; color:var(--muted); font-weight:800; font-size:12px;
+      padding:6px 8px; border-radius:999px; border:1px solid transparent; white-space:nowrap;
+    }
+    .header-pill a.active{
+      color:var(--text);
+      border-color:color-mix(in srgb, var(--accent) 45%, var(--line));
+      background:color-mix(in srgb, var(--accent) 12%, transparent);
+    }
 
     .body{ padding:16px 18px 18px; display:grid; gap:14px; }
     .grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
@@ -244,72 +275,6 @@ $backUrl   = rtrim($base, '/') . '/';
     a{ color:var(--accent); text-decoration:none; }
     a:hover{ text-decoration:underline; }
 
-    /* Top-right toggles (smaller + right aligned) */
-    .toggles{
-      position:absolute;
-      top:8px;
-      right:8px;
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-      align-items:flex-end;
-      user-select:none;
-      transform: scale(.86);
-      transform-origin: top right;
-      opacity:.96;
-      z-index: 5;
-    }
-    .toggle-row{ display:flex; gap:6px; align-items:center; justify-content:flex-end; }
-    .toggle-row span{ font-size:10px; color:var(--muted); margin-right:2px; line-height:1; }
-    .pill{
-      display:inline-flex;
-      gap:3px;
-      background: color-mix(in srgb, var(--card2) 60%, transparent);
-      border:1px solid color-mix(in srgb, var(--line) 105%, transparent);
-      padding:2px;
-      border-radius:999px;
-    }
-    .pill a{
-      font-size:10px;
-      padding:4px 8px;
-      border-radius:999px;
-      color:var(--muted);
-      text-decoration:none;
-      border:1px solid transparent;
-      white-space:nowrap;
-      line-height:1.1;
-    }
-    .pill a.active{
-      background: color-mix(in srgb, var(--accent) 16%, transparent);
-      color: var(--text);
-      border-color: color-mix(in srgb, var(--accent) 26%, transparent);
-    }
-    @media (max-width: 600px){
-      .toggles{ top:6px; right:6px; transform: scale(.82); }
-      .head{ padding-right: 18px; }
-    }
-
-    /* Back/Logout row under notice */
-    .action-row{
-      display:flex;
-      gap:10px;
-      justify-content:flex-end;
-      flex-wrap:wrap;
-    }
-    .action-row a{
-      font-size:13px;
-      padding:8px 10px;
-      border-radius:12px;
-      background: color-mix(in srgb, var(--card2) 70%, transparent);
-      border:1px solid color-mix(in srgb, var(--line) 120%, transparent);
-      text-decoration:none;
-    }
-    .action-row.bottom-left{ justify-content:flex-start; }
-
-    .action-row a:hover{
-      text-decoration:none;
-      filter: brightness(1.02);
-    }
   </style>
   <script>
   // Notemod main language -> custom pages (JA only, otherwise EN)
@@ -332,28 +297,24 @@ $backUrl   = rtrim($base, '/') . '/';
   <div class="wrap">
     <div class="card">
 
-      <div class="toggles">
-        <div class="toggle-row">
-          <span><?=htmlspecialchars($t[$lang]['lang_label'], ENT_QUOTES, 'UTF-8')?></span>
-          <div class="pill">
+      <div class="head">
+        <div class="head-left">
+          <div class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></div>
+          <div class="meta"><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b></div>
+        </div>
+        <div class="head-right">
+          <a class="header-btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="header-btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+          <span class="toolbar-label"><?=htmlspecialchars($t[$lang]['lang_label'], ENT_QUOTES, 'UTF-8')?></span>
+          <div class="header-pill">
             <a href="<?=htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='ja'?'active':'' ?>">JP</a>
             <a href="<?=htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='en'?'active':'' ?>">EN</a>
           </div>
-        </div>
-
-        <div class="toggle-row">
-          <span><?=htmlspecialchars($t[$lang]['theme_label'], ENT_QUOTES, 'UTF-8')?></span>
-          <div class="pill">
+          <span class="toolbar-label"><?=htmlspecialchars($t[$lang]['theme_label'], ENT_QUOTES, 'UTF-8')?></span>
+          <div class="header-pill">
             <a href="<?=htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='dark'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['dark'], ENT_QUOTES, 'UTF-8')?></a>
             <a href="<?=htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='light'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['light'], ENT_QUOTES, 'UTF-8')?></a>
           </div>
-        </div>
-      </div>
-
-      <div class="head">
-        <div>
-          <div class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></div>
-          <div class="meta"><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b></div>
         </div>
       </div>
 
@@ -361,17 +322,7 @@ $backUrl   = rtrim($base, '/') . '/';
         <?php if ($msg): ?><div class="notice ok"><?=htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
         <?php if ($err): ?><div class="notice bad"><?=htmlspecialchars($err, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
 
-        <?php if ($msg || $err): ?>
-          <div class="action-row">
-            <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
-            <a href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
-          </div>
-        <?php else: ?>
-          <div class="action-row" style="margin-top:-4px;">
-            <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
-            <a href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
-          </div>
-        <?php endif; ?>
+
 
         <div class="grid">
           <div class="box">
@@ -403,10 +354,6 @@ $backUrl   = rtrim($base, '/') . '/';
 
         <div class="notice"><?=htmlspecialchars($t[$lang]['note_api'], ENT_QUOTES, 'UTF-8')?></div>
       
-        <div class="action-row bottom-left" style="justify-content:flex-start; margin-top:12px;">
-          <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
-          <a href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
-        </div>
 </div>
     </div>
   </div>

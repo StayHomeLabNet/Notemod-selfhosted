@@ -37,7 +37,7 @@ $theme = $ui['theme'];
 // --------------------
 $t = [
   'ja' => [
-    'title' => '初期セットアップ',
+    'title' => '初期セットアップ / 認証設定',
     'desc'  => 'Notemod-selfhosted のログイン用ユーザー/パスワードを作成します。',
     'desc2' => 'さらに、API用トークンと config/config.php の SECRET をセットできます。',
 
@@ -55,11 +55,12 @@ $t = [
     'err_user_empty' => 'ユーザー名が空です',
     'exists' => 'auth.php は既に設定済みです。必要ならアカウント画面から変更してください。',
     'go_back' => '戻る',
+    'logout' => 'ログアウト',
     'go_login' => 'ログインへ',
     'go_account' => 'アカウント設定へ',
 
-    'lang_label' => 'Language',
-    'theme_label' => 'Theme',
+    'lang_label' => '言語',
+    'theme_label' => 'テーマ',
     'dark' => 'Dark',
     'light' => 'Light',
 
@@ -80,7 +81,7 @@ $t = [
     'auth_section' => '画面ログイン（config/auth.php）',
   ],
   'en' => [
-    'title' => 'Initial Setup',
+    'title' => 'Initial Setup / Authentication settings',
     'desc'  => 'Create username/password for Notemod-selfhosted login.',
     'desc2' => 'You can also set API tokens and SECRET in config/config.php.',
 
@@ -98,11 +99,12 @@ $t = [
     'err_user_empty' => 'Username is empty',
     'exists' => 'auth.php is already configured. Use Account page to change it.',
     'go_back' => 'Back',
+    'logout' => 'Logout',
     'go_login' => 'Go to Login',
     'go_account' => 'Go to Account',
 
-    'lang_label' => 'Language',
-    'theme_label' => 'Theme',
+    'lang_label' => '言語',
+    'theme_label' => 'テーマ',
     'dark' => 'Dark',
     'light' => 'Light',
 
@@ -449,6 +451,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 // --------------------
 $u = nm_ui_toggle_urls('/setup_auth.php', $lang, $theme);
 $backUrl   = nm_ui_url('/');
+$logoutUrl = nm_ui_url('/logout.php');
 $loginUrl   = nm_ui_url('/login.php');
 $accountUrl = nm_ui_url('/account.php');
 
@@ -504,7 +507,7 @@ if ($secretInfo === '') {
         linear-gradient(180deg, var(--bg0), var(--bg1));
       padding:18px;
     }
-    .wrap{ width:min(720px, 100%); display:grid; gap:14px; }
+    .wrap{ width:min(980px, 100%); display:grid; gap:14px; }
     .card{
       background:var(--card);
       border:1px solid var(--line);
@@ -519,11 +522,29 @@ if ($secretInfo === '') {
       background:linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent);
       border-bottom:1px solid var(--line);
       display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
-      padding-right:120px; /* トグルと干渉しにくく */
       padding-bottom:10px;
     }
-    .title{ font-weight:900; letter-spacing:.3px; }
-    .meta{ color:var(--muted); font-size:13px; margin-top:6px; }
+    .title{ font-weight:900; letter-spacing:.3px; font-size:18px; margin:0; }
+    .left{ display:flex; flex-direction:column; gap:4px; }
+    .sub{ color:var(--muted); font-size:12px; margin-top:6px; }
+    .desc-lines{ color:var(--muted); font-size:13px; line-height:1.5; margin-top:10px; }
+    .head .right{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .topbtn{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:10px 12px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:color-mix(in srgb, var(--card2) 70%, transparent);
+      color:var(--text);
+      cursor:pointer; text-decoration:none;
+      font-size:13px; font-weight:700;
+      transition: .15s ease;
+      user-select:none;
+      white-space:nowrap;
+    }
+    .topbtn:hover{ transform: translateY(-1px); border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); text-decoration:none; }
+    .topbtn.red{ border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); color: color-mix(in srgb, var(--danger) 75%, var(--text)); }
+    .topbtn.red:hover{ border-color: color-mix(in srgb, var(--danger) 60%, var(--line)); }
     .body{ padding:16px 18px 18px; display:grid; gap:14px; }
     .box{
       border:1px solid color-mix(in srgb, var(--line) 120%, transparent);
@@ -584,58 +605,31 @@ if ($secretInfo === '') {
     a{ color:var(--accent); text-decoration:none; }
     a:hover{ text-decoration:underline; }
 
-    /* Top-right toggles (smaller + right-aligned) */
-    .toggles{
-      position:absolute;
-      top:8px;
-      right:8px;
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-      align-items:flex-end;
-      user-select:none;
-      transform: scale(.86);
-      transform-origin: top right;
-      opacity:.95;
-    }
-    .toggle-row{
-      display:flex;
-      gap:6px;
-      align-items:center;
-      justify-content:flex-end;
-    }
-    .toggle-row span{
-      font-size:10px;
-      color:var(--muted);
-      margin-right:2px;
-      line-height:1;
-    }
+    .toggles{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; user-select:none; }
+    .toggle-row{ display:flex; gap:8px; align-items:center; }
+    .toggle-row span{ font-size:12px; color:var(--muted); line-height:1.2; }
     .pill{
-      display:inline-flex;
-      gap:3px;
+      display:inline-flex; gap:3px; align-items:center;
       background: color-mix(in srgb, var(--card2) 60%, transparent);
       border:1px solid color-mix(in srgb, var(--line) 105%, transparent);
       padding:2px;
       border-radius:999px;
     }
     .pill a{
-      font-size:10px;
-      padding:4px 8px;
+      font-size:12px;
+      padding:6px 10px;
       border-radius:999px;
       color:var(--muted);
       text-decoration:none;
       border:1px solid transparent;
       white-space:nowrap;
       line-height:1.1;
+      font-weight:800;
     }
     .pill a.active{
       background: color-mix(in srgb, var(--accent) 16%, transparent);
       color: var(--text);
       border-color: color-mix(in srgb, var(--accent) 26%, transparent);
-    }
-    @media (max-width: 600px){
-      .toggles{ top:6px; right:6px; transform: scale(.80); }
-      .head{ padding-right:18px; }
     }
 
     .row-links{ display:flex; gap:12px; flex-wrap:wrap; }
@@ -662,46 +656,47 @@ if ($secretInfo === '') {
   <div class="wrap">
     <div class="card">
 
-      <div class="toggles">
-        <div class="toggle-row">
-          <span><?=htmlspecialchars($t[$lang]['lang_label'], ENT_QUOTES, 'UTF-8')?></span>
-          <div class="pill">
-            <a href="<?=htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='ja'?'active':'' ?>">JP</a>
-            <a href="<?=htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='en'?'active':'' ?>">EN</a>
-          </div>
-        </div>
-
-        <div class="toggle-row">
-          <span><?=htmlspecialchars($t[$lang]['theme_label'], ENT_QUOTES, 'UTF-8')?></span>
-          <div class="pill">
-            <a href="<?=htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='dark'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['dark'], ENT_QUOTES, 'UTF-8')?></a>
-            <a href="<?=htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='light'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['light'], ENT_QUOTES, 'UTF-8')?></a>
-          </div>
-        </div>
-      </div>
-
       <div class="head">
-        <div>
-          <div class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></div>
-
-          <div class="meta">
+        <div class="left">
+          <h1 class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></h1>
+          <?php if ($isLoggedIn && $loggedUser !== ''): ?>
+            <div class="sub"><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($loggedUser, ENT_QUOTES, 'UTF-8')?></b></div>
+          <?php endif; ?>
+          <div class="desc-lines">
             <?=htmlspecialchars($t[$lang]['desc'], ENT_QUOTES, 'UTF-8')?><br>
             <?=htmlspecialchars($t[$lang]['desc2'], ENT_QUOTES, 'UTF-8')?>
+          </div>
+        </div>
 
-            <?php if ($isLoggedIn && $loggedUser !== ''): ?>
-              <br><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($loggedUser, ENT_QUOTES, 'UTF-8')?></b>
-            <?php endif; ?>
+        <div class="right">
+          <a class="topbtn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8')?></a>
+          <?php if ($isLoggedIn): ?>
+            <a class="topbtn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+          <?php else: ?>
+            <a class="topbtn red" href="<?=htmlspecialchars($loginUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_login'], ENT_QUOTES, 'UTF-8')?></a>
+          <?php endif; ?>
+
+          <div class="toggles">
+            <div class="toggle-row">
+              <span><?=htmlspecialchars($t[$lang]['lang_label'], ENT_QUOTES, 'UTF-8')?></span>
+              <div class="pill">
+                <a href="<?=htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='ja'?'active':'' ?>">JP</a>
+                <a href="<?=htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='en'?'active':'' ?>">EN</a>
+              </div>
+            </div>
+
+            <div class="toggle-row">
+              <span><?=htmlspecialchars($t[$lang]['theme_label'], ENT_QUOTES, 'UTF-8')?></span>
+              <div class="pill">
+                <a href="<?=htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='dark'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['dark'], ENT_QUOTES, 'UTF-8')?></a>
+                <a href="<?=htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='light'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['light'], ENT_QUOTES, 'UTF-8')?></a>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       <div class="body">
-        
-        <div class="row-links body-top-right" style="justify-content:flex-end; margin:-2px 0 14px;">
-          <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8')?></a>
-          <a href="<?=htmlspecialchars($loginUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_login'], ENT_QUOTES, 'UTF-8')?></a>
-          <a href="<?=htmlspecialchars($accountUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_account'], ENT_QUOTES, 'UTF-8')?></a>
-        </div>
 <?php if ($msg): ?><div class="notice ok"><?=htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
         <?php if ($err): ?><div class="notice bad"><?=htmlspecialchars($err, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
 
@@ -760,9 +755,9 @@ if ($secretInfo === '') {
         </div>
 
         <div class="row-links">
-          <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8')?></a>
-          <a href="<?=htmlspecialchars($loginUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_login'], ENT_QUOTES, 'UTF-8')?></a>
-          <a href="<?=htmlspecialchars($accountUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_account'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="topbtn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="topbtn red" href="<?=htmlspecialchars($loginUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_login'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="topbtn" href="<?=htmlspecialchars($accountUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_account'], ENT_QUOTES, 'UTF-8')?></a>
         </div>
 
       </div>

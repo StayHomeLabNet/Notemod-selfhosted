@@ -42,15 +42,23 @@ $LINKS = [
   // 1行2つ表示：通常版 / BASIC認証対応版
   'shortcuts' => [
     'ja' => [
-      'pc_to_iphone' => ['label'=>'PC→iPhone', 'normal'=>'https://www.icloud.com/shortcuts/573cd418a49643c88e8ff7806add37aa', 'basic'=>'https://www.icloud.com/shortcuts/f6184f480bea4c5f8d10c19e18a3a713'],
-      'iphone_to_pc' => ['label'=>'iPhone→PC', 'normal'=>'https://www.icloud.com/shortcuts/c8b275227fb94a35a447218b82642cab', 'basic'=>'https://www.icloud.com/shortcuts/2a7fc6dc71004d73aed8658191fc6e13'],
+      'pc_to_iphone' => ['label'=>'PC→iPhone', 'normal'=>'https://www.icloud.com/shortcuts/b812ee2fe3ed439989f3951ec4e9b344', 'basic'=>'https://www.icloud.com/shortcuts/ff905827ea884ef4a986b7b186494c1e'],
+      'iphone_to_pc' => ['label'=>'iPhone→PC', 'normal'=>'https://www.icloud.com/shortcuts/c958bfb4d7ab4687bcba2cd333b048e3', 'basic'=>'https://www.icloud.com/shortcuts/874da261725f41c78f4eb4f9111026af'],
+      'pc_to_iphone_image' => ['label'=>'PC→iPhone 画像対応', 'normal'=>'https://www.icloud.com/shortcuts/10de0d0700374aeeb17c3d3f0ab1b3ca', 'basic'=>'https://www.icloud.com/shortcuts/db63d26c95f043b7a72fa6ec963db074'],
+      'iphone_to_pc_image' => ['label'=>'iPhone→PC 画像対応', 'normal'=>'https://www.icloud.com/shortcuts/ed16e26b793248c3ae09797999a73f62', 'basic'=>'https://www.icloud.com/shortcuts/4c88d1071c99412e81790de2be82af34'],
+      'pc_to_iphone_file' => ['label'=>'PC→iPhone ファイル', 'normal'=>'https://www.icloud.com/shortcuts/f428182bdebe4288954478c7de677cc7', 'basic'=>'https://www.icloud.com/shortcuts/5772de77bf504117b179f424f7b2f170'],
+      'iphone_to_pc_file' => ['label'=>'iPhone→PC ファイル', 'normal'=>'https://www.icloud.com/shortcuts/8aae48cc968642a0a28f63404c88a054', 'basic'=>'https://www.icloud.com/shortcuts/6a568706aff24a0f983fba61b9c19c4c'],
       'text_memo' => ['label'=>'テキストメモ', 'normal'=>'https://www.icloud.com/shortcuts/543147bbfdbf4a12867e5c8fe8cb16f3', 'basic'=>'https://www.icloud.com/shortcuts/76733675ddb541a38930d5fcdd9368a8'],
       'voice_text_memo' => ['label'=>'音声テキストメモ', 'normal'=>'https://www.icloud.com/shortcuts/9bed01c187564a18ae79a1c6ef3402c3', 'basic'=>'https://www.icloud.com/shortcuts/e403298c5a544d86bd0db3007f939c69'],
       'camera_text' => ['label'=>'カメラからテキスト', 'normal'=>'https://www.icloud.com/shortcuts/eeaf6141e166475ca3fc9df84bc4a52d', 'basic'=>'https://www.icloud.com/shortcuts/2334c413578b4897a4c9df5c98d1c2e5'],
     ],
     'en' => [
-      'pc_to_iphone' => ['label'=>'PC → iPhone', 'normal'=>'https://www.icloud.com/shortcuts/bb3ee1cf87944d53b2afa1510eef2431', 'basic'=>'https://www.icloud.com/shortcuts/052765bbf95b428cb3bfac3d26164877'],
-      'iphone_to_pc' => ['label'=>'iPhone → PC', 'normal'=>'https://www.icloud.com/shortcuts/95c6a708badb4459ab72f021875d0cfa', 'basic'=>'https://www.icloud.com/shortcuts/a38da767ffdf4c30b9c7dbb6f8b26ebf'],
+      'pc_to_iphone' => ['label'=>'PC → iPhone', 'normal'=>'https://www.icloud.com/shortcuts/e50e80ab880a429dbd06bd907ac09e7e', 'basic'=>'https://www.icloud.com/shortcuts/61fa0e323d3c44009aad8d88094297a1'],
+      'iphone_to_pc' => ['label'=>'iPhone → PC', 'normal'=>'https://www.icloud.com/shortcuts/0bf440dc4f484de993a547345115b866', 'basic'=>'https://www.icloud.com/shortcuts/71111b5006fe4e1eb18f055c028a4040'],
+      'pc_to_iphone_image' => ['label'=>'PC → iPhone with Image', 'normal'=>'https://www.icloud.com/shortcuts/fd90ff0a22ea47fd9fe80f0b4bc8d062', 'basic'=>'https://www.icloud.com/shortcuts/0dc4477518364c02b5a6e8fe4e729f75'],
+      'iphone_to_pc_image' => ['label'=>'iPhone → PC with Image', 'normal'=>'https://www.icloud.com/shortcuts/13660605bdd24de4a8c9f4f2d3e8fb3f', 'basic'=>'https://www.icloud.com/shortcuts/d917895477ea4bb6803ce5b814a69ecc'],
+      'pc_to_iphone_file' => ['label'=>'PC → iPhone File', 'normal'=>'https://www.icloud.com/shortcuts/ac6f9e397cbe416d9a34685d34948245', 'basic'=>'https://www.icloud.com/shortcuts/0e96042934a94338976df9b491821fb0'],
+      'iphone_to_pc_file' => ['label'=>'iPhone → PC File', 'normal'=>'https://www.icloud.com/shortcuts/c828337182ee4f38bdc4357487041506', 'basic'=>'https://www.icloud.com/shortcuts/aaca0e86203749c3b581f4d0bb9dd91f'],
       'text_memo' => ['label'=>'Text memo', 'normal'=>'https://www.icloud.com/shortcuts/243fcfeb6d884c86b070a5e0e36c0fd7', 'basic'=>'https://www.icloud.com/shortcuts/eda98a5240264addbd7592f62bae7682'],
       'voice_text_memo' => ['label'=>'Voice text memo', 'normal'=>'https://www.icloud.com/shortcuts/8b2cf52412c348508c4da3b9c6492003', 'basic'=>'https://www.icloud.com/shortcuts/c7c5f2aec3eb4682a6cad8573dff5993'],
       'camera_text' => ['label'=>'Camera to text', 'normal'=>'https://www.icloud.com/shortcuts/8c407b7bbb7e43a48089be6ea069b967', 'basic'=>'https://www.icloud.com/shortcuts/cb1ada0de51446a69c7a739d797f24a1'],
@@ -66,6 +74,11 @@ $t = [
     'title' => 'クリップボード同期',
     'desc'  => 'ClipboardSync（旧ClipboardSender）の設定に必要な情報を表示します。',
     'login_as' => 'ログイン中:',
+    'logout' => 'ログアウト',
+    'lang_label' => '言語',
+    'theme_label' => 'テーマ',
+    'dark' => 'Dark',
+    'light' => 'Light',
     'section_app' => 'ClipboardSync（Windowsアプリ）',
     'dl_x64' => 'ClipboardSync（win-x64）',
     'dl_arm64' => 'ClipboardSync（win-arm64）',
@@ -98,6 +111,11 @@ $t = [
     'title' => 'Clipboard sync',
     'desc'  => 'Shows information required to configure ClipboardSync (formerly ClipboardSender).',
     'login_as' => 'Logged in as:',
+    'logout' => 'Logout',
+    'lang_label' => 'Language',
+    'theme_label' => 'Theme',
+    'dark' => 'Dark',
+    'light' => 'Light',
     'section_app' => 'ClipboardSync (Windows app)',
     'dl_x64' => 'ClipboardSync (win-x64)',
     'dl_arm64' => 'ClipboardSync (win-arm64)',
@@ -211,6 +229,7 @@ $cleanupApiUrl = nm_join_url($apiDirUrl, 'cleanup_api.php');
 // UI links
 $u = nm_ui_toggle_urls('/clipboard_sync.php', $lang, $theme);
 $backUrl = nm_ui_url('/');
+$logoutUrl = nm_ui_url('/logout.php');
 
 // user display
 $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
@@ -253,7 +272,7 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
         linear-gradient(180deg, var(--bg0), var(--bg1));
       padding:18px;
     }
-    .wrap{ width:min(760px, 100%); display:grid; gap:14px; }
+    .wrap{ width:min(1120px, 100%); display:grid; gap:14px; }
     .card{
       background:var(--card);
       border:1px solid var(--line);
@@ -264,29 +283,17 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
       position: relative;
     }
 
-    /* Top-left login user badge */
-    .userbadge{
-      position:absolute;
-      top:10px; left:10px;
-      display:flex; align-items:center; gap:8px;
-      padding:6px 10px;
-      border-radius:999px;
-      border:1px solid color-mix(in srgb, var(--line) 120%, transparent);
-      background: color-mix(in srgb, var(--card2) 70%, transparent);
-      font-size:12px;
-      color:var(--muted);
-      user-select:none;
-    }
-    .userbadge b{ color:var(--text); font-weight:800; }
-
     .head{
       padding:18px;
-      padding-top:44px; /* user badge space */
       background:linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent);
       border-bottom:1px solid var(--line);
       display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
+      padding-bottom:10px;
     }
-    .title{ font-weight:900; letter-spacing:.3px; }
+    .head .left{ display:flex; flex-direction:column; gap:4px; min-width:280px; }
+    .head .right{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .title{ font-weight:900; letter-spacing:.3px; font-size:18px; margin:0; }
+    .sub{ color:var(--muted); font-size:12px; margin-top:6px; }
     .meta{ color:var(--muted); font-size:13px; margin-top:6px; }
     .body{ padding:16px 18px 18px; display:grid; gap:14px; }
     .box{
@@ -313,32 +320,9 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
       color: color-mix(in srgb, var(--danger) 65%, var(--text));
     }
 
-    /* Top-right toggles */
-    .toggles{
-      position:absolute;
-      top:8px;
-      right:8px;
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-      align-items:flex-end;
-      user-select:none;
-      transform: scale(.86);
-      transform-origin: top right;
-      opacity:.95;
-    }
-    .toggle-row{
-      display:flex;
-      gap:6px;
-      align-items:center;
-      justify-content:flex-end;
-    }
-    .toggle-row span{
-      font-size:10px;
-      color:var(--muted);
-      margin-right:2px;
-      line-height:1;
-    }
+    .toggles{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; user-select:none; }
+    .toggle-row{ display:flex; align-items:center; gap:8px; }
+    .toggle-row span{ font-size:12px; color:var(--muted); }
     .pill{
       display:inline-flex;
       gap:3px;
@@ -348,8 +332,9 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
       border-radius:999px;
     }
     .pill a{
-      font-size:10px;
-      padding:4px 8px;
+      font-size:12px;
+      font-weight:800;
+      padding:6px 8px;
       border-radius:999px;
       color:var(--muted);
       text-decoration:none;
@@ -362,10 +347,23 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
       color: var(--text);
       border-color: color-mix(in srgb, var(--accent) 26%, transparent);
     }
-    @media (max-width: 600px){
-      .toggles{ top:6px; right:6px; transform: scale(.80); }
-      .head{ padding-top:52px; }
-      .userbadge{ top:8px; left:8px; }
+    .topbtn{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:10px 12px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:color-mix(in srgb, var(--card2) 70%, transparent);
+      color:var(--text);
+      text-decoration:none;
+      font-size:13px; font-weight:700;
+      transition:.15s ease;
+      user-select:none;
+    }
+    .topbtn:hover{ transform:translateY(-1px); border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); text-decoration:none; }
+    .topbtn.red{ border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); color: color-mix(in srgb, var(--danger) 75%, var(--text)); }
+    .topbtn.red:hover{ border-color: color-mix(in srgb, var(--danger) 60%, var(--line)); }
+    @media (max-width: 700px){
+      .head .right{ width:100%; justify-content:flex-start; }
     }
 
     .kv{ display:grid; gap:10px; }
@@ -516,41 +514,42 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
   <div class="wrap">
     <div class="card">
 
-      <?php if ($isLoggedIn && $loginUser !== ''): ?>
-        <div class="userbadge"><?=htmlspecialchars($t[$lang]['login_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($loginUser, ENT_QUOTES, 'UTF-8')?></b></div>
-      <?php endif; ?>
-
-      <div class="toggles">
-        <div class="toggle-row">
-          <span><?=htmlspecialchars('Language', ENT_QUOTES, 'UTF-8')?></span>
-          <div class="pill">
-            <a href="<?=htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='ja'?'active':'' ?>">JP</a>
-            <a href="<?=htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='en'?'active':'' ?>">EN</a>
-          </div>
-        </div>
-
-        <div class="toggle-row">
-          <span><?=htmlspecialchars('Theme', ENT_QUOTES, 'UTF-8')?></span>
-          <div class="pill">
-            <a href="<?=htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='dark'?'active':'' ?>">Dark</a>
-            <a href="<?=htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='light'?'active':'' ?>">Light</a>
-          </div>
-        </div>
-      </div>
-
       <div class="head">
-        <div>
-          <div class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></div>
+        <div class="left">
+          <h1 class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></h1>
+          <?php if ($isLoggedIn && $loginUser !== ''): ?>
+            <div class="sub"><?=htmlspecialchars($t[$lang]['login_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($loginUser, ENT_QUOTES, 'UTF-8')?></b></div>
+          <?php endif; ?>
           <div class="meta"><?=htmlspecialchars($t[$lang]['desc'], ENT_QUOTES, 'UTF-8')?></div>
+        </div>
+
+        <div class="right">
+          <a class="topbtn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="topbtn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+
+          <div class="toggles">
+            <div class="toggle-row">
+              <span><?=htmlspecialchars($t[$lang]['lang_label'], ENT_QUOTES, 'UTF-8')?></span>
+              <div class="pill">
+                <a href="<?=htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='ja'?'active':'' ?>">JP</a>
+                <a href="<?=htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='en'?'active':'' ?>">EN</a>
+              </div>
+            </div>
+
+            <div class="toggle-row">
+              <span><?=htmlspecialchars($t[$lang]['theme_label'], ENT_QUOTES, 'UTF-8')?></span>
+              <div class="pill">
+                <a href="<?=htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='dark'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['dark'], ENT_QUOTES, 'UTF-8')?></a>
+                <a href="<?=htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='light'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['light'], ENT_QUOTES, 'UTF-8')?></a>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       <div class="body">
 
         
-        <div class="row-links body-top-right" style="justify-content:flex-end; margin:-2px 0 14px;">
-          <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8')?></a>
-        </div>
 <div class="box">
           <h3><?=htmlspecialchars($t[$lang]['section_app'], ENT_QUOTES, 'UTF-8')?></h3>
 
@@ -673,11 +672,6 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
             </div>
           <?php endforeach; ?>
         </div>
-
-        <div class="row-links">
-          <a href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8')?></a>
-        </div>
-
       </div>
     </div>
   </div>

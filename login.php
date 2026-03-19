@@ -2,6 +2,47 @@
 declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
 
+if (!function_exists('nm_normalize_username')) {
+    function nm_normalize_username(string $name): string {
+        $name = trim($name);
+        $name = mb_strtolower($name, 'UTF-8');
+        return $name;
+    }
+}
+
+if (!function_exists('nm_is_valid_username')) {
+    function nm_is_valid_username(string $name): bool {
+        return (bool)preg_match('/^[a-z0-9_-]+$/', $name);
+    }
+}
+
+if (!function_exists('nm_find_auth_by_login_username')) {
+    function nm_find_auth_by_login_username(string $loginUser): ?array {
+        $loginUser = nm_normalize_username($loginUser);
+
+        $authPath = __DIR__ . '/config/auth.php';
+        if (!is_file($authPath)) {
+            return null;
+        }
+
+        $cfg = require $authPath;
+        if (!is_array($cfg)) {
+            return null;
+        }
+
+        $storedUser = nm_normalize_username((string)($cfg['USERNAME'] ?? ''));
+        if ($storedUser === '' || $storedUser !== $loginUser) {
+            return null;
+        }
+
+        return [
+            'username' => $storedUser,
+            'dir_user' => $storedUser,
+            'config'   => $cfg,
+        ];
+    }
+}
+
 header('Content-Type: text/html; charset=utf-8');
 
 $ui = nm_ui_bootstrap();
@@ -43,7 +84,7 @@ $t = [
   ],
 ];
 
-// 未設定なら 3秒後に setup_auth.php へ
+// 誰の auth も存在しない場合は setup_auth.php へ誘導
 if (!nm_auth_is_ready()) {
     $setupUrl = nm_ui_url('/setup_auth.php');
     header('Refresh: 3; url=' . $setupUrl);
@@ -86,23 +127,35 @@ if (!nm_auth_is_ready()) {
     exit;
 }
 
-$cfg = nm_auth_load();
 $error = '';
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     nm_auth_start_session();
-    $u = (string)($_POST['username'] ?? '');
-    $p = (string)($_POST['password'] ?? '');
 
-    $okUser = hash_equals((string)($cfg['USERNAME'] ?? ''), $u);
-    $okPass = password_verify($p, (string)($cfg['PASSWORD_HASH'] ?? ''));
+    $inputUserRaw = (string)($_POST['username'] ?? '');
+    $inputUser    = nm_normalize_username($inputUserRaw);
+    $password     = (string)($_POST['password'] ?? '');
 
-    if ($okUser && $okPass) {
-        $_SESSION['nm_logged_in'] = true;
-        $_SESSION['nm_user'] = (string)($cfg['USERNAME'] ?? $u);
-        header('Location: ' . nm_auth_base_url() . '/');
-        exit;
+    $found = null;
+    if ($inputUser !== '' && nm_is_valid_username($inputUser)) {
+        $found = nm_find_auth_by_login_username($inputUser);
     }
+
+    if (is_array($found)) {
+        $cfg = is_array($found['config'] ?? null) ? $found['config'] : [];
+        $dirUser = nm_normalize_username((string)($found['dir_user'] ?? ''));
+
+        $hash = (string)($cfg['PASSWORD_HASH'] ?? '');
+        $okPass = ($hash !== '') && password_verify($password, $hash);
+
+        if ($dirUser !== '' && nm_is_valid_username($dirUser) && $okPass) {
+            $_SESSION['nm_logged_in'] = true;
+            $_SESSION['nm_user'] = $dirUser; // ここはログイン名ではなく「ディレクトリ名」
+            header('Location: ' . nm_auth_base_url() . '/');
+            exit;
+        }
+    }
+
     $error = $t[$lang]['login_failed'];
 }
 
@@ -121,11 +174,11 @@ $accountUrl = nm_ui_url('/account.php');
     :root{--r:18px}*{box-sizing:border-box}
     body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;color:var(--text);background:radial-gradient(900px 600px at 20% 10%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),radial-gradient(800px 600px at 80% 30%, rgba(16,185,129,.10), transparent 55%),linear-gradient(180deg,var(--bg0),var(--bg1));padding:18px}
 
-    .wrap{width:min(420px,100%)}
+    .wrap{width:min(760px,100%)}
     .card{
       background:var(--card);
       border:1px solid var(--line);
-      border-radius:var(--r);
+      border-radius:28px;
       box-shadow:var(--shadow);
       overflow:hidden;
       backdrop-filter:blur(10px);
@@ -134,11 +187,16 @@ $accountUrl = nm_ui_url('/account.php');
     .head{
       padding:18px 18px 14px;
       background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 10%,transparent),transparent);
-      border-bottom:1px solid var(--line)
+      border-bottom:1px solid var(--line);
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:18px;
+      flex-wrap:nowrap;
     }
-    .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.3px}
-    .dot{width:10px;height:10px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 15%,transparent)}
-    .sub{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.45}
+    .head-left{min-width:0; flex:1 1 auto}
+    .title{margin:0; font-size:20px; font-weight:900; letter-spacing:.2px}
+    .sub{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:1.55}
     .body{padding:16px 18px 18px}
     .err{background:color-mix(in srgb,var(--danger) 12%,transparent);border:1px solid color-mix(in srgb,var(--danger) 25%,transparent);color:color-mix(in srgb,var(--danger) 70%,var(--text));padding:10px 12px;border-radius:14px;font-size:13px;margin-bottom:12px}
     label{display:block;font-size:12px;color:var(--muted);margin:10px 0 6px}
@@ -151,43 +209,49 @@ $accountUrl = nm_ui_url('/account.php');
     a{color:var(--accent);text-decoration:none}
     a:hover{text-decoration:underline}
 
-    /* Top-right toggles */
-    .toggles{
-      position:absolute;
-      top:8px;
-      right:8px;
+    .head-right{
       display:flex;
-      flex-direction:column;
-      gap:6px;
-      align-items:flex-end;
+      align-items:center;
+      justify-content:flex-end;
+      gap:14px;
+      flex-wrap:nowrap;
+      flex:0 0 auto;
+    }
+    .toggles{
+      display:flex;
+      gap:12px;
+      align-items:center;
+      flex-wrap:nowrap;
       user-select:none;
-      transform: scale(.92);
-      transform-origin: top right;
       opacity:.95;
     }
     .toggle-row{
       display:flex;
-      gap:6px;
+      gap:8px;
       align-items:center;
       justify-content:flex-end;
+      white-space:nowrap;
     }
     .toggle-row span{
-      font-size:10px;
+      font-size:12px;
       color:var(--muted);
-      margin-right:2px;
       line-height:1;
     }
     .pill{
       display:inline-flex;
-      gap:3px;
-      background: color-mix(in srgb, var(--card2) 60%, transparent);
-      border:1px solid color-mix(in srgb, var(--line) 105%, transparent);
-      padding:2px;
+      gap:10px;
+      align-items:center;
+      flex-wrap:nowrap;
+      padding:10px 12px;
       border-radius:999px;
+      border:1px solid var(--line);
+      background: color-mix(in srgb, var(--card2) 75%, transparent);
+      font-size:13px;
     }
     .pill a{
-      font-size:10px;
-      padding:4px 8px;
+      font-size:12px;
+      font-weight:800;
+      padding:6px 8px;
       border-radius:999px;
       color:var(--muted);
       text-decoration:none;
@@ -196,16 +260,15 @@ $accountUrl = nm_ui_url('/account.php');
       line-height:1.1;
     }
     .pill a.active{
-      background: color-mix(in srgb, var(--accent) 16%, transparent);
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
       color: var(--text);
-      border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+      border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
     }
-    @media (max-width: 600px){
-      .toggles{
-        top:6px;
-        right:6px;
-        transform: scale(.86);
-      }
+    @media (max-width: 760px){
+      .wrap{width:min(760px,100%)}
+      .head{flex-wrap:wrap}
+      .head-right{width:100%; justify-content:flex-start}
+      .toggles{flex-wrap:wrap}
     }
   </style>
 </head>
@@ -213,26 +276,30 @@ $accountUrl = nm_ui_url('/account.php');
   <div class="wrap">
     <div class="card">
 
-      <div class="toggles">
-        <div class="toggle-row">
-          <span><?=htmlspecialchars($t[$lang]['lang_label'], ENT_QUOTES, 'UTF-8')?></span>
-          <div class="pill">
-            <a href="<?=htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='ja'?'active':'' ?>">JP</a>
-            <a href="<?=htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='en'?'active':'' ?>">EN</a>
-          </div>
-        </div>
-        <div class="toggle-row">
-          <span><?=htmlspecialchars($t[$lang]['theme_label'], ENT_QUOTES, 'UTF-8')?></span>
-          <div class="pill">
-            <a href="<?=htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='dark'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['dark'], ENT_QUOTES, 'UTF-8')?></a>
-            <a href="<?=htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='light'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['light'], ENT_QUOTES, 'UTF-8')?></a>
-          </div>
-        </div>
-      </div>
-
       <div class="head">
-        <div class="brand"><span class="dot"></span> <?=htmlspecialchars($t[$lang]['brand'], ENT_QUOTES, 'UTF-8')?></div>
-        <p class="sub"><?=htmlspecialchars($t[$lang]['subtitle'], ENT_QUOTES, 'UTF-8')?></p>
+        <div class="head-left">
+          <h1 class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></h1>
+          <p class="sub"><?=htmlspecialchars($t[$lang]['subtitle'], ENT_QUOTES, 'UTF-8')?></p>
+        </div>
+
+        <div class="head-right">
+          <div class="toggles">
+            <div class="toggle-row">
+              <span><?=htmlspecialchars($t[$lang]['lang_label'], ENT_QUOTES, 'UTF-8')?></span>
+              <div class="pill">
+                <a href="<?=htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='ja'?'active':'' ?>">JP</a>
+                <a href="<?=htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='en'?'active':'' ?>">EN</a>
+              </div>
+            </div>
+            <div class="toggle-row">
+              <span><?=htmlspecialchars($t[$lang]['theme_label'], ENT_QUOTES, 'UTF-8')?></span>
+              <div class="pill">
+                <a href="<?=htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='dark'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['dark'], ENT_QUOTES, 'UTF-8')?></a>
+                <a href="<?=htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='light'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['light'], ENT_QUOTES, 'UTF-8')?></a>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="body">
