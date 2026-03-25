@@ -739,7 +739,7 @@ if ($secretInfo === '') {
         <div class="left">
           <h1 class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></h1>
           <?php if ($isLoggedIn && $loggedUser !== ''): ?>
-            <div class="sub" style="white-space: nowrap;">ログイン中: <b><?=htmlspecialchars($loggedUser, ENT_QUOTES, 'UTF-8')?></b> &nbsp; | &nbsp; 保存ディレクトリ: <b><?=htmlspecialchars($targetDirUser !== '' ? $targetDirUser : normalize_username((string)$loggedUser), ENT_QUOTES, 'UTF-8')?></b></div>
+            <div class="sub" style="white-space: nowrap;"><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($loggedUser, ENT_QUOTES, 'UTF-8')?></b> &nbsp; | &nbsp; <?=htmlspecialchars($t[$lang]['dir_user'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($targetDirUser !== '' ? $targetDirUser : normalize_username((string)$loggedUser), ENT_QUOTES, 'UTF-8')?></b></div>
           <?php endif; ?>
           <div class="desc-lines">
             <?=htmlspecialchars($t[$lang]['desc'], ENT_QUOTES, 'UTF-8')?><br>

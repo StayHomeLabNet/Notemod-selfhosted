@@ -549,7 +549,7 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
         <div class="left">
           <h1 class="title"><?= htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8') ?></h1>
           <?php if ($isLoggedIn && $loginUser !== ''): ?>
-            <div class="sub">ログイン中: <b><?= htmlspecialchars($loginUser, ENT_QUOTES, 'UTF-8') ?></b> &nbsp; | &nbsp; 保存ディレクトリ: <b><?= htmlspecialchars($currentDirUser !== '' ? $currentDirUser : normalize_username((string)$loginUser), ENT_QUOTES, 'UTF-8') ?></b></div>
+            <div class="sub"><?= htmlspecialchars($t[$lang]['login_as'], ENT_QUOTES, 'UTF-8') ?> <b><?= htmlspecialchars($loginUser, ENT_QUOTES, 'UTF-8') ?></b> &nbsp; | &nbsp; <?= htmlspecialchars($t[$lang]['storage_dir_user'], ENT_QUOTES, 'UTF-8') ?> <b><?= htmlspecialchars($currentDirUser !== '' ? $currentDirUser : normalize_username((string)$loginUser), ENT_QUOTES, 'UTF-8') ?></b></div>
           <?php endif; ?>
           <div class="meta"><?= htmlspecialchars($t[$lang]['desc'], ENT_QUOTES, 'UTF-8') ?></div>
         </div>

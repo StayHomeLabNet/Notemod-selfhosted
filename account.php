@@ -401,7 +401,7 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
       <div class="head">
         <div class="head-left">
           <div class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></div>
-          <div class="meta" style="white-space: nowrap;">ログイン中: <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b> &nbsp; | &nbsp; 保存ディレクトリ: <b><?=htmlspecialchars($currentDirUser !== '' ? $currentDirUser : normalize_username((string)$user), ENT_QUOTES, 'UTF-8')?></b></div>
+          <div class="meta" style="white-space: nowrap;"><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b> &nbsp; | &nbsp; <?=htmlspecialchars($t[$lang]['storage_dir_user'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($currentDirUser !== '' ? $currentDirUser : normalize_username((string)$user), ENT_QUOTES, 'UTF-8')?></b></div>
         </div>
         <div class="head-right">
           <a class="header-btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
