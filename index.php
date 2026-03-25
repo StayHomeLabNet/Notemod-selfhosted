@@ -1,27 +1,100 @@
 <?php
+declare(strict_types=1);
+
 // ログイン必須
 require_once __DIR__ . '/auth_common.php';
 nm_auth_require_login();
 
-// ロガー呼び出し 
+// ロガー呼び出し
 include __DIR__ . '/logger.php';
 
 // --------------------
-// パス設定
+// current user / paths
 // --------------------
-$configDir  = __DIR__ . '/config';
-$configPath = $configDir . '/config.php';
+$dirUser = function_exists('nm_get_current_dir_user') ? (string)nm_get_current_dir_user() : '';
+if ($dirUser === '' && function_exists('nm_get_current_user')) {
+    $loginUser = (string)nm_get_current_user();
+    if ($loginUser !== '' && function_exists('nm_find_user_by_username')) {
+        $found = nm_find_user_by_username($loginUser);
+        if (is_array($found) && !empty($found['DIR_USER'])) {
+            $dirUser = normalize_username((string)$found['DIR_USER']);
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION['nm_dir_user'] = $dirUser;
+                if (!empty($found['USERNAME'])) {
+                    $_SESSION['nm_username'] = (string)$found['USERNAME'];
+                }
+            }
+        }
+    }
+}
 
-// --------------------
-// config 読み込み
-// --------------------
-if (!file_exists($configPath)) { die('Missing config/config.php'); }
+if ($dirUser === '') {
+    header('Location: ' . (function_exists('nm_url') ? nm_url('login.php') : 'login.php'));
+    exit;
+}
+
+$configPath = function_exists('nm_config_path')
+    ? nm_config_path($dirUser)
+    : (__DIR__ . '/config/' . $dirUser . '/config.php');
+
+if (!file_exists($configPath)) {
+    die('Missing config for current user: ' . htmlspecialchars('config/' . $dirUser . '/config.php', ENT_QUOTES, 'UTF-8'));
+}
+
 $cfg = require $configPath;
-if (!is_array($cfg)) $cfg = [];
+if (!is_array($cfg)) {
+    $cfg = [];
+}
 
 $SECRET = (string)($cfg['SECRET'] ?? '');
-if ($SECRET === '' || strlen($SECRET) < 16) { die('SECRET is empty or too short in config/config.php'); }
+if ($SECRET === '' || strlen($SECRET) < 16) {
+    die('SECRET is empty or too short in ' . htmlspecialchars('config/' . $dirUser . '/config.php', ENT_QUOTES, 'UTF-8'));
+}
+
+// 設置先対応:
+// - https://sample.com/
+// - https://sample.com/notemod/
+$basePath = function_exists('nm_base_path') ? nm_base_path() : '';
+$manifestUrl = function_exists('nm_url') ? nm_url('manifest.php') : './manifest.php';
+$appleIconUrl = function_exists('nm_url') ? nm_url('pwa/icon-192.png') : './pwa/icon-192.png';
+$swRegisterUrl = function_exists('nm_url') ? nm_url('sw-register.js') : './sw-register.js';
+$syncUrl = function_exists('nm_url') ? nm_url('notemod_sync.php') : './notemod_sync.php';
+$logoutUrl = function_exists('nm_url') ? nm_url('logout.php') : './logout.php';
+$accountUrl = function_exists('nm_url') ? nm_url('account.php') : './account.php';
+$setupAuthUrl = function_exists('nm_url') ? nm_url('setup_auth.php') : './setup_auth.php';
+$logSettingsUrl = function_exists('nm_url') ? nm_url('log_settings.php') : './log_settings.php';
+$bakSettingsUrl = function_exists('nm_url') ? nm_url('bak_settings.php') : './bak_settings.php';
+$clipboardSyncUrl = function_exists('nm_url') ? nm_url('clipboard_sync.php') : './clipboard_sync.php';
+$mediaFilesUrl = function_exists('nm_url') ? nm_url('media_files.php') : './media_files.php';
 ?>
+<?php
+$nmDirUser = function_exists('nm_get_current_dir_user') ? (string)nm_get_current_dir_user() : '';
+if ($nmDirUser === '' && function_exists('nm_get_current_user') && function_exists('nm_find_user_by_username')) {
+    $nmLoginUser = (string)nm_get_current_user();
+    if ($nmLoginUser !== '') {
+        $nmFound = nm_find_user_by_username($nmLoginUser);
+        if (is_array($nmFound) && !empty($nmFound['DIR_USER'])) {
+            $nmDirUser = normalize_username((string)$nmFound['DIR_USER']);
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION['nm_dir_user'] = $nmDirUser;
+                if (!empty($nmFound['USERNAME'])) {
+                    $_SESSION['nm_username'] = (string)$nmFound['USERNAME'];
+                }
+            }
+        }
+    }
+}
+if ($nmDirUser === '') {
+    header('Location: ' . (function_exists('nm_url') ? nm_url('login.php') : 'login.php'));
+    exit;
+}
+$nmConfigPath = function_exists('nm_config_path') ? nm_config_path($nmDirUser) : (__DIR__ . '/config/' . $nmDirUser . '/config.php');
+if (!file_exists($nmConfigPath)) {
+    die('Missing config for current user: ' . htmlspecialchars('config/' . $nmDirUser . '/config.php', ENT_QUOTES, 'UTF-8'));
+}
+?>
+<script>window.NM_BASE_PATH = <?= json_encode(function_exists('nm_base_path') ? nm_base_path() : '', JSON_UNESCAPED_SLASHES) ?>;</script>
+
 
 
 <!DOCTYPE html>
@@ -33,7 +106,7 @@ if ($SECRET === '' || strlen($SECRET) < 16) { die('SECRET is empty or too short 
 <title>Notemod</title>
 
 <!-- PWA Manifest（index.php と同じ階層を起点） -->
-<link rel="manifest" href="./manifest.php">
+<link rel="manifest" href="<?= htmlspecialchars($manifestUrl, ENT_QUOTES, 'UTF-8') ?>">
 
 <!-- Theme -->
 <meta name="theme-color" content="#0b1222">
@@ -41,10 +114,10 @@ if ($SECRET === '' || strlen($SECRET) < 16) { die('SECRET is empty or too short 
 <!-- iOS PWA -->
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="apple-touch-icon" href="./pwa/icon-192.png">
+<link rel="apple-touch-icon" href="<?= htmlspecialchars($appleIconUrl, ENT_QUOTES, 'UTF-8') ?>">
 
 <!-- Service Worker -->
-<script src="./sw-register.js"></script>
+<script src="<?= htmlspecialchars($swRegisterUrl, ENT_QUOTES, 'UTF-8') ?>"></script>
 
 <!-- Cache control -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -778,7 +851,8 @@ function notemodCreateSnapshot() {
 }
 
 
-const NOTEMOD_SYNC_URL = new URL('./notemod_sync.php', window.location.href).toString();
+const NM_BASE_PATH = <?= json_encode($basePath, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
+const NOTEMOD_SYNC_URL = <?= json_encode($syncUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 const NOTEMOD_SYNC_TOKEN = <?php echo json_encode($SECRET, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 
 
@@ -3658,31 +3732,31 @@ setTimeout(() => {location.reload();}, 700);
 })();
 
 document.getElementById('logout')?.addEventListener('click', () => {
-  location.href = './logout.php';
+  location.href = <?= json_encode($logoutUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 });
 
 document.getElementById('account')?.addEventListener('click', () => {
-  location.href = './account.php';
+  location.href = <?= json_encode($accountUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 });
 
 document.getElementById('setup_auth')?.addEventListener('click', () => {
-  location.href = './setup_auth.php';
+  location.href = <?= json_encode($setupAuthUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 });
 
 document.getElementById('log_settings')?.addEventListener('click', () => {
-  location.href = './log_settings.php';
+  location.href = <?= json_encode($logSettingsUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 });
 
 document.getElementById('bak_settings')?.addEventListener('click', () => {
-  location.href = './bak_settings.php';
+  location.href = <?= json_encode($bakSettingsUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 });
 
 document.getElementById('clipboard_sync')?.addEventListener('click', () => {
-  location.href = './clipboard_sync.php';
+  location.href = <?= json_encode($clipboardSyncUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 });
 
 document.getElementById('media_files')?.addEventListener('click', () => {
-  location.href = './media_files.php';
+  location.href = <?= json_encode($mediaFilesUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 });
 
 function nmT(key){

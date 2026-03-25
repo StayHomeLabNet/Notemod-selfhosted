@@ -21,9 +21,6 @@ return [
     // Notemod の Logs カテゴリに記録（月別ノート: access-YYYY-MM）
     'LOGGER_NOTEMOD_ENABLED' => true,
 
-    // （任意）ログディレクトリ名を変更
-    // 'LOGGER_LOGS_DIRNAME' => 'logs',
-
     // （任意）Notemod の初期スナップショットをカスタマイズ
     // （JSON文字列として保存する必要があります）
     // 'INITIAL_SNAPSHOT' => '{"categories":null,"hasSelectedLanguage":null,"notes":null,"selectedLanguage":null}',

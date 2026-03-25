@@ -1,6 +1,8 @@
 <?php
+
 declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
+nm_auth_require_login();
 
 /*
  * clipboard_sync.php
@@ -9,6 +11,11 @@ require_once __DIR__ . '/auth_common.php';
  * - api/read/cleanup URL はクリックでコピー
  * - EXPECTED_TOKEN / ADMIN_TOKEN もクリックでコピー
  * - JP/EN + Dark/Light + ログインユーザー表示
+ *
+ * vNext adjustments for single-user-per-directory structure:
+ * - config/<DIR_USER>/config.api.php を参照
+ * - USERNAME と DIR_USER を分離表示
+ * - ルート設置 / サブディレクトリ設置の両対応を auth_common.php 側の nm_url() に寄せる
  */
 
 header('Content-Type: text/html; charset=utf-8');
@@ -22,15 +29,17 @@ $lang  = $ui['lang'] ?? 'ja';
 $theme = $ui['theme'] ?? 'dark';
 
 // auth
-$isLoggedIn = function_exists('nm_auth_is_logged_in') ? (bool)nm_auth_is_logged_in() : false;
+$isLoggedIn = function_exists('nm_auth_is_logged_in') ? (bool) nm_auth_is_logged_in() : false;
+$loginUser = $isLoggedIn && function_exists('nm_get_current_user') ? (string) nm_get_current_user() : '';
+$currentDirUser = $isLoggedIn && function_exists('nm_get_current_dir_user') ? (string) nm_get_current_dir_user() : '';
 
 // --------------------
 // ★ あなたのリンクに合わせて編集する場所
 // --------------------
 $LINKS = [
   // ClipboardSync (Windows) ダウンロードリンク（URLは画面に表示せずボタンにする）
-  'download_win_x64'   => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSync.exe', // TODO: GitHub Releases など
-  'download_win_arm64' => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSyncARM64.exe', // TODO
+  'download_win_x64'   => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSync.exe',
+  'download_win_arm64' => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSyncARM64.exe',
 
   // arm64説明（JP/EN）
   'arm64_note' => [
@@ -72,8 +81,9 @@ $LINKS = [
 $t = [
   'ja' => [
     'title' => 'クリップボード同期',
-    'desc'  => 'ClipboardSync（旧ClipboardSender）の設定に必要な情報を表示します。',
+    'desc'  => 'ClipboardSync の設定に必要な情報を表示します。',
     'login_as' => 'ログイン中:',
+    'storage_dir_user' => '保存先ディレクトリユーザー:',
     'logout' => 'ログアウト',
     'lang_label' => '言語',
     'theme_label' => 'テーマ',
@@ -96,6 +106,7 @@ $t = [
     'expected' => 'EXPECTED_TOKEN（通常アクセス用）',
     'admin' => 'ADMIN_TOKEN（管理用/cleanup用）',
     'login_required_tokens' => '※ トークンの表示/コピーはログイン後のみです',
+    'token_note' => '※ 表示しているトークンは現在ログイン中ユーザーの config/<DIR_USER>/config.api.php を参照しています。',
 
     'section_shortcuts' => 'iPhoneショートカット',
     'basic_note' => 'APIフォルダーをBASIC認証で保護している場合は、BASIC認証対応版を使用してください。',
@@ -109,8 +120,9 @@ $t = [
   ],
   'en' => [
     'title' => 'Clipboard sync',
-    'desc'  => 'Shows information required to configure ClipboardSync (formerly ClipboardSender).',
+    'desc'  => 'Shows information required to configure ClipboardSync.',
     'login_as' => 'Logged in as:',
+    'storage_dir_user' => 'Storage directory user:',
     'logout' => 'Logout',
     'lang_label' => 'Language',
     'theme_label' => 'Theme',
@@ -133,6 +145,7 @@ $t = [
     'expected' => 'EXPECTED_TOKEN (standard access)',
     'admin' => 'ADMIN_TOKEN (admin/cleanup)',
     'login_required_tokens' => 'Tokens are shown/copiable only after login.',
+    'token_note' => 'The displayed tokens are read from config/<DIR_USER>/config.api.php for the currently logged-in user.',
 
     'section_shortcuts' => 'iPhone Shortcuts',
     'basic_note' => 'If your /api folder is protected with BASIC auth, use the BASIC-compatible versions.',
@@ -146,100 +159,114 @@ $t = [
   ],
 ];
 
-if (!isset($t[$lang])) $lang = 'ja';
+if (!isset($t[$lang])) {
+  $lang = 'ja';
+}
 
 // --------------------
 // Helpers
 // --------------------
 function nm_invalidate_php_cache(string $path): void {
   clearstatcache(true, $path);
-  if (function_exists('opcache_invalidate')) @opcache_invalidate($path, true);
+  if (function_exists('opcache_invalidate')) {
+    @opcache_invalidate($path, true);
+  }
 }
+
 function nm_read_php_config_array(string $path): array {
-  if (!file_exists($path)) return [];
+  if (!file_exists($path)) {
+    return [];
+  }
   nm_invalidate_php_cache($path);
   $arr = @require $path;
   return is_array($arr) ? $arr : [];
 }
+
 function nm_mask_token(string $s): string {
-  $s = (string)$s;
-  if ($s === '') return '';
+  $s = (string) $s;
+  if ($s === '') {
+    return '';
+  }
   $len = strlen($s);
-  if ($len <= 4) return str_repeat('•', max(4, $len));
+  if ($len <= 4) {
+    return str_repeat('•', max(4, $len));
+  }
   return str_repeat('•', 8) . substr($s, -4);
 }
-function nm_https_base_url(): string {
-  $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-  $script = (string)($_SERVER['SCRIPT_NAME'] ?? '/');
-  $dir = rtrim(str_replace('\\', '/', dirname($script)), '/');
-  if ($dir === '.' || $dir === '/') $dir = '';
-  return 'https://' . $host . $dir;
-}
-function nm_join_url(string $base, string $path): string {
+
+function nm_join_url_local(string $base, string $path): string {
   $base = rtrim($base, '/');
   $path = '/' . ltrim($path, '/');
   return $base . $path;
 }
-function nm_current_username_safe(): string {
-  if (function_exists('nm_auth_current_username')) {
-    $u = (string)nm_auth_current_username();
-    if ($u !== '') return $u;
+
+// --------------------
+// Read user-specific config.api.php tokens
+// --------------------
+$configApiPath = '';
+if ($currentDirUser !== '' && function_exists('nm_api_config_path')) {
+  $configApiPath = (string) nm_api_config_path($currentDirUser);
+}
+if ($configApiPath === '' || !file_exists($configApiPath)) {
+  $fallback = nm_api_config_path($currentDirUser ?: null);
+  if (file_exists($fallback)) {
+    $configApiPath = $fallback;
   }
-  if (function_exists('nm_auth_get_username')) {
-    $u = (string)nm_auth_get_username();
-    if ($u !== '') return $u;
-  }
-  if (session_status() === PHP_SESSION_ACTIVE) {
-    foreach (['nm_username','username','user','nm_user','auth_user','NM_USER'] as $k) {
-      if (isset($_SESSION[$k]) && is_string($_SESSION[$k]) && trim($_SESSION[$k]) !== '') {
-        return (string)$_SESSION[$k];
-      }
-    }
-  }
-  return '';
 }
 
-// --------------------
-// Read config.api.php tokens
-// --------------------
-$configApiPath = __DIR__ . '/config/config.api.php';
-$cfgApi = nm_read_php_config_array($configApiPath);
+$cfgApi = $configApiPath !== '' ? nm_read_php_config_array($configApiPath) : [];
 
-$expectedToken = (string)($cfgApi['EXPECTED_TOKEN'] ?? '');
-$adminToken    = (string)($cfgApi['ADMIN_TOKEN'] ?? '');
-if ($adminToken === '') $adminToken = $expectedToken;
+$expectedToken = (string) ($cfgApi['EXPECTED_TOKEN'] ?? '');
+$adminToken    = (string) ($cfgApi['ADMIN_TOKEN'] ?? '');
+if ($adminToken === '') {
+  $adminToken = $expectedToken;
+}
 
 // 表示（未ログインなら伏字）
 $displayExpected = $isLoggedIn ? $expectedToken : nm_mask_token($expectedToken);
-$displayAdmin    = $isLoggedIn ? $adminToken    : nm_mask_token($adminToken);
+$displayAdmin    = $isLoggedIn ? $adminToken : nm_mask_token($adminToken);
 
 // --------------------
-// Build API URLs (https)
+// Build API URLs (full origin + base-path aware)
+// 期待形:
+// - app base が /api のとき
+//   https://host/api/
+//   https://host/api/api/api.php
+//   https://host/api/api/read_api.php
+//   https://host/api/api/cleanup_api.php
 // --------------------
-$base = nm_https_base_url();
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+  || ((string)($_SERVER['SERVER_PORT'] ?? '') === '443')
+  || ((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+$scheme = $isHttps ? 'https' : 'http';
+$host = (string)($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost');
 
-// APIディレクトリ（末尾 / まで）
-$apiDirUrl     = nm_join_url($base, '/api/');
+$baseAppPath = function_exists('nm_base_path') ? (string) nm_base_path() : '';
+if ($baseAppPath === '') {
+  $script = (string) ($_SERVER['SCRIPT_NAME'] ?? '/clipboard_sync.php');
+  $dir = str_replace('\\', '/', dirname($script));
+  $baseAppPath = ($dir === '/' || $dir === '.' || $dir === '\\') ? '' : rtrim($dir, '/');
+}
 
-// 個別API（ディレクトリから生成）
-$apiUrl        = nm_join_url($apiDirUrl, 'api.php');
-$readApiUrl    = nm_join_url($apiDirUrl, 'read_api.php');
-$cleanupApiUrl = nm_join_url($apiDirUrl, 'cleanup_api.php');
+$origin = $scheme . '://' . $host;
+$baseAppUrl = $origin . ($baseAppPath !== '' ? $baseAppPath : '');
+
+$apiDirUrl     = rtrim($baseAppUrl, '/') . '/api/';
+$apiUrl        = rtrim($baseAppUrl, '/') . '/api/api.php';
+$readApiUrl    = rtrim($baseAppUrl, '/') . '/api/read_api.php';
+$cleanupApiUrl = rtrim($baseAppUrl, '/') . '/api/cleanup_api.php';
 
 // UI links
 $u = nm_ui_toggle_urls('/clipboard_sync.php', $lang, $theme);
 $backUrl = nm_ui_url('/');
 $logoutUrl = nm_ui_url('/logout.php');
-
-// user display
-$loginUser = $isLoggedIn ? nm_current_username_safe() : '';
 ?>
 <!doctype html>
-<html lang="<?=htmlspecialchars($lang, ENT_QUOTES, 'UTF-8')?>" data-theme="<?=htmlspecialchars($theme, ENT_QUOTES, 'UTF-8')?>">
+<html lang="<?= htmlspecialchars($lang, ENT_QUOTES, 'UTF-8') ?>" data-theme="<?= htmlspecialchars($theme, ENT_QUOTES, 'UTF-8') ?>">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></title>
+  <title><?= htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8') ?></title>
   <style>
     html[data-theme="dark"]{
       --bg0:#070b14; --bg1:#0b1222;
@@ -272,7 +299,7 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
         linear-gradient(180deg, var(--bg0), var(--bg1));
       padding:18px;
     }
-    .wrap{ width:min(1120px, 100%); display:grid; gap:14px; }
+    .wrap{ width:min(990px, 100%); display:grid; gap:14px; }
     .card{
       background:var(--card);
       border:1px solid var(--line);
@@ -370,7 +397,6 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
     .row{ display:grid; gap:6px; }
     .k{ font-size:12px; color:var(--muted); }
 
-    /* Copyable pill */
     .copy{
       font-size:13px;
       color:var(--text);
@@ -466,10 +492,6 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
       justify-content:flex-start;
     }
 
-    .row-links{ display:flex; gap:12px; flex-wrap:wrap; }
-    .row-links a{ font-size:13px; color:var(--accent); }
-
-    /* toast */
     .toast{
       position: fixed;
       left: 50%;
@@ -492,9 +514,12 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
       opacity: 1;
       transform: translateX(-50%) translateY(-2px);
     }
+
+    .row-links{ display:flex; gap:12px; flex-wrap:wrap;}
+    .row-links a{ font-size:13px; color:var(--accent); }
+
   </style>
   <script>
-  // Notemod main language -> custom pages (JA only, otherwise EN)
   (function(){
     try{
       var p = new URLSearchParams(window.location.search);
@@ -509,6 +534,12 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
   })();
   </script>
 
+
+<script>
+window.NM_BASE_PATH = <?= json_encode(function_exists('nm_base_path') ? nm_base_path() : '', JSON_UNESCAPED_SLASHES) ?>;
+window.NM_CURRENT_DIR_USER = <?= json_encode($currentDirUser ?? '', JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+</script>
 </head>
 <body>
   <div class="wrap">
@@ -516,31 +547,31 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
 
       <div class="head">
         <div class="left">
-          <h1 class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></h1>
+          <h1 class="title"><?= htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8') ?></h1>
           <?php if ($isLoggedIn && $loginUser !== ''): ?>
-            <div class="sub"><?=htmlspecialchars($t[$lang]['login_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($loginUser, ENT_QUOTES, 'UTF-8')?></b></div>
+            <div class="sub">ログイン中: <b><?= htmlspecialchars($loginUser, ENT_QUOTES, 'UTF-8') ?></b> &nbsp; | &nbsp; 保存ディレクトリ: <b><?= htmlspecialchars($currentDirUser !== '' ? $currentDirUser : normalize_username((string)$loginUser), ENT_QUOTES, 'UTF-8') ?></b></div>
           <?php endif; ?>
-          <div class="meta"><?=htmlspecialchars($t[$lang]['desc'], ENT_QUOTES, 'UTF-8')?></div>
+          <div class="meta"><?= htmlspecialchars($t[$lang]['desc'], ENT_QUOTES, 'UTF-8') ?></div>
         </div>
 
         <div class="right">
-          <a class="topbtn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="topbtn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="topbtn" href="<?= htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8') ?>">← <?= htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8') ?></a>
+          <a class="topbtn red" href="<?= htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8') ?></a>
 
           <div class="toggles">
             <div class="toggle-row">
-              <span><?=htmlspecialchars($t[$lang]['lang_label'], ENT_QUOTES, 'UTF-8')?></span>
+              <span><?= htmlspecialchars($t[$lang]['lang_label'], ENT_QUOTES, 'UTF-8') ?></span>
               <div class="pill">
-                <a href="<?=htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='ja'?'active':'' ?>">JP</a>
-                <a href="<?=htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8')?>" class="<?= $lang==='en'?'active':'' ?>">EN</a>
+                <a href="<?= htmlspecialchars($u['langJa'], ENT_QUOTES, 'UTF-8') ?>" class="<?= $lang==='ja' ? 'active' : '' ?>">JP</a>
+                <a href="<?= htmlspecialchars($u['langEn'], ENT_QUOTES, 'UTF-8') ?>" class="<?= $lang==='en' ? 'active' : '' ?>">EN</a>
               </div>
             </div>
 
             <div class="toggle-row">
-              <span><?=htmlspecialchars($t[$lang]['theme_label'], ENT_QUOTES, 'UTF-8')?></span>
+              <span><?= htmlspecialchars($t[$lang]['theme_label'], ENT_QUOTES, 'UTF-8') ?></span>
               <div class="pill">
-                <a href="<?=htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='dark'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['dark'], ENT_QUOTES, 'UTF-8')?></a>
-                <a href="<?=htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8')?>" class="<?= $theme==='light'?'active':'' ?>"><?=htmlspecialchars($t[$lang]['light'], ENT_QUOTES, 'UTF-8')?></a>
+                <a href="<?= htmlspecialchars($u['dark'], ENT_QUOTES, 'UTF-8') ?>" class="<?= $theme==='dark' ? 'active' : '' ?>"><?= htmlspecialchars($t[$lang]['dark'], ENT_QUOTES, 'UTF-8') ?></a>
+                <a href="<?= htmlspecialchars($u['light'], ENT_QUOTES, 'UTF-8') ?>" class="<?= $theme==='light' ? 'active' : '' ?>"><?= htmlspecialchars($t[$lang]['light'], ENT_QUOTES, 'UTF-8') ?></a>
               </div>
             </div>
           </div>
@@ -548,70 +579,68 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
       </div>
 
       <div class="body">
-
-        
-<div class="box">
-          <h3><?=htmlspecialchars($t[$lang]['section_app'], ENT_QUOTES, 'UTF-8')?></h3>
+        <div class="box">
+          <h3><?= htmlspecialchars($t[$lang]['section_app'], ENT_QUOTES, 'UTF-8') ?></h3>
 
           <div class="grid2">
             <div class="row">
-              <div class="k"><?=htmlspecialchars($t[$lang]['dl_x64'], ENT_QUOTES, 'UTF-8')?></div>
-              <?php if (trim((string)$LINKS['download_win_x64']) !== ''): ?>
-                <a class="btn" href="<?=htmlspecialchars($LINKS['download_win_x64'], ENT_QUOTES, 'UTF-8')?>" target="_blank" rel="noopener">
-                  <?=htmlspecialchars($t[$lang]['btn_github'], ENT_QUOTES, 'UTF-8')?>
+              <div class="k"><?= htmlspecialchars($t[$lang]['dl_x64'], ENT_QUOTES, 'UTF-8') ?></div>
+              <?php if (trim((string) $LINKS['download_win_x64']) !== ''): ?>
+                <a class="btn" href="<?= htmlspecialchars($LINKS['download_win_x64'], ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener">
+                  <?= htmlspecialchars($t[$lang]['btn_github'], ENT_QUOTES, 'UTF-8') ?>
                 </a>
               <?php else: ?>
-                <a class="btn" aria-disabled="true"><?=htmlspecialchars($t[$lang]['not_set'], ENT_QUOTES, 'UTF-8')?></a>
+                <a class="btn" aria-disabled="true"><?= htmlspecialchars($t[$lang]['not_set'], ENT_QUOTES, 'UTF-8') ?></a>
               <?php endif; ?>
             </div>
 
             <div class="row">
-              <div class="k"><?=htmlspecialchars($t[$lang]['dl_arm64'], ENT_QUOTES, 'UTF-8')?></div>
-              <?php if (trim((string)$LINKS['download_win_arm64']) !== ''): ?>
-                <a class="btn" href="<?=htmlspecialchars($LINKS['download_win_arm64'], ENT_QUOTES, 'UTF-8')?>" target="_blank" rel="noopener">
-                  <?=htmlspecialchars($t[$lang]['btn_github'], ENT_QUOTES, 'UTF-8')?>
+              <div class="k"><?= htmlspecialchars($t[$lang]['dl_arm64'], ENT_QUOTES, 'UTF-8') ?></div>
+              <?php if (trim((string) $LINKS['download_win_arm64']) !== ''): ?>
+                <a class="btn" href="<?= htmlspecialchars($LINKS['download_win_arm64'], ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener">
+                  <?= htmlspecialchars($t[$lang]['btn_github'], ENT_QUOTES, 'UTF-8') ?>
                 </a>
               <?php else: ?>
-                <a class="btn" aria-disabled="true"><?=htmlspecialchars($t[$lang]['not_set'], ENT_QUOTES, 'UTF-8')?></a>
+                <a class="btn" aria-disabled="true"><?= htmlspecialchars($t[$lang]['not_set'], ENT_QUOTES, 'UTF-8') ?></a>
               <?php endif; ?>
             </div>
           </div>
 
           <div class="row" style="margin-top:12px;">
-            <div class="k"><?=htmlspecialchars($t[$lang]['arm64_note'], ENT_QUOTES, 'UTF-8')?></div>
-            <div class="notice"><?=htmlspecialchars($LINKS['arm64_note'][$lang] ?? '', ENT_QUOTES, 'UTF-8')?></div>
+            <div class="k"><?= htmlspecialchars($t[$lang]['arm64_note'], ENT_QUOTES, 'UTF-8') ?></div>
+            <div class="notice"><?= htmlspecialchars($LINKS['arm64_note'][$lang] ?? '', ENT_QUOTES, 'UTF-8') ?></div>
           </div>
         </div>
 
         <div class="box">
-          <h3><?=htmlspecialchars($t[$lang]['section_api'], ENT_QUOTES, 'UTF-8')?></h3>
+          <h3><?= htmlspecialchars($t[$lang]['section_api'], ENT_QUOTES, 'UTF-8') ?></h3>
 
           <div class="kv">
             <div class="row">
-              <div class="k"><?=htmlspecialchars($t[$lang]['api_dir'], ENT_QUOTES, 'UTF-8')?></div>
-              <div class="copy" data-copy="<?=htmlspecialchars($apiDirUrl, ENT_QUOTES, 'UTF-8')?>">
-                <?=htmlspecialchars($apiDirUrl, ENT_QUOTES, 'UTF-8')?>
+              <div class="k"><?= htmlspecialchars($t[$lang]['api_dir'], ENT_QUOTES, 'UTF-8') ?></div>
+              <div class="copy" data-copy="<?= htmlspecialchars($apiDirUrl, ENT_QUOTES, 'UTF-8') ?>">
+                <?= htmlspecialchars($apiDirUrl, ENT_QUOTES, 'UTF-8') ?>
                 <small>click to copy</small>
               </div>
             </div>
             <div class="row">
-              <div class="k"><?=htmlspecialchars($t[$lang]['api_php'], ENT_QUOTES, 'UTF-8')?></div>
-              <div class="copy" data-copy="<?=htmlspecialchars($apiUrl, ENT_QUOTES, 'UTF-8')?>">
-                <?=htmlspecialchars($apiUrl, ENT_QUOTES, 'UTF-8')?>
+              <div class="k"><?= htmlspecialchars($t[$lang]['api_php'], ENT_QUOTES, 'UTF-8') ?></div>
+              <div class="copy" data-copy="<?= htmlspecialchars($apiUrl, ENT_QUOTES, 'UTF-8') ?>">
+                <?= htmlspecialchars($apiUrl, ENT_QUOTES, 'UTF-8') ?>
                 <small>click to copy</small>
               </div>
             </div>
             <div class="row">
-              <div class="k"><?=htmlspecialchars($t[$lang]['read_api_php'], ENT_QUOTES, 'UTF-8')?></div>
-              <div class="copy" data-copy="<?=htmlspecialchars($readApiUrl, ENT_QUOTES, 'UTF-8')?>">
-                <?=htmlspecialchars($readApiUrl, ENT_QUOTES, 'UTF-8')?>
+              <div class="k"><?= htmlspecialchars($t[$lang]['read_api_php'], ENT_QUOTES, 'UTF-8') ?></div>
+              <div class="copy" data-copy="<?= htmlspecialchars($readApiUrl, ENT_QUOTES, 'UTF-8') ?>">
+                <?= htmlspecialchars($readApiUrl, ENT_QUOTES, 'UTF-8') ?>
                 <small>click to copy</small>
               </div>
             </div>
             <div class="row">
-              <div class="k"><?=htmlspecialchars($t[$lang]['cleanup_api_php'], ENT_QUOTES, 'UTF-8')?></div>
-              <div class="copy" data-copy="<?=htmlspecialchars($cleanupApiUrl, ENT_QUOTES, 'UTF-8')?>">
-                <?=htmlspecialchars($cleanupApiUrl, ENT_QUOTES, 'UTF-8')?>
+              <div class="k"><?= htmlspecialchars($t[$lang]['cleanup_api_php'], ENT_QUOTES, 'UTF-8') ?></div>
+              <div class="copy" data-copy="<?= htmlspecialchars($cleanupApiUrl, ENT_QUOTES, 'UTF-8') ?>">
+                <?= htmlspecialchars($cleanupApiUrl, ENT_QUOTES, 'UTF-8') ?>
                 <small>click to copy</small>
               </div>
             </div>
@@ -619,24 +648,28 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
         </div>
 
         <div class="box">
-          <h3><?=htmlspecialchars($t[$lang]['section_tokens'], ENT_QUOTES, 'UTF-8')?></h3>
+          <h3><?= htmlspecialchars($t[$lang]['section_tokens'], ENT_QUOTES, 'UTF-8') ?></h3>
 
           <?php if (!$isLoggedIn): ?>
-            <div class="notice bad"><?=htmlspecialchars($t[$lang]['login_required_tokens'], ENT_QUOTES, 'UTF-8')?></div>
+            <div class="notice bad"><?= htmlspecialchars($t[$lang]['login_required_tokens'], ENT_QUOTES, 'UTF-8') ?></div>
+          <?php endif; ?>
+
+          <?php if ($isLoggedIn): ?>
+            <div class="notice" style="margin-top:10px;"><?= htmlspecialchars($t[$lang]['token_note'], ENT_QUOTES, 'UTF-8') ?></div>
           <?php endif; ?>
 
           <div class="kv" style="margin-top:10px;">
             <div class="row">
-              <div class="k"><?=htmlspecialchars($t[$lang]['expected'], ENT_QUOTES, 'UTF-8')?></div>
-              <div class="copy" data-copy="<?=htmlspecialchars($displayExpected, ENT_QUOTES, 'UTF-8')?>">
-                <?=htmlspecialchars($displayExpected !== '' ? $displayExpected : '—', ENT_QUOTES, 'UTF-8')?>
+              <div class="k"><?= htmlspecialchars($t[$lang]['expected'], ENT_QUOTES, 'UTF-8') ?></div>
+              <div class="copy" data-copy="<?= htmlspecialchars($displayExpected, ENT_QUOTES, 'UTF-8') ?>">
+                <?= htmlspecialchars($displayExpected !== '' ? $displayExpected : '—', ENT_QUOTES, 'UTF-8') ?>
                 <small>click to copy</small>
               </div>
             </div>
             <div class="row">
-              <div class="k"><?=htmlspecialchars($t[$lang]['admin'], ENT_QUOTES, 'UTF-8')?></div>
-              <div class="copy" data-copy="<?=htmlspecialchars($displayAdmin, ENT_QUOTES, 'UTF-8')?>">
-                <?=htmlspecialchars($displayAdmin !== '' ? $displayAdmin : '—', ENT_QUOTES, 'UTF-8')?>
+              <div class="k"><?= htmlspecialchars($t[$lang]['admin'], ENT_QUOTES, 'UTF-8') ?></div>
+              <div class="copy" data-copy="<?= htmlspecialchars($displayAdmin, ENT_QUOTES, 'UTF-8') ?>">
+                <?= htmlspecialchars($displayAdmin !== '' ? $displayAdmin : '—', ENT_QUOTES, 'UTF-8') ?>
                 <small>click to copy</small>
               </div>
             </div>
@@ -644,36 +677,42 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
         </div>
 
         <div class="box">
-          <h3><?=htmlspecialchars($t[$lang]['section_shortcuts'], ENT_QUOTES, 'UTF-8')?></h3>
+          <h3><?= htmlspecialchars($t[$lang]['section_shortcuts'], ENT_QUOTES, 'UTF-8') ?></h3>
 
-          <div class="notice"><?=htmlspecialchars($t[$lang]['basic_note'], ENT_QUOTES, 'UTF-8')?></div>
+          <div class="notice"><?= htmlspecialchars($t[$lang]['basic_note'], ENT_QUOTES, 'UTF-8') ?></div>
 
           <?php
             $shortcutSet = $LINKS['shortcuts'][$lang] ?? [];
             foreach ($shortcutSet as $sc):
-              $label  = (string)($sc['label'] ?? '');
-              $normal = (string)($sc['normal'] ?? '');
-              $basic  = (string)($sc['basic'] ?? '');
+              $label  = (string) ($sc['label'] ?? '');
+              $normal = (string) ($sc['normal'] ?? '');
+              $basic  = (string) ($sc['basic'] ?? '');
           ?>
             <div class="shortcutRow">
-              <div class="label"><?=htmlspecialchars($label, ENT_QUOTES, 'UTF-8')?></div>
+              <div class="label"><?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?></div>
 
               <?php if (trim($normal) !== ''): ?>
-                <a href="<?=htmlspecialchars($normal, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['normal'], ENT_QUOTES, 'UTF-8')?></a>
+                <a href="<?= htmlspecialchars($normal, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($t[$lang]['normal'], ENT_QUOTES, 'UTF-8') ?></a>
               <?php else: ?>
-                <div class="na"><?=htmlspecialchars($t[$lang]['normal'] . ': ' . $t[$lang]['not_set'], ENT_QUOTES, 'UTF-8')?></div>
+                <div class="na"><?= htmlspecialchars($t[$lang]['normal'] . ': ' . $t[$lang]['not_set'], ENT_QUOTES, 'UTF-8') ?></div>
               <?php endif; ?>
 
               <?php if (trim($basic) !== ''): ?>
-                <a href="<?=htmlspecialchars($basic, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['basic'], ENT_QUOTES, 'UTF-8')?></a>
+                <a href="<?= htmlspecialchars($basic, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($t[$lang]['basic'], ENT_QUOTES, 'UTF-8') ?></a>
               <?php else: ?>
-                <div class="na"><?=htmlspecialchars($t[$lang]['basic'] . ': ' . $t[$lang]['not_set'], ENT_QUOTES, 'UTF-8')?></div>
+                <div class="na"><?= htmlspecialchars($t[$lang]['basic'] . ': ' . $t[$lang]['not_set'], ENT_QUOTES, 'UTF-8') ?></div>
               <?php endif; ?>
             </div>
           <?php endforeach; ?>
         </div>
       </div>
     </div>
+
+    <div class="row-links">
+      <a class="topbtn" href="<?= htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8') ?>">← <?= htmlspecialchars($t[$lang]['go_back'], ENT_QUOTES, 'UTF-8') ?></a>
+      <a class="topbtn red" href="<?= htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8') ?></a>
+    </div>
+
   </div>
 
   <div class="toast" id="toast"></div>
@@ -697,9 +736,8 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
             await navigator.clipboard.writeText(text);
             return true;
           }
-        }catch(e){ /* ignore */ }
+        }catch(e){}
 
-        // fallback
         try{
           const ta = document.createElement('textarea');
           ta.value = text;
@@ -721,11 +759,11 @@ $loginUser = $isLoggedIn ? nm_current_username_safe() : '';
         el.addEventListener('click', async ()=>{
           const text = el.getAttribute('data-copy') || '';
           if(!text){
-            showToast('<?=htmlspecialchars($t[$lang]['copy_failed'], ENT_QUOTES, 'UTF-8')?>');
+            showToast('<?= htmlspecialchars($t[$lang]['copy_failed'], ENT_QUOTES, 'UTF-8') ?>');
             return;
           }
           const ok = await copyText(text);
-          showToast(ok ? '<?=htmlspecialchars($t[$lang]['copied'], ENT_QUOTES, 'UTF-8')?>' : '<?=htmlspecialchars($t[$lang]['copy_failed'], ENT_QUOTES, 'UTF-8')?>');
+          showToast(ok ? '<?= htmlspecialchars($t[$lang]['copied'], ENT_QUOTES, 'UTF-8') ?>' : '<?= htmlspecialchars($t[$lang]['copy_failed'], ENT_QUOTES, 'UTF-8') ?>');
         });
       });
     })();

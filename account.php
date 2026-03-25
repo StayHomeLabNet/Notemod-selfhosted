@@ -5,7 +5,7 @@ require_once __DIR__ . '/auth_common.php';
 nm_auth_require_login();
 header('Content-Type: text/html; charset=utf-8');
 
-// ★ 共通化：lang/theme の確定（GET→SESSION反映含む）
+// UI bootstrap
 $ui = nm_ui_bootstrap();
 $lang  = $ui['lang'];
 $theme = $ui['theme'];
@@ -14,14 +14,16 @@ $t = [
   'ja' => [
     'title' => 'アカウント設定',
     'logged_as' => 'ログイン中:',
+    'storage_dir_user' => '保存ディレクトリユーザー:',
     'back' => '戻る',
     'logout' => 'ログアウト',
     'updated' => '更新しました',
     'bad_current' => '現在のパスワードが違います',
-    'save_failed' => 'config/auth.php の保存に失敗しました（権限を確認）',
+    'save_failed' => '設定の保存に失敗しました（権限を確認）',
     'unknown' => '不明な操作です',
     'change_username' => 'ユーザー名を変更',
     'new_username' => '新しいユーザー名',
+    'username_note' => 'ログイン名を変更しても、保存先ディレクトリ名は変更されません。',
     'change_password' => 'パスワードを変更',
     'new_password' => '新しいパスワード（10文字以上）',
     'repeat_password' => '新しいパスワード（再入力）',
@@ -32,22 +34,28 @@ $t = [
     'pw_short' => '新しいパスワードは10文字以上にしてください',
     'pw_hash_fail' => 'パスワードの保存に失敗しました',
     'note_api' => 'API ディレクトリに Basic 認証を使用することをおすすめします。この画面は Notemod-selfhosted へのログインにのみ使用されます',
+    'show_storage' => '現在の主要ディレクトリとファイルを表示',
+    'storage_note_1' => 'ログイン名を変更しても、保存先ディレクトリ名は変更されません。',
+    'storage_note_2' => '現在の物理保存先は以下の通りです。',
     'lang_label' => '言語',
     'theme_label' => 'テーマ',
     'dark' => 'Dark',
     'light' => 'Light',
+    'new_username_empty' => '新しいユーザー名を入力してください',
   ],
   'en' => [
     'title' => 'Account',
     'logged_as' => 'Logged in as:',
+    'storage_dir_user' => 'Storage directory user:',
     'back' => 'Back',
     'logout' => 'Logout',
     'updated' => 'Updated',
     'bad_current' => 'Current password is incorrect',
-    'save_failed' => 'Failed to write config/auth.php (permission?)',
+    'save_failed' => 'Failed to save settings (permission?)',
     'unknown' => 'Unknown operation',
     'change_username' => 'Change Username',
     'new_username' => 'New username',
+    'username_note' => 'Changing the login name does not change the storage directory name.',
     'change_password' => 'Change Password',
     'new_password' => 'New password (min 10 chars)',
     'repeat_password' => 'Repeat new password',
@@ -58,16 +66,46 @@ $t = [
     'pw_short' => 'New password must be at least 10 characters',
     'pw_hash_fail' => 'Failed to hash password',
     'note_api' => 'It is recommended to use Basic Authentication for the API directory. This screen is only used for logging in to Notemod-selfhosted.',
-    'lang_label' => '言語',
-    'theme_label' => 'テーマ',
+    'show_storage' => 'Show current main directories and files',
+    'storage_note_1' => 'Changing the login name does not change the storage directory name.',
+    'storage_note_2' => 'Your current physical storage paths are:',
+    'lang_label' => 'Language',
+    'theme_label' => 'Theme',
     'dark' => 'Dark',
     'light' => 'Light',
+    'new_username_empty' => 'Please enter a new username',
   ],
 ];
 
 $cfg = nm_auth_load();
 $msg = '';
 $err = '';
+
+$loginUser = (string)(nm_get_current_user() ?: ($cfg['USERNAME'] ?? ''));
+$currentDirUser = (string)(nm_get_current_dir_user() ?: ($cfg['DIR_USER'] ?? normalize_username($loginUser)));
+
+
+
+function nm_force_logout_after_account_change(): void
+{
+    nm_auth_start_session();
+
+    unset(
+        $_SESSION['nm_logged_in'],
+        $_SESSION['nm_user'],
+        $_SESSION['nm_dir_user'],
+        $_SESSION['nm_username'],
+        $_SESSION['nm_login_user']
+    );
+
+    $logoutUrl = function_exists('nm_url') ? nm_url('logout.php') : 'logout.php';
+    header('Location: ' . $logoutUrl);
+    exit;
+}
+
+if ($currentDirUser === '') {
+    $currentDirUser = normalize_username($loginUser);
+}
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     $mode = (string)($_POST['mode'] ?? '');
@@ -81,19 +119,27 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
         if ($mode === 'change_username') {
             $uu = trim((string)($_POST['new_username'] ?? ''));
-            if ($uu === '') $err = $t[$lang]['new_username'] . ' is empty';
-            else $newUser = $uu;
+            if ($uu === '') {
+                $err = $t[$lang]['new_username_empty'];
+            } else {
+                $newUser = $uu; // USERNAME only. DIR_USER remains unchanged.
+            }
 
         } elseif ($mode === 'change_password') {
             $p1 = (string)($_POST['new_password'] ?? '');
             $p2 = (string)($_POST['new_password2'] ?? '');
 
-            if ($p1 !== $p2) $err = $t[$lang]['pw_mismatch'];
-            elseif (strlen($p1) < 10) $err = $t[$lang]['pw_short'];
-            else {
+            if ($p1 !== $p2) {
+                $err = $t[$lang]['pw_mismatch'];
+            } elseif (strlen($p1) < 10) {
+                $err = $t[$lang]['pw_short'];
+            } else {
                 $h = password_hash($p1, PASSWORD_DEFAULT);
-                if (!$h) $err = $t[$lang]['pw_hash_fail'];
-                else $newHash = $h;
+                if (!$h) {
+                    $err = $t[$lang]['pw_hash_fail'];
+                } else {
+                    $newHash = $h;
+                }
             }
 
         } else {
@@ -101,26 +147,36 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         }
 
         if ($err === '') {
-            if (!nm_auth_write_config($newUser, $newHash)) {
+            if (!nm_auth_write_config($newUser, $newHash, $currentDirUser)) {
                 $err = $t[$lang]['save_failed'];
             } else {
                 $_SESSION['nm_user'] = $newUser;
+                $_SESSION['nm_dir_user'] = $currentDirUser;
                 $cfg = nm_auth_load();
-                $msg = $t[$lang]['updated'];
+                $loginUser = (string)($cfg['USERNAME'] ?? $newUser);
+                nm_force_logout_after_account_change();
             }
         }
     }
 }
 
-$base = nm_auth_base_url();
-$user = (string)($cfg['USERNAME'] ?? '');
+$authPathRel      = 'config/' . $currentDirUser . '/auth.php';
+$configPathRel    = 'config/' . $currentDirUser . '/config.php';
+$configApiPathRel = 'config/' . $currentDirUser . '/config.api.php';
+$dataJsonRel      = 'notemod-data/' . $currentDirUser . '/data.json';
+$imagesDirRel     = 'notemod-data/' . $currentDirUser . '/images/';
+$filesDirRel      = 'notemod-data/' . $currentDirUser . '/files/';
+$logsDirRel       = 'logs/' . $currentDirUser . '/';
 
-// ★ 共通化：トグルURL（このページ用）
+$base = function_exists('nm_auth_base_url') ? nm_auth_base_url() : nm_base_path();
+$user = $loginUser;
+
+// Toggle URLs
 $u = nm_ui_toggle_urls('/account.php', $lang, $theme);
 
-// ★ 共通化：logoutリンク（lang/theme付き）
+// Links
 $logoutUrl = nm_ui_url('/logout.php');
-$backUrl   = rtrim($base, '/') . '/';
+$backUrl   = rtrim((string)$base, '/') . '/';
 ?>
 <!doctype html>
 <html lang="<?=htmlspecialchars($lang, ENT_QUOTES, 'UTF-8')?>" data-theme="<?=htmlspecialchars($theme, ENT_QUOTES, 'UTF-8')?>">
@@ -272,9 +328,48 @@ $backUrl   = rtrim($base, '/') . '/';
       color: color-mix(in srgb, var(--danger) 65%, var(--text));
     }
 
+    .subnote{
+      margin-top:8px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.5;
+    }
+
+    .storage-details{
+      border:1px solid color-mix(in srgb, var(--line) 120%, transparent);
+      border-radius:16px;
+      background:var(--card2);
+      overflow:hidden;
+    }
+    .storage-summary{
+      list-style:none;
+      cursor:pointer;
+      padding:14px 16px;
+      font-weight:800;
+      user-select:none;
+    }
+    .storage-summary::-webkit-details-marker{ display:none; }
+    .storage-content{
+      padding:0 16px 16px;
+      color:var(--text);
+      font-size:13px;
+      line-height:1.65;
+    }
+    .storage-list{
+      margin:10px 0 0;
+      padding-left:18px;
+    }
+    .storage-list code{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size:12px;
+      word-break:break-all;
+    }
+
     a{ color:var(--accent); text-decoration:none; }
     a:hover{ text-decoration:underline; }
 
+    .row-links{ display:flex; gap:12px; flex-wrap:wrap; }
+    .row-links a{ font-size:13px; color:var(--accent); }
   </style>
   <script>
   // Notemod main language -> custom pages (JA only, otherwise EN)
@@ -292,6 +387,12 @@ $backUrl   = rtrim($base, '/') . '/';
   })();
   </script>
 
+
+<script>
+window.NM_BASE_PATH = <?= json_encode(function_exists('nm_base_path') ? nm_base_path() : '', JSON_UNESCAPED_SLASHES) ?>;
+window.NM_CURRENT_DIR_USER = <?= json_encode($currentDirUser ?? '', JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+</script>
 </head>
 <body>
   <div class="wrap">
@@ -300,7 +401,7 @@ $backUrl   = rtrim($base, '/') . '/';
       <div class="head">
         <div class="head-left">
           <div class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></div>
-          <div class="meta"><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b></div>
+          <div class="meta" style="white-space: nowrap;">ログイン中: <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b> &nbsp; | &nbsp; 保存ディレクトリ: <b><?=htmlspecialchars($currentDirUser !== '' ? $currentDirUser : normalize_username((string)$user), ENT_QUOTES, 'UTF-8')?></b></div>
         </div>
         <div class="head-right">
           <a class="header-btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
@@ -322,19 +423,18 @@ $backUrl   = rtrim($base, '/') . '/';
         <?php if ($msg): ?><div class="notice ok"><?=htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
         <?php if ($err): ?><div class="notice bad"><?=htmlspecialchars($err, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
 
-
-
         <div class="grid">
           <div class="box">
             <h3><?=htmlspecialchars($t[$lang]['change_username'], ENT_QUOTES, 'UTF-8')?></h3>
             <form method="post">
               <input type="hidden" name="mode" value="change_username">
               <label><?=htmlspecialchars($t[$lang]['new_username'], ENT_QUOTES, 'UTF-8')?></label>
-              <input name="new_username" required>
+              <input name="new_username" required value="<?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?>">
               <label><?=htmlspecialchars($t[$lang]['current_password'], ENT_QUOTES, 'UTF-8')?></label>
               <input name="current_password" type="password" required autocomplete="current-password">
               <button class="btn" type="submit"><?=htmlspecialchars($t[$lang]['btn_username'], ENT_QUOTES, 'UTF-8')?></button>
             </form>
+            <div class="subnote"><?=htmlspecialchars($t[$lang]['username_note'], ENT_QUOTES, 'UTF-8')?></div>
           </div>
 
           <div class="box">
@@ -352,10 +452,32 @@ $backUrl   = rtrim($base, '/') . '/';
           </div>
         </div>
 
+        <details class="storage-details">
+          <summary class="storage-summary"><?=htmlspecialchars($t[$lang]['show_storage'], ENT_QUOTES, 'UTF-8')?></summary>
+          <div class="storage-content">
+            <div><?=htmlspecialchars($t[$lang]['storage_note_1'], ENT_QUOTES, 'UTF-8')?></div>
+            <div><?=htmlspecialchars($t[$lang]['storage_note_2'], ENT_QUOTES, 'UTF-8')?></div>
+            <ul class="storage-list">
+              <li><code><?=htmlspecialchars($authPathRel, ENT_QUOTES, 'UTF-8')?></code></li>
+              <li><code><?=htmlspecialchars($configPathRel, ENT_QUOTES, 'UTF-8')?></code></li>
+              <li><code><?=htmlspecialchars($configApiPathRel, ENT_QUOTES, 'UTF-8')?></code></li>
+              <li><code><?=htmlspecialchars($dataJsonRel, ENT_QUOTES, 'UTF-8')?></code></li>
+              <li><code><?=htmlspecialchars($imagesDirRel, ENT_QUOTES, 'UTF-8')?></code></li>
+              <li><code><?=htmlspecialchars($filesDirRel, ENT_QUOTES, 'UTF-8')?></code></li>
+              <li><code><?=htmlspecialchars($logsDirRel, ENT_QUOTES, 'UTF-8')?></code></li>
+            </ul>
+          </div>
+        </details>
+
         <div class="notice"><?=htmlspecialchars($t[$lang]['note_api'], ENT_QUOTES, 'UTF-8')?></div>
-      
-</div>
+      </div>
     </div>
+    
+    <div class="row-links">
+      <a class="header-btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
+      <a class="header-btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+    </div>
+    
   </div>
 </body>
 </html>

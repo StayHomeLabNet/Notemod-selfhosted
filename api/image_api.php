@@ -1,5 +1,17 @@
 <?php
 declare(strict_types=1);
+require_once dirname(__DIR__) . '/auth_common.php';
+
+$user = isset($_GET['user']) ? normalize_username((string)$_GET['user']) : '';
+if ($user === '' && isset($_GET['dir_user'])) {
+    $user = normalize_username((string)$_GET['dir_user']);
+}
+if ($user === '' && isset($_GET['username'])) {
+    $found = nm_find_user_by_username((string)$_GET['username']);
+    if (is_array($found) && !empty($found['DIR_USER'])) {
+        $user = normalize_username((string)$found['DIR_USER']);
+    }
+}
 
 // ---------------------------------
 // image_api.php
@@ -144,7 +156,7 @@ if ($file === '' || $file === '.' || $file === '..') {
 if ($width > 0)  $width  = max(10, min(2000, $width));
 if ($height > 0) $height = max(10, min(2000, $height));
 
-$baseDir  = dirname(__DIR__) . '/notemod-data/' . $user . '/images';
+$baseDir  = nm_images_dir($user !== '' ? $user : null);
 $fullPath = $baseDir . '/' . $file;
 
 if (!is_file($fullPath) || !is_readable($fullPath)) {

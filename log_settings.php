@@ -1,15 +1,16 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
+nm_auth_require_login();
 
 /*
  * log_settings.php
- * - config/config.php の各設定をUIで編集
+ * - config/<DIR_USER>/config.php の各設定をUIで編集
  * - UIは setup_auth.php と同じ配置（JP/EN, Dark/Light）
  * - 運用中はログイン必須（未ログインなら表示のみ/編集不可）
  *
  * 実装追加
- * (1) 保存後に config.php が壊れていないか検証（壊れてたら自動でロールバック）
+ * (1) 保存後に config/<DIR_USER>/config.php が壊れていないか検証（壊れてたら自動でロールバック）
  * (2) 未ログインで POST された場合はサーバ側で弾く（DevTools対策）
  * (3) IP_ALERT_IGNORE_IPS が空の場合はキーを書かない（更新しない＝スッキリ運用向け）
  *
@@ -20,8 +21,9 @@ require_once __DIR__ . '/auth_common.php';
 // --------------------
 // Paths
 // --------------------
-$configDir  = __DIR__ . '/config';
-$configPath = $configDir . '/config.php';
+$currentDirUser = function_exists('nm_get_current_dir_user') ? (string)nm_get_current_dir_user() : '';
+$configDir  = dirname((string)(function_exists('nm_config_path') ? nm_config_path($currentDirUser) : (nm_config_path($currentDirUser ?: null))));
+$configPath = (string)(function_exists('nm_config_path') ? nm_config_path($currentDirUser) : (nm_config_path($currentDirUser ?: null)));
 
 header('Content-Type: text/html; charset=utf-8');
 
@@ -41,14 +43,18 @@ $theme = $ui['theme'];
 $isLoggedIn = function_exists('nm_auth_is_logged_in') ? (bool)nm_auth_is_logged_in() : false;
 $canEdit = $isLoggedIn;
 
-// ログイン中ユーザー名（ログイン中のみ表示）
+// ログイン中ユーザー名 / 保存先ユーザー（ログイン中のみ表示）
 $loggedUser = '';
+$currentDirUser = function_exists('nm_get_current_dir_user') ? (string)nm_get_current_dir_user() : $currentDirUser;
 if ($isLoggedIn) {
-    $loggedUser = (string)($_SESSION['nm_user'] ?? '');
+    $loggedUser = function_exists('nm_get_current_user') ? (string)nm_get_current_user() : (string)($_SESSION['nm_username'] ?? $_SESSION['nm_user'] ?? '');
     if ($loggedUser === '' && function_exists('nm_auth_load')) {
         try {
-            $ac = nm_auth_load();
+            $ac = nm_auth_load($currentDirUser !== '' ? $currentDirUser : null);
             $loggedUser = (string)($ac['USERNAME'] ?? '');
+            if ($currentDirUser === '') {
+                $currentDirUser = (string)($ac['DIR_USER'] ?? '');
+            }
         } catch (Throwable $e) {
             $loggedUser = '';
         }
@@ -61,15 +67,16 @@ if ($isLoggedIn) {
 $t = [
   'ja' => [
     'title' => 'ログ設定',
-    'desc'  => 'config/config.php のログ・通知関連の設定を変更します。',
+    'desc'  => 'config/<DIR_USER>/config.php のログ・通知関連の設定を変更します。',
     'logged_as' => 'ログイン中:',
+    'storage_user' => '保存先ディレクトリ:',
     'back' => '戻る',
     'logout' => 'ログアウト',
     'btn'   => '保存',
     'ok'    => '保存しました',
-    'err_write' => 'config/config.php の保存に失敗しました（権限を確認）',
-    'err_read'  => 'config/config.php の読み込みに失敗しました',
-    'err_broken'=> 'config/config.php が壊れた可能性があります（配列として読み込めません）',
+    'err_write' => 'config/<DIR_USER>/config.php の保存に失敗しました（権限を確認）',
+    'err_read'  => 'config/<DIR_USER>/config.php の読み込みに失敗しました',
+    'err_broken'=> 'config/<DIR_USER>/config.php が壊れた可能性があります（配列として読み込めません）',
     'err_login' => 'Login required.',
 
     'lang_label'  => '言語',
@@ -89,7 +96,7 @@ $t = [
     'section_ip' => 'IPアクセス通知（メール）',
     'ip_alert_enabled' => 'IP_ALERT_ENABLED（通知を有効）',
     'ip_alert_to' => 'IP_ALERT_TO（宛先）',
-    'ip_alert_from' => 'IP_ALERT_FROM（From：任意/初期値：notemod@localhost）',
+    'ip_alert_from' => 'IP_ALERT_FROM（From：任意/初期値：no-reply@notemod）',
     'ip_alert_subject' => 'IP_ALERT_SUBJECT（件名：任意/初期値：Notemod: First-time IP access）',
     'ip_alert_ignore_ips' => 'IP_ALERT_IGNORE_IPS（無視するIPアドレス、カンマ/改行区切り）',
     'ip_alert_ignore_bots' => 'IP_ALERT_IGNORE_BOTS（ボットっぽいUAを無視）',
@@ -98,15 +105,16 @@ $t = [
   ],
   'en' => [
     'title' => 'Log settings',
-    'desc'  => 'Edit logging / notification settings in config/config.php.',
+    'desc'  => 'Edit logging / notification settings in config/<DIR_USER>/config.php.',
     'logged_as' => 'Logged in as:',
+    'storage_user' => 'Storage directory user:',
     'back' => 'Back',
     'logout' => 'Logout',
     'btn'   => 'Save',
     'ok'    => 'Saved',
-    'err_write' => 'Failed to write config/config.php (permission?)',
-    'err_read'  => 'Failed to read config/config.php',
-    'err_broken'=> 'config/config.php may be broken (cannot be loaded as array).',
+    'err_write' => 'Failed to write config/<DIR_USER>/config.php (permission?)',
+    'err_read'  => 'Failed to read config/<DIR_USER>/config.php',
+    'err_broken'=> 'config/<DIR_USER>/config.php may be broken (cannot be loaded as array).',
     'err_login' => 'Login required.',
 
     'lang_label'  => 'Language',
@@ -126,7 +134,7 @@ $t = [
     'section_ip' => 'IP access alert (Email)',
     'ip_alert_enabled' => 'IP_ALERT_ENABLED (enable)',
     'ip_alert_to' => 'IP_ALERT_TO (to)',
-    'ip_alert_from' => 'IP_ALERT_FROM (from: optional/default：notemod@localhost)',
+    'ip_alert_from' => 'IP_ALERT_FROM (from: optional/default：no-reply@notemod)',
     'ip_alert_subject' => 'IP_ALERT_SUBJECT (subject: optional/default：Notemod: First-time IP access)',
     'ip_alert_ignore_ips' => 'IP_ALERT_IGNORE_IPS (ignore IPs, comma/newline separated)',
     'ip_alert_ignore_bots' => 'IP_ALERT_IGNORE_BOTS (ignore bot-like user agents)',
@@ -435,7 +443,7 @@ $logoutUrl = nm_ui_url('/logout.php');
         linear-gradient(180deg, var(--bg0), var(--bg1));
       padding:18px;
     }
-    .wrap{ width:min(920px, 100%); display:grid; gap:14px; }
+    .wrap{ width:min(990px, 100%); display:grid; gap:14px; }
     .card{
       background:var(--card);
       border:1px solid var(--line);
@@ -559,7 +567,7 @@ $logoutUrl = nm_ui_url('/logout.php');
       .head{ padding-right: 18px; }
     }
 
-    .row-links{ display:flex; gap:12px; flex-wrap:wrap; }
+    .row-links{ display:flex; gap:12px; flex-wrap:wrap; padding: 20px 10px;}
     .row-links a{ font-size:13px; color:var(--accent); }
 
     .check{
@@ -604,7 +612,7 @@ $logoutUrl = nm_ui_url('/logout.php');
         <div class="head-left">
           <h1 class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></h1>
           <?php if ($isLoggedIn && $loggedUser !== ''): ?>
-            <div class="head-meta"><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($loggedUser, ENT_QUOTES, 'UTF-8')?></b></div>
+            <div class="head-meta" style="white-space: nowrap;">ログイン中: <b><?=htmlspecialchars($loggedUser, ENT_QUOTES, 'UTF-8')?></b> &nbsp; | &nbsp; 保存ディレクトリ: <b><?=htmlspecialchars($currentDirUser !== '' ? $currentDirUser : normalize_username((string)$loggedUser), ENT_QUOTES, 'UTF-8')?></b></div>
           <?php endif; ?>
           <div class="meta"><?=htmlspecialchars($t[$lang]['desc'], ENT_QUOTES, 'UTF-8')?></div>
         </div>
@@ -717,6 +725,11 @@ $logoutUrl = nm_ui_url('/logout.php');
             <button class="btn" type="submit" <?= $canEdit ? '' : 'disabled' ?>><?=htmlspecialchars($t[$lang]['btn'], ENT_QUOTES, 'UTF-8')?></button>
           </div>
         </form>
+
+        <div class="row-links">
+          <a class="nav-btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="nav-btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+        </div>
 
       </div>
     </div>

@@ -1,6 +1,4 @@
 <?php
-// VERIFIED: latest_image/latest_file return binary via respond_binary_file (2026-02-22)
-
 // read_api.php
 // Notemod の categories / notes を読み取るための簡易 API
 //
@@ -19,13 +17,34 @@
 //   GET / POST(form) / POST(JSON) を受け付ける
 //   キーは小文字正規化するので Category / category 等の揺れを吸収
 
+require_once dirname(__DIR__) . '/auth_common.php';
+
+$dirUser = '';
+foreach (['dir_user', 'user', 'username'] as $key) {
+    if (isset($_REQUEST[$key]) && (string)$_REQUEST[$key] !== '') {
+        $dirUser = normalize_username((string)$_REQUEST[$key]);
+        if ($dirUser !== '') {
+            break;
+        }
+    }
+}
+if ($dirUser === '') {
+    $dirUser = nm_get_current_dir_user();
+}
+$dirUser = function_exists('nm_get_current_dir_user') ? nm_get_current_dir_user() : '';
+foreach (['dir_user','user','username'] as $nmKey) {
+    if ($dirUser === '' && isset($_REQUEST[$nmKey])) {
+        $dirUser = normalize_username((string)$_REQUEST[$nmKey]);
+    }
+}
+
 require_once __DIR__ . '/../logger.php';
 
 // =====================
 // タイムゾーン設定（config/config.php から読む）
 // =====================
 $tz = 'Pacific/Auckland';
-$cfgCommonFile = dirname(__DIR__) . '/config/config.php';
+$cfgCommonFile = nm_config_path(isset($dirUser) ? $dirUser : null);
 if (file_exists($cfgCommonFile)) {
     $common = require $cfgCommonFile;
     if (is_array($common)) {
@@ -156,7 +175,7 @@ function content_to_plain_text(string $html): string
 // =====================
 // 0. 設定読み込み（config/config.api.php）
 // =====================
-$configFile = dirname(__DIR__) . '/config/config.api.php';
+$configFile = nm_api_config_path(isset($dirUser) ? $dirUser : null);
 if (!file_exists($configFile)) {
     respond_json(['status' => 'error', 'message' => 'config.api.php missing'], 500, '0');
 }
@@ -176,7 +195,7 @@ if ($EXPECTED_TOKEN === '' || $notemodFile === '') {
 // 追加：USERNAME（マルチユーザー想定・シングルでもOK）
 // =====================
 $USERNAME = 'default';
-$authFile = dirname(__DIR__) . '/config/auth.php';
+$authFile = nm_auth_config_path(isset($dirUser) ? $dirUser : null);
 if (file_exists($authFile)) {
     $auth = require $authFile;
     if (is_array($auth) && isset($auth['USERNAME'])) {

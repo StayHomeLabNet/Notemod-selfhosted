@@ -24,8 +24,13 @@ $theme = $ui['theme'];
 // --------------------
 // Auth / user (bak_settings.php と同じ)
 // --------------------
-$cfgAuth = nm_auth_load();
-$user = (string)($cfgAuth['USERNAME'] ?? '');
+$currentUser = function_exists('nm_get_current_user') ? (string)nm_get_current_user() : '';
+$currentDirUser = function_exists('nm_get_current_dir_user') ? (string)nm_get_current_dir_user() : '';
+if ($currentDirUser === '' && $currentUser !== '') {
+  $currentDirUser = normalize_username($currentUser);
+}
+$cfgAuth = nm_auth_load($currentDirUser !== '' ? $currentDirUser : null);
+$user = $currentUser !== '' ? $currentUser : (string)($cfgAuth['USERNAME'] ?? '');
 if ($user === '') $user = 'unknown';
 
 // i18n
@@ -33,6 +38,7 @@ $t = [
   'ja' => [
     'title' => 'メディア / ファイル',
     'logged_as' => 'ログイン中:',
+    'storage_dir_user' => '保存ディレクトリ:',
     'back' => '戻る',
     'logout' => 'ログアウト',
     'lang_label' => '言語',
@@ -49,6 +55,9 @@ $t = [
     'section_images' => '画像一覧（/notemod-data/<user>/images/）',
     'no_images' => '画像がありません',
     'drop_images' => '画像をドロップしてアップロード',
+    'images_click_help' => 'サムネイルをクリックすると画像をコピーできます。ファイル名をクリックするとURLをコピーできます。横幅 / 縦幅 を使ってサイズパラメータを追加できます。',
+    'thumb_width' => '横幅',
+    'thumb_height' => '縦幅',
     'or_click' => 'またはクリックして選択',
 
     'section_files' => 'ファイル一覧（file.json から）',
@@ -85,6 +94,7 @@ $t = [
   'en' => [
     'title' => 'Media / Files',
     'logged_as' => 'Logged in as:',
+    'storage_dir_user' => 'Storage directory:',
     'back' => 'Back',
     'logout' => 'Logout',
     'lang_label' => 'Language',
@@ -101,6 +111,9 @@ $t = [
     'section_images' => 'Images (/notemod-data/<user>/images/)',
     'no_images' => 'No images',
     'drop_images' => 'Drop images to upload',
+    'images_click_help' => 'Click the thumbnail to copy the image, click the filename to copy the URL, and use Width / Height to add size parameters.',
+    'thumb_width' => 'Width',
+    'thumb_height' => 'Height',
     'or_click' => 'or click to choose',
 
     'section_files' => 'Files (from file.json)',
@@ -138,20 +151,27 @@ $t = [
 if (!isset($t[$lang])) $lang = 'ja';
 
 // config
-$configApiPath = __DIR__ . '/config/config.api.php';
-if (!is_file($configApiPath)) { http_response_code(500); echo "config/config.api.php not found"; exit; }
+$configApiPath = nm_api_config_path($currentDirUser !== '' ? $currentDirUser : null);
+if (!is_file($configApiPath)) {
+  http_response_code(500);
+  echo "config/" . ($currentDirUser !== '' ? $currentDirUser : '<USER_NAME>') . "/config.api.php not found";
+  exit;
+}
 $cfg = require $configApiPath;
 if (!is_array($cfg)) $cfg = [];
 
 $EXPECTED_TOKEN = (string)($cfg['EXPECTED_TOKEN'] ?? '');
 $ADMIN_TOKEN    = (string)($cfg['ADMIN_TOKEN'] ?? '');
 $DATA_JSON      = (string)($cfg['DATA_JSON'] ?? '');
+if ($DATA_JSON === '') {
+  $DATA_JSON = nm_data_json_path($currentDirUser !== '' ? $currentDirUser : null);
+}
 
 if ($EXPECTED_TOKEN === '' || $DATA_JSON === '') { http_response_code(500); echo "Server not configured (EXPECTED_TOKEN / DATA_JSON)"; exit; }
 
-// TIMEZONE (config/config.php) - 画面表示の日時に反映
+// TIMEZONE (config/<USER_NAME>/config.php) - 画面表示の日時に反映
 $TIMEZONE = 'UTC';
-$configPath = __DIR__ . '/config/config.php';
+$configPath = nm_config_path($currentDirUser !== '' ? $currentDirUser : null);
 if (is_file($configPath)) {
   $cfg2 = require $configPath;
   if (is_array($cfg2) && isset($cfg2['TIMEZONE']) && is_string($cfg2['TIMEZONE']) && $cfg2['TIMEZONE'] !== '') {
@@ -181,27 +201,14 @@ function fmt_local_time_from_iso(string $iso): string {
 }
 
 
-// USERNAME
-$USERNAME = 'default';
-$authFile = __DIR__ . '/config/auth.php';
-if (file_exists($authFile)) {
-  $auth = require $authFile;
-  if (is_array($auth) && isset($auth['USERNAME'])) $USERNAME = (string)$auth['USERNAME'];
-  elseif (defined('USERNAME')) $USERNAME = (string)USERNAME;
-}
-$USERNAME = preg_replace('/[^a-zA-Z0-9_-]/', '_', $USERNAME);
-if ($USERNAME === '' || $USERNAME === null) $USERNAME = 'default';
+// USERNAME / DIR_USER
+$USERNAME = $user;
+$DIR_USER = $currentDirUser !== '' ? $currentDirUser : normalize_username($USERNAME);
 
-// notemod-data root inference
-$dataJsonDir = realpath(dirname($DATA_JSON));
-$notemodDataRoot = $dataJsonDir ?: dirname($DATA_JSON);
-if ($dataJsonDir && basename($dataJsonDir) === $USERNAME) {
-  $parent = realpath(dirname($dataJsonDir));
-  if ($parent) $notemodDataRoot = $parent;
-}
-$userDir   = rtrim($notemodDataRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $USERNAME;
-$imagesDir = $userDir . DIRECTORY_SEPARATOR . 'images';
-$filesDir  = $userDir . DIRECTORY_SEPARATOR . 'files';
+// user directories
+$userDir   = nm_data_dir($DIR_USER !== '' ? $DIR_USER : null);
+$imagesDir = nm_images_dir($DIR_USER !== '' ? $DIR_USER : null);
+$filesDir  = nm_files_dir($DIR_USER !== '' ? $DIR_USER : null);
 $fileHistoryPath = $userDir . DIRECTORY_SEPARATOR . 'file.json';
 $fileIndexPath  = $userDir . DIRECTORY_SEPARATOR . 'file_index.json';
 
@@ -598,8 +605,8 @@ $backUrl = rtrim($base, '/') . '/';
     }
     details summary{ cursor:pointer; font-weight:900; }
     details summary::-webkit-details-marker{ display:none; }
-    details summary:before{ content:"▸"; margin-right:8px; color:var(--muted); }
-    details[open] summary:before{ content:"▾"; }
+    details summary:before{ content:""; margin-right:8px; color:var(--muted); }
+    details[open] summary:before{ content:""; }
     table{ width:100%; border-collapse: collapse; min-width: 720px; }
     th, td{ border-bottom:1px solid var(--line); padding:10px 10px; font-size:13px; vertical-align:middle; }
     th{
@@ -637,6 +644,62 @@ $backUrl = rtrim($base, '/') . '/';
       transform: translateY(-1px);
     }
     .small{ font-size:12px; }
+
+/* サイズ指定用のカスタム入力スタイル */
+    .param-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 6px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--card2) 60%, transparent);
+    }
+    .param-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .param-input {
+      width: 64px;
+      background: color-mix(in srgb, var(--bg0) 50%, transparent);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 13px;
+      padding: 4px 8px;
+      outline: none;
+      transition: .15s ease;
+      font-family: inherit;
+      text-align: center;
+    }
+    .param-input:focus {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+    }
+    .param-divider {
+      width: 1px;
+      height: 18px;
+      background: var(--line);
+    }
+    /* スピンボタン（上下の矢印）を非表示にしてスッキリさせる */
+    .param-input::-webkit-outer-spin-button,
+    .param-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    .param-input[type=number] {
+      -moz-appearance: textfield;
+    }
+
+    .row-links{ display:flex; gap:12px; flex-wrap:wrap;}
+    .row-links a{ font-size:13px; color:var(--accent); }
+
   </style>
 </head>
 <body>
@@ -646,7 +709,7 @@ $backUrl = rtrim($base, '/') . '/';
         <div class="left">
           <h1 class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></h1>
           <div class="sub">
-            <?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b>
+            <?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($currentUser !== '' ? $currentUser : $user, ENT_QUOTES, 'UTF-8')?></b> &nbsp; | &nbsp; <?=htmlspecialchars($t[$lang]['storage_dir_user'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($currentDirUser !== '' ? $currentDirUser : normalize_username((string)($currentUser !== '' ? $currentUser : $user)), ENT_QUOTES, 'UTF-8')?></b>
           </div>
         </div>
 
@@ -679,7 +742,6 @@ $backUrl = rtrim($base, '/') . '/';
         <div class="pill">
           <span><?=htmlspecialchars($t[$lang]['images'], ENT_QUOTES, 'UTF-8')?>: <b><?=htmlspecialchars((string)$imageCount, ENT_QUOTES, 'UTF-8')?></b></span>
           <span><?=htmlspecialchars($t[$lang]['files'], ENT_QUOTES, 'UTF-8')?>: <b><?=htmlspecialchars((string)$fileCount, ENT_QUOTES, 'UTF-8')?></b></span>
-          <span class="muted">User: <b><?=htmlspecialchars($USERNAME, ENT_QUOTES, 'UTF-8')?></b></span>
           <span class="muted">TZ: <b><?=htmlspecialchars($TIMEZONE, ENT_QUOTES, 'UTF-8')?></b></span>
         </div>
 
@@ -708,7 +770,27 @@ $backUrl = rtrim($base, '/') . '/';
 
         <div class="card" style="box-shadow:none">
           <div class="body">
-            <div style="font-weight:900"><?=htmlspecialchars($t[$lang]['section_images'], ENT_QUOTES, 'UTF-8')?></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap;">
+              <div style="font-weight:900"><?=htmlspecialchars($t[$lang]['section_images'], ENT_QUOTES, 'UTF-8')?></div>
+
+
+<div class="param-pill" style="margin-left:auto;">
+                <label class="param-label">
+                  <span><?=htmlspecialchars($t[$lang]['thumb_width'], ENT_QUOTES, 'UTF-8')?></span>
+                  <input id="imgCopyWidth" class="param-input" type="number" min="1" step="1" placeholder="px">
+                </label>
+                
+                <div class="param-divider"></div>
+                
+                <label class="param-label">
+                  <span><?=htmlspecialchars($t[$lang]['thumb_height'], ENT_QUOTES, 'UTF-8')?></span>
+                  <input id="imgCopyHeight" class="param-input" type="number" min="1" step="1" placeholder="px">
+                </label>
+              </div>
+
+
+            </div>
+            <div class="notice" style="margin-top:10px; margin-bottom:10px; font-size:12px;"><?=htmlspecialchars($t[$lang]['images_click_help'], ENT_QUOTES, 'UTF-8')?></div>
             <div class="listbox">
               <table>
                 <thead>
@@ -737,7 +819,7 @@ $backUrl = rtrim($base, '/') . '/';
                     <td>
                       <img class="thumb copy-thumb" style="cursor:pointer;" title="<?=htmlspecialchars($t[$lang]['copied_image'], ENT_QUOTES, 'UTF-8')?>" src="<?=h($_SERVER['PHP_SELF'])?>?thumb=1&f=<?=h(urlencode($fname))?>" alt="" data-filename="<?=h($fname)?>">
                     </td>
-                    <td><?=h($fname)?></td>
+                    <td><span class="copy-image-url" data-filename="<?=h($fname)?>" style="cursor:pointer; text-decoration:underline;"><?=h($fname)?></span></td>
                     <td><?=h(fmt_local_time_from_unix($mtime))?></td>
                     <td class="right"><?=h(number_format($size))?></td>
                     <td><?=h($ext)?></td>
@@ -833,6 +915,12 @@ $backUrl = rtrim($base, '/') . '/';
 
       </div>
     </div>
+
+    <div class="row-links">
+      <a class="btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
+      <a class="btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+    </div>
+
   </div>
 
 <script>
@@ -856,9 +944,11 @@ const TEXT_CONFIRM_DELETE_SELECTED_IMAGES = <?=json_encode($t[$lang]['confirm_de
 const TEXT_CONFIRM_DELETE_SELECTED_FILES = <?=json_encode($t[$lang]['confirm_delete_selected_files'])?>;
 
 // --- 画像コピーツール用変数 ---
+const SITE_ORIGIN = <?=json_encode(((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || ((string)($_SERVER['SERVER_PORT'] ?? '') === '443') || ((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') ? 'https' : 'http') . '://' . (string)($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost'))?>;
 const IMAGE_API_BASE = <?=json_encode($apiDirUrl . '/image_api.php')?>;
-const CURRENT_USER = <?=json_encode($USERNAME)?>;
+const CURRENT_USER = <?=json_encode(isset($currentDirUser) && $currentDirUser !== '' ? $currentDirUser : $USERNAME)?>;
 const TEXT_COPIED_IMAGE = <?=json_encode($t[$lang]['copied_image'])?>;
+const TEXT_COPIED_IMAGE_URL = <?=json_encode('Image URL copied to clipboard')?>;
 // ------------------------------
 
 function humanErr(e) {
@@ -1054,9 +1144,36 @@ function showToast(msg) {
   setTimeout(() => { toast.style.opacity = '0'; }, 3000);
 }
 
+function buildImageUrl(filename) {
+  const rel = `${IMAGE_API_BASE}?user=${encodeURIComponent(CURRENT_USER)}&file=${encodeURIComponent(filename)}`;
+  const url = new URL(rel.startsWith('http://') || rel.startsWith('https://') ? rel : (SITE_ORIGIN + rel));
+
+  const widthEl = document.getElementById('imgCopyWidth');
+  const heightEl = document.getElementById('imgCopyHeight');
+
+  const w = widthEl ? String(widthEl.value || '').trim() : '';
+  const h = heightEl ? String(heightEl.value || '').trim() : '';
+
+  if (w !== '') url.searchParams.set('w', w);
+  if (h !== '') url.searchParams.set('h', h);
+
+  return url.toString();
+}
+
+async function copyImageUrlToClipboard(filename) {
+  try {
+    const url = buildImageUrl(filename);
+    await navigator.clipboard.writeText(url);
+    showToast(TEXT_COPIED_IMAGE_URL);
+  } catch (e) {
+    console.error(e);
+    alert("URLのコピーに失敗しました");
+  }
+}
+
 async function copyImageToClipboard(filename) {
   try {
-    const url = `${IMAGE_API_BASE}?user=${encodeURIComponent(CURRENT_USER)}&file=${encodeURIComponent(filename)}`;
+    const url = buildImageUrl(filename);
     
     const response = await fetch(url);
     if (!response.ok) throw new Error('Network response was not ok');
@@ -1092,6 +1209,16 @@ async function copyImageToClipboard(filename) {
     alert("画像取得に失敗しました");
   }
 }
+
+document.querySelectorAll('.copy-image-url').forEach(el => {
+  el.addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const filename = el.getAttribute('data-filename');
+    if (!filename) return;
+    await copyImageUrlToClipboard(filename);
+  });
+});
 
 document.querySelectorAll('.copy-thumb').forEach(el => {
   el.addEventListener('click', () => {

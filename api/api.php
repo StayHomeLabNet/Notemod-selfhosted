@@ -13,13 +13,28 @@
 //   → 末尾改行の数も忠実に保存できる
 // - WebP画像を受信した場合、サーバー側で自動的にPNGに変換して保存する
 
+require_once dirname(__DIR__) . '/auth_common.php';
+
+$dirUser = '';
+foreach (['dir_user', 'user', 'username'] as $key) {
+    if (isset($_REQUEST[$key]) && (string)$_REQUEST[$key] !== '') {
+        $dirUser = normalize_username((string)$_REQUEST[$key]);
+        if ($dirUser !== '') {
+            break;
+        }
+    }
+}
+if ($dirUser === '') {
+    $dirUser = nm_get_current_dir_user();
+}
+
 require_once __DIR__ . '/../logger.php';
 
 // =====================
 // タイムゾーン設定（config/config.php から読む）
 // =====================
 $tz = 'Pacific/Auckland';
-$cfgCommonFile = dirname(__DIR__) . '/config/config.php';
+$cfgCommonFile = nm_config_path($dirUser !== '' ? $dirUser : null);
 if (file_exists($cfgCommonFile)) {
     $common = require $cfgCommonFile;
     if (is_array($common)) {
@@ -44,6 +59,55 @@ function respond_json(array $payload, int $statusCode = 200): void
 
     echo json_encode($payload, $flags);
     exit;
+}
+
+
+function nm_api_locked_load_notemod(string $path)
+{
+    $fp = @fopen($path, 'c+');
+    if ($fp === false) {
+        return [null, null, 'open_failed'];
+    }
+    if (!@flock($fp, LOCK_EX)) {
+        @fclose($fp);
+        return [null, null, 'lock_failed'];
+    }
+
+    clearstatcache(true, $path);
+    $raw = stream_get_contents($fp);
+    if ($raw === false) {
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
+        return [null, null, 'read_failed'];
+    }
+    if ($raw === '') {
+        $raw = '{}';
+    }
+
+    $data = json_decode($raw, true);
+    if (!is_array($data)) {
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
+        return [null, null, 'json_invalid'];
+    }
+
+    return [$fp, $data, null];
+}
+
+function nm_api_locked_save_notemod($fp, array $data): bool
+{
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        return false;
+    }
+
+    if (@ftruncate($fp, 0) === false) return false;
+    if (@rewind($fp) === false) return false;
+    if (@fwrite($fp, $json) === false) return false;
+    @fflush($fp);
+    @flock($fp, LOCK_UN);
+    @fclose($fp);
+    return true;
 }
 
 
@@ -182,12 +246,48 @@ function notemod_text_to_html_preserve_newlines(string $text): string
     return $out;
 }
 
+
+function nm_fix_filename_utf8(string $name): string
+{
+    $name = trim(str_replace(["\0", "\r", "\n"], '', $name));
+    if ($name === '') return '';
+
+    if (function_exists('mb_check_encoding') && mb_check_encoding($name, 'UTF-8')) {
+        return $name;
+    }
+
+    $encodings = ['CP932', 'SJIS-win', 'SJIS', 'EUC-JP', 'ISO-2022-JP'];
+    foreach ($encodings as $enc) {
+        if (function_exists('mb_convert_encoding')) {
+            $converted = @mb_convert_encoding($name, 'UTF-8', $enc);
+            if (is_string($converted) && $converted !== '' && (!function_exists('mb_check_encoding') || mb_check_encoding($converted, 'UTF-8'))) {
+                return $converted;
+            }
+        }
+        if (function_exists('iconv')) {
+            $converted = @iconv($enc, 'UTF-8//IGNORE', $name);
+            if (is_string($converted) && $converted !== '' && (!function_exists('mb_check_encoding') || mb_check_encoding($converted, 'UTF-8'))) {
+                return $converted;
+            }
+        }
+    }
+
+    if (function_exists('iconv')) {
+        $fallback = @iconv('UTF-8', 'UTF-8//IGNORE', $name);
+        if (is_string($fallback) && $fallback !== '') {
+            return $fallback;
+        }
+    }
+
+    return $name;
+}
+
 // =====================
 // 0. 設定読み込み（config/config.api.php）
 // =====================
-$configFile = dirname(__DIR__) . '/config/config.api.php';
+$configFile = nm_api_config_path($dirUser !== '' ? $dirUser : null);
 if (!file_exists($configFile)) {
-    respond_json(['status' => 'error', 'message' => 'config.api.php missing'], 500);
+    respond_json(['status' => 'error', 'message' => 'config.api.php missing', 'path' => 'config/' . ($dirUser !== '' ? $dirUser : '<USER_NAME>') . '/config.api.php'], 500);
 }
 
 $cfg = require $configFile;
@@ -238,7 +338,7 @@ if ($type === 'image') {
     // 画像アップロード処理
     // ---------------------
 
-    $authFile = dirname(__DIR__) . '/config/auth.php';
+    $authFile = nm_auth_config_path($dirUser !== '' ? $dirUser : null);
     $auth = [];
     if (file_exists($authFile)) {
         $tmp = require $authFile;
@@ -248,7 +348,7 @@ if ($type === 'image') {
     $username = trim($username);
     if ($username === '') $username = 'default';
 
-    $userDir   = dirname(__DIR__) . '/notemod-data/' . $username;
+    $userDir   = nm_data_dir($dirUser !== '' ? $dirUser : $username);
     $imagesDir = $userDir . '/images';
 
     if (!is_dir($imagesDir)) {
@@ -419,7 +519,7 @@ if ($type === 'file') {
     // 一般ファイルアップロード処理
     // ---------------------
 
-    $authFile = dirname(__DIR__) . '/config/auth.php';
+    $authFile = nm_auth_config_path($dirUser !== '' ? $dirUser : null);
     $auth = [];
     if (file_exists($authFile)) {
         $tmp = require $authFile;
@@ -429,7 +529,7 @@ if ($type === 'file') {
     $username = trim($username);
     if ($username === '') $username = 'default';
 
-    $userDir  = dirname(__DIR__) . '/notemod-data/' . $username;
+    $userDir  = nm_data_dir($dirUser !== '' ? $dirUser : $username);
     $filesDir = $userDir . '/files';
 
     if (!is_dir($filesDir)) {
@@ -462,8 +562,17 @@ if ($type === 'file') {
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $mime  = (string)$finfo->file($tmpPath);
 
-    $originalName = (string)($file['name'] ?? '');
+    // 文字化け対策:
+    // クライアント側が original_name を別フォーム項目として送ってきた場合は、それを最優先で使う。
+    // （multipart の filename= だけに依存すると、Windows/.NET 由来の日本語ファイル名で化けることがある）
+    $originalNameRaw = (string)($params['original_name'] ?? '');
+    if ($originalNameRaw === '') {
+        $originalNameRaw = (string)($file['name'] ?? '');
+    }
+
+    $originalName = nm_fix_filename_utf8($originalNameRaw);
     $originalName = trim($originalName);
+
     // iOS/クライアントによっては RFC2047 (=?utf-8?B?...?=) 形式で来ることがあるので復号
     if ($originalName !== '' && preg_match('/^=\?utf-8\?[bq]\?.*\?=$/i', $originalName)) {
         if (function_exists('mb_decode_mimeheader')) {
@@ -495,6 +604,8 @@ if ($type === 'file') {
             'application/vnd.openxmlformats-officedocument.presentationml.presentation' => 'pptx',
             'application/msword' => 'doc',
             'application/vnd.ms-excel' => 'xls',
+            'application/CDFV2' => 'xls',
+            'application/x-ole-storage' => 'xls',
             'application/vnd.ms-powerpoint' => 'ppt',
             'image/png' => 'png',
             'image/jpeg' => 'jpg',
@@ -645,7 +756,7 @@ $noteTitle    = ($titleParam !== '') ? $titleParam : date('Y-m-d H:i:s');
 $categoryName = ($categoryParam !== '') ? $categoryParam : 'INBOX';
 
 // =====================
-// 4. Notemod の data.json を読み込む
+// 4. Notemod の data.json をロック付きで読み込む
 // =====================
 if (!file_exists($notemodFile)) {
     respond_json(['status' => 'error', 'message' => 'data.json not found'], 500);
@@ -654,9 +765,10 @@ if (!is_readable($notemodFile) || !is_writable($notemodFile)) {
     respond_json(['status' => 'error', 'message' => 'data.json not readable/writable'], 500);
 }
 
-$json = file_get_contents($notemodFile);
-$data = json_decode($json, true);
-if (!is_array($data)) $data = [];
+[$fp, $data, $loadErr] = nm_api_locked_load_notemod($notemodFile);
+if ($loadErr !== null) {
+    respond_json(['status' => 'error', 'message' => 'failed to load data.json safely', 'detail' => $loadErr], 500);
+}
 
 $categoriesVal = $data['categories'] ?? '[]';
 $notesVal      = $data['notes'] ?? '[]';
@@ -664,8 +776,16 @@ $notesVal      = $data['notes'] ?? '[]';
 $categoriesArr = is_string($categoriesVal) ? json_decode($categoriesVal, true) : $categoriesVal;
 $notesArr      = is_string($notesVal) ? json_decode($notesVal, true) : $notesVal;
 
-if (!is_array($categoriesArr)) $categoriesArr = [];
-if (!is_array($notesArr)) $notesArr = [];
+if (!is_array($categoriesArr)) {
+    @flock($fp, LOCK_UN);
+    @fclose($fp);
+    respond_json(['status' => 'error', 'message' => 'categories is invalid in data.json'], 500);
+}
+if (!is_array($notesArr)) {
+    @flock($fp, LOCK_UN);
+    @fclose($fp);
+    respond_json(['status' => 'error', 'message' => 'notes is invalid in data.json'], 500);
+}
 
 // =====================
 // 5. categoryName のカテゴリーを探す or 作る
@@ -699,6 +819,8 @@ $createdAt = gmdate('Y-m-d\TH:i:s\Z');
 
 $safeText = notemod_text_to_html_preserve_newlines($textRaw);
 if ($safeText === '') {
+    @flock($fp, LOCK_UN);
+    @fclose($fp);
     respond_json(['status' => 'error', 'message' => 'text is required'], 400);
 }
 
@@ -727,7 +849,7 @@ foreach ($notesArr as $n) {
 }
 
 // =====================
-// 8. data.json に書き戻す
+// 8. data.json に書き戻す（同じロック中）
 // =====================
 $data['categories'] = is_string($categoriesVal)
     ? json_encode($categoriesArr, JSON_UNESCAPED_UNICODE)
@@ -737,14 +859,8 @@ $data['notes'] = is_string($notesVal)
     ? json_encode($notesArr, JSON_UNESCAPED_UNICODE)
     : $notesArr;
 
-$saveResult = file_put_contents(
-    $notemodFile,
-    json_encode($data, JSON_UNESCAPED_UNICODE),
-    LOCK_EX
-);
-
-if ($saveResult === false) {
-    respond_json(['status' => 'error', 'message' => 'failed to save data.json'], 500);
+if (!nm_api_locked_save_notemod($fp, $data)) {
+    respond_json(['status' => 'error', 'message' => 'failed to save data.json safely'], 500);
 }
 
 
@@ -755,7 +871,7 @@ if ($saveResult === false) {
 // - 既存機能に影響しないよう、この処理が失敗しても main 処理は継続
 // =====================
 try {
-    $authFile = dirname(__DIR__) . '/config/auth.php';
+    $authFile = nm_auth_config_path($dirUser !== '' ? $dirUser : null);
     $auth = [];
     if (file_exists($authFile)) {
         $tmp = require $authFile;
@@ -765,7 +881,7 @@ try {
     $username = trim($username);
     if ($username === '') $username = 'default';
 
-    $userDir = dirname(__DIR__) . '/notemod-data/' . $username;
+    $userDir = nm_data_dir($dirUser !== '' ? $dirUser : $username);
     if (!is_dir($userDir)) {
         @mkdir($userDir, 0755, true);
     }

@@ -1,63 +1,65 @@
-# Notemod-selfhosted v1.3.1
+# Notemod-selfhosted v1.4.0
 
-This is a fork based on **[Notemod (upstream)](https://github.com/orayemre/Notemod)** (MIT License), expanded into a **self-hosted note platform that can run even on shared hosting**.  
-It works **without a database**, and lets you handle not only text, but also **images** and **files** for copy-and-paste workflows, organization from the admin screens, backups, and Web UI authentication in one place. It also works with the Windows Clipboard Sync app, making clipboard use between iPhone and Windows PC especially convenient.
+This is a fork based on **[Notemod (original)](https://github.com/orayemre/Notemod)** (MIT License), expanded into a **self-hosted note platform that can run even on shared hosting**, for the purpose of improving clipboard use between iPhone and Windows PCs in particular by integrating with the Windows app **[ClipboardSync](https://github.com/StayHomeLabNet/ClipboardSync)**.  
+It runs with **no database required**, and supports not only text but also **images** and **files**, including copy-and-paste integration, organization from the management screen, backups, and Web UI authentication.
 
-Confirmed to work on these shared hosting services: Xserver, Sakura Internet, XREA, InfinityFree  
+Shared hosting environments confirmed to work: Xserver, Sakura Internet, XREA, InfinityFree  
 Tested PHP version: 8.3.21 (**PHP 8.1 or later is required**)
 
-> **Single source of truth:** `notemod-data/data.json`
+> **Per-user data source:** `notemod-data/<USER_NAME>/data.json`
 
 ---
 
-## Highlights in This Version (v1.3.1)
+## Highlights of This Version (v1.4.0)
 
-In v1.3.1, building on the **image / file support** introduced in v1.3.0, the **login screen and custom settings menu pages now share a unified UI**, **`image_api.php` has been added**, and **`media_files.php` now allows images to be copied by clicking on image thumbnails**, making daily operation even easier.
+In v1.4.0, building on the **per-user directory structure** and the separation of **`USERNAME` / `DIR_USER`** introduced in v1.3.1, operation based on **`config/<USER_NAME>/...` / `notemod-data/<USER_NAME>/...` / `logs/<USER_NAME>/...`** has been further reinforced. In addition, reference targets in `cleanup_api.php` and surrounding management functions have been shifted toward the per-user structure, old assumptions based on variable log directory settings such as `LOGGER_LOGS_DIRNAME` have been cleaned up, and operation has been aligned around **`logs/<USER_NAME>/`** as the standard.
 
-- Supports **copy-and-paste workflows for images**
-- Supports **copy-and-paste workflows for files**
-- Added a **media / file management page** (`media_files.php`)
-- Supports **uploading / downloading / organizing images and files**
-- Supports **selected deletion and delete-all for images / files**
-- Improved `media_files.php` so you can **copy images by clicking image thumbnails**
-- Added **`image_api.php`**
-- Unified the UI of **`login.php` and the custom settings menu related pages**
-- Target pages: `login.php` / `media_files.php` / `clipboard_sync.php` / `bak_settings.php` / `log_settings.php` / `setup_auth.php` / `account.php`
-- Unified the appearance of the **Clipboard Sync settings page / backup settings page / log settings page / initial setup / account settings**
+Also, in `media_files.php`, in addition to **clicking an image thumbnail to copy the image** and **clicking the filename to copy the image URL**, the **input values for width / height can now be reflected in the image retrieval URL**, making it easier to use images externally and share them with size parameters.
+
+- Organized based on a **per-user directory structure**
+- Supports `config/<USER_NAME>/...` / `notemod-data/<USER_NAME>/...` / `logs/<USER_NAME>/...`
+- Continued operation with **separated `USERNAME` and `DIR_USER`**
+- Organized log operation around **`logs/<USER_NAME>/`**
+- **Unified `cleanup_api.php` configuration references to the per-user structure**
+- **Cleaned up assumptions based on `LOGGER_LOGS_DIRNAME`**
+- **Click image thumbnail to copy image**
+- **Click image filename to copy image URL**
+- **Apply width / height input values to image URLs**
+- Supports **upload / download / organization of images and files**
 - Continues to include **Web UI authentication** and **PWA support**
 
-With this update, Notemod-selfhosted is not only a **self-hosted environment that can handle text, images, and files together**, but also provides a **more consistent and easier-to-use UI from login through the settings pages**.
+With this update, Notemod-selfhosted has become not only a **self-hosted environment that is easy to organize with per-user directories**, but also a version that can handle **image, file, and log management in a more consistent structure**.
 
 ---
 
-## Development Goal
+## Development Purpose
 
-The goal is to make clipboard sharing between iPhone and Windows PC feel as close as possible to the convenience of iPhone and Mac,  
-while achieving it **without depending on external services**.
+To make clipboard integration between iPhone and Windows PCs a little closer to the comfort of clipboard sharing between iPhone and Mac.  
+The goal is to achieve this **without relying on external services**.
 
 Typical use cases:
 
 - Send text copied on a Windows PC to Notemod-selfhosted (can be automated with the Windows app ClipboardSync)
-- Retrieve the latest text using iPhone Shortcuts or app integrations
+- Retrieve the latest text from iPhone using Shortcuts or app integration
 - Save and retrieve images
 - Save and retrieve PDFs and other files
-- Organize media and backups from the Web admin screens
-- Access from a web browser to make exchanging text and files between different devices easier
+- Organize media and backups from the Web management screen
+- Access via a Web browser to make text and file exchange between different devices easier
 
 ---
 
 ## Main Features
 
-### 1. Self-hosted operation of the Notemod core
-- Run the Notemod UI on your own server
-- Data is stored in `notemod-data/data.json`
-- No database required
+### 1. Self-hosted operation of the Notemod app itself
+- You can run the Notemod UI on your server
+- Data is stored in `notemod-data/<USER_NAME>/data.json`
+- No database is required
 
-### 2. Text write / read APIs
-- Add notes via `api/api.php`
-- Retrieve the latest note via `api/read_api.php`
+### 2. Text write / read API
+- Add notes with `api/api.php`
+- Retrieve the latest note with `api/read_api.php`
 - `latest_note` excludes the Logs category
-- Supports returning only the body with `pretty=2`
+- Supports operation that returns only the body with `pretty=2`
 
 ### 3. Image / file copy-and-paste support
 - Image upload
@@ -65,31 +67,34 @@ Typical use cases:
 - Retrieve latest image / latest file
 - Determine the latest clip type
 - Organize images / files from `media_files.php`
-- Copy images by clicking image thumbnails in `media_files.php`
+- Click an image thumbnail in `media_files.php` to copy the image
+- Click an image filename in `media_files.php` to copy the image URL
+- Supports retrieving image URLs with width / height parameters
 
 ### 4. Cleanup API
-- Execute destructive operations with the admin token
-- Supports deletion with backup creation (and backup creation only)
+- Execute destructive operations with an admin token
+- Supports deletion with backup creation (backup creation only is also possible)
 - Bulk deletion of log files / backup files
-- Image / file cleanup features
+- Image / file organization functions
+- Supports log deletion based on `logs/<USER_NAME>/`
 
 ### 5. Web UI authentication
-- Allows management with a login system even in environments where Basic Auth cannot be used
-- Protects settings pages and various admin pages
-- Unified UI for `login.php` and each custom settings menu page
+- Management by login is possible even in environments where Basic authentication cannot be used
+- `USERNAME` (display / login name) and `DIR_USER` (storage directory name) can be operated separately
+- Protects settings screens and various management screens
 
 ### 6. Backup / restore
 - Change settings from `bak_settings.php`
-- Back up now
-- Keep the latest n backups and delete older backups
+- Create a backup immediately
+- Keep the latest n backups and delete older ones
 - Restore `data.json` from the backup list
 
 ### 7. Log settings
 - Change settings from `log_settings.php`
 - Enable / disable access logs
 - Enable / disable saving access logs into a Notemod category
-- Set the maximum number of access log lines
-- Enable / disable notifications on first-time access from a new IP
+- Set the maximum number of log lines
+- Enable / disable first-IP access notifications
 - Set the email address for IP access notifications
 
 ### 8. PWA support
@@ -100,11 +105,12 @@ Typical use cases:
 
 ## Who This Is For
 
-- People who want their own personal clip / note platform
-- People who do not want to depend on external cloud clipboard sync services
+- People who want their own clipboard / note platform
+- People who do not want to depend on external cloud clipboard sync
 - People who want something lightweight that runs on shared hosting
 - People who want to build their own bridge between iPhone and Windows
-- People who want to handle not only text, but also images and files
+- People who want to handle not only text but also images and files
+- People who want to organize and operate with per-user directories
 
 ---
 
@@ -112,28 +118,38 @@ Typical use cases:
 
 ```text
 public_html/
-├─ index.php                 # Notemod UI
-├─ logger.php                # Access log + append to Logs category
-├─ notemod_sync.php          # Sync endpoint (save/load)
-├─ setup_auth.php            # Web UI initial setup
-├─ login.php / logout.php    # Login / logout
-├─ auth_common.php           # Shared authentication logic
-├─ account.php               # Account / admin menu
-├─ clipboard_sync.php        # Clipboard Sync settings page
-├─ bak_settings.php          # Backup settings page
-├─ log_settings.php          # Log settings page
-├─ media_files.php           # Image / file management page
+├─ index.php
+├─ logger.php
+├─ notemod_sync.php
+├─ setup_auth.php
+├─ login.php / logout.php
+├─ auth_common.php
+├─ account.php
+├─ clipboard_sync.php
+├─ bak_settings.php
+├─ log_settings.php
+├─ media_files.php
 ├─ api/
-│  ├─ api.php                # Add note / receive image / file
-│  ├─ read_api.php           # Read API
-│  ├─ image_api.php          # Image delivery API
-│  └─ cleanup_api.php        # Destructive operations (admin)
+│  ├─ api.php
+│  ├─ read_api.php
+│  ├─ image_api.php
+│  └─ cleanup_api.php
 ├─ config/
-│  ├─ config.php             # Shared settings (do not commit)
-│  └─ config.api.php         # API settings (do not commit)
+│  └─ USER_NAME/
+│     ├─ auth.php
+│     ├─ config.php
+│     └─ config.api.php
+├─ logs/
+│  └─ USER_NAME/
+│     ├─ .htaccess
+│     └─ ...log files...
 ├─ notemod-data/
-│  ├─ data.json              # Single source of truth
-│  └─ .htaccess
+│  └─ USER_NAME/
+│     ├─ .htaccess
+│     ├─ data.json
+│     ├─ _known_ips.json
+│     ├─ images/
+│     └─ files/
 ├─ pwa/
 │  ├─ icon-192.png
 │  └─ icon-512.png
@@ -147,29 +163,28 @@ public_html/
 ## How to Use
 
 ### 1. Upload to the server
-Upload the entire repository to your server’s public folder (for example, `public_html/`).
+Upload the entire repository to your server’s public directory (for example, `public_html/`).
 
 > `config/` and `api/` are assumed to be at the same level as `index.php`.  
-> If you change the structure, you will need to adjust the PHP paths.
+> If you change the structure, you will need to adjust the paths in the PHP code.
 
 ### 2. Create the configuration files
-Upload the repository to the server, then **access `index.php` to generate them automatically**.
+Upload the entire repository to the server, and they will be **created automatically by accessing `index.php`**. After initial setup, the various settings below will be created automatically, so you can start using it right away.
 
-#### Shared settings
-Copy or rename `config/config.sample.php` to `config/config.php`, then change it as needed.
+#### Common settings / API settings / authentication settings
+In v1.4.0 as well, configuration files are assumed to be created automatically in the **per-user directory** during initial setup.
+
+Creation locations:
+- `config/<USER_NAME>/auth.php`
+- `config/<USER_NAME>/config.php`
+- `config/<USER_NAME>/config.api.php`
 
 Main items:
+- `USERNAME`
+- `DIR_USER`
 - `SECRET`
 - `TIMEZONE`
 - `DEBUG`
-- `LOGGER_FILE_ENABLED`
-- `LOGGER_NOTEMOD_ENABLED`
-- `INITIAL_SNAPSHOT`
-
-#### API settings
-Copy or rename `config/config.api.sample.php` to `config/config.api.php`, then change it as needed.
-
-Main items:
 - `EXPECTED_TOKEN`
 - `ADMIN_TOKEN`
 - `DATA_JSON`
@@ -177,155 +192,174 @@ Main items:
 - `CLEANUP_BACKUP_ENABLED`
 - `CLEANUP_BACKUP_SUFFIX`
 
-### 3. Change SECRET / TOKEN values
-Do not use the sample values as-is. Always change them to long random values.
+### 3. Change the SECRET / TOKEN
+Do not use the sample values as they are. Be sure to change them to long random values.
 
 Example:
 - `openssl rand -hex 32`
 
 ### 4. First launch
-Access the public URL in your browser and complete the initial setup.
+Access the public URL in your browser and proceed with the initial setup.
 
-Depending on the environment and settings, files / directories like the following may be generated on first launch.
+Depending on the environment and settings, files / directories such as the following will be generated at first launch:
 
-- `notemod-data/data.json`
-- `notemod-data/.htaccess`
+- `config/<USER_NAME>/auth.php`
+- `config/<USER_NAME>/config.php`
+- `config/<USER_NAME>/config.api.php`
+- `notemod-data/<USER_NAME>/data.json`
+- `notemod-data/<USER_NAME>/.htaccess`
+- `notemod-data/<USER_NAME>/_known_ips.json`
+- `notemod-data/<USER_NAME>/images/`
+- `notemod-data/<USER_NAME>/files/`
+- `logs/<USER_NAME>/`
 - `api/.htaccess`
-- `config/config.php` / `config/config.api.php` (when using Web UI setup)
-- Log-related files (depending on settings)
+- Log-related files (depending on the settings)
+
+---
+
+## About USERNAME and DIR_USER (v1.4.0)
+
+In v1.4.0 as well, **`USERNAME` as the display / login name** and **`DIR_USER` as the storage directory name** are handled separately.
+
+- `USERNAME`
+  - Login name / display name
+  - Can be changed from `account.php`
+- `DIR_USER`
+  - Storage directory name
+  - Handled in lowercase
+  - Not changed after initial creation
+
+Main storage locations:
+- `config/<DIR_USER>/auth.php`
+- `config/<DIR_USER>/config.php`
+- `config/<DIR_USER>/config.api.php`
+- `notemod-data/<DIR_USER>/data.json`
+- `notemod-data/<DIR_USER>/images/`
+- `notemod-data/<DIR_USER>/files/`
+- `logs/<DIR_USER>/`
+
+In `account.php`, operation assumes that even if the login name is changed, the storage directory name does not change.
 
 ---
 
 ## Security (Important)
 
-### If Basic Auth can be used
-At minimum, **Basic Auth is strongly recommended** for the `api/` directory.
+### If Basic authentication can be used
+Basic authentication is strongly recommended at least for the `api/` directory.
 
-Reasons:
+Reason:
 - `robots.txt` is not access control
 - `/api/` on a public server is reachable from outside
-- Long-lived tokens may become targets for brute-force attacks
-- Basic Auth adds a barrier before PHP token authentication
+- Long-term tokens can become targets for brute-force attacks
+- Basic authentication creates a barrier before PHP token authentication
 
-### If Basic Auth cannot be used
-Use **Web UI authentication + token-based operation**.
+### If Basic authentication cannot be used
+Use **Web UI authentication + token operation**.
 
-- Initial setup / admin: `setup_auth.php`
-- After login: move to pages such as `account.php`
+- Initial setup / management: `setup_auth.php`
+- After login: move to each settings screen from `account.php`, etc.
 
 ---
 
-## Media / File Management (Still Important in v1.3.1)
+## Media / File Management
 
-### Management page
+### Management screen
 `media_files.php`
 
-You can perform the following actions on this page:
+The following operations are available on this screen:
 
-- View image list
-- View file list
+- Display image list
+- Display file list
 - Drag-and-drop image upload
 - Drag-and-drop file upload
 - Download
-- Copy images by clicking image thumbnails
-- Selected deletion with checkboxes
-- Select all / clear all
+- Click image thumbnail to copy image
+- Click image filename to copy image URL
+- Retrieve image URLs with specified width / height
+- Delete selected items with checkboxes
+- Select all / deselect all
 - Delete all images / delete all files
 - Check server upload / download related settings
 
 ### Storage locations
-- Images: `notemod-data/USER_NAME/images/`
-- Files: `notemod-data/USER_NAME/files/`
+- Images: `notemod-data/<USER_NAME>/images/`
+- Files: `notemod-data/<USER_NAME>/files/`
 
-*The handling of `USER_NAME` depends on the implementation and authentication state.*
+* `<USER_NAME>` is the storage directory name.
 
-### JSON management concept
-Images and files are managed slightly differently.
+### How JSON is managed
+Management differs slightly between images and files.
 
 #### Image side
 - `image_latest.json`
-  - Stores information about the latest image
-- List display is based on folder scanning
-- Images are assumed to be identifiable by thumbnails
+  - Holds information on the latest image
+- List display is based on directory scanning
+- Assumes images can be identified by thumbnails
 
 #### File side
 - `file.json`
   - File history log
 - `file_index.json`
-  - List of currently existing files
+  - Current file list
 - `file_latest.json`
   - Latest file information
 
-The reason the file side uses `file_index.json` is to **display the original filenames in the list instead of only the saved filenames**.
+The reason `file_index.json` is used on the file side is to display the original filename rather than the stored filename.
 
-### latest protection
-In cleanup-related processing by `cleanup_api.php`, the current implementation **protects the actual latest entity**.  
-Because of this, even “delete all” may still leave the latest actual file/image behind.
+### About latest protection
+In cleanup-related processing in `cleanup_api.php`, the current implementation protects the actual file referenced by latest.  
+Therefore, even in “delete all,” the latest actual file may remain.
 
 ---
 
 ## Backup Settings
 
-### Management page
+### Management screen
 `bak_settings.php`
 
-Main actions:
-- Enable / disable backup function
+Main operations:
+- Enable / disable backup feature
 - Set retention count
-- Back up now
-- Keep the latest n items and delete older backups
+- Create a backup immediately
+- Keep the latest n backups and delete older ones
 - Restore `data.json` from the backup list
 
 Features:
-- Automatically backs up the current `data.json` before restore
+- Automatically backs up the current `data.json` before restoring
 - Uses `TIMEZONE` for date/time display and filename handling
 
 ---
 
 ## Log Settings
 
-### Management page
+### Management screen
 `log_settings.php`
 
 Main settings:
-- Enable / disable access log
+- Enable / disable access logs
 - Enable / disable appending to the Logs category in Notemod
 - Save log-related settings
-- Enable / disable notification on first-time access from a new IP
+- Enable / disable first-IP access notifications
 - Set the email address for IP access notifications
 
----
-
-## Unified UI (v1.3.1)
-
-In v1.3.1, the UI of the login page and the custom settings menu related pages has been unified.  
-This makes it easier to perform settings changes and admin tasks continuously without a major shift in appearance or operation from page to page.
-
-### Pages included in the unified UI
-- `login.php` (login page)
-- `media_files.php` (media / files in the custom settings menu)
-- `clipboard_sync.php` (clipboard sync in the custom settings menu)
-- `bak_settings.php` (backup settings in the custom settings menu)
-- `log_settings.php` (log settings in the custom settings menu)
-- `setup_auth.php` (initial setup / authentication settings in the custom settings menu)
-- `account.php` (account settings in the custom settings menu)
+In v1.4.0, log-related operation has been organized on the assumption of **`logs/<USER_NAME>/`**.
 
 ---
 
-## Clipboard Sync Settings
+## ClipboardSync Settings
 
-### Management page
+### Management screen
 `clipboard_sync.php`
 
-On this page, you can check API URLs and tokens for integration with external clients (the Windows app ClipboardSync).
-It provides the ClipboardSync download link and the iOS Shortcut download link for iPhone integration.
-It also uses the same unified UI as `login.php`, `media_files.php`, `bak_settings.php`, `log_settings.php`, `setup_auth.php`, and `account.php`, keeping the overall appearance and feel of the settings menu consistent.
+On this screen, you can check the API URLs and tokens used for integration with the external client (the Windows app ClipboardSync).  
+It also provides a download link for ClipboardSync and a download link for the iOS Shortcut used to integrate with iPhone.
 
 Main uses:
-- Windows app setup
-- Copying URLs into iPhone Shortcuts (used during shortcut initial setup)
+- Settings for the Windows app
+- Copying URLs into iPhone Shortcuts (used for initial setup of the shortcut)
 - Checking the `/api/` URL
-- Checking the URLs of `api.php` / `read_api.php` / `cleanup_api.php`
+- Checking the URLs for `api.php`, `read_api.php`, and `cleanup_api.php`
+- Checking settings corresponding to the current `DIR_USER`
 
 ---
 
@@ -334,17 +368,17 @@ Main uses:
 ### `api/api.php`
 This is mainly the write-side endpoint.
 
-Examples of supported operations:
+Supported examples:
 - Add notes
 - Upload images
 - Upload files
 - Handle WebP images
-- Update `image_latest.json` / `file.json` / `file_index.json` / `file_latest.json`
+- Update `image_latest.json`, `file.json`, `file_index.json`, and `file_latest.json`
 
 ### `api/read_api.php`
 This is the read-side endpoint.
 
-Examples of supported operations:
+Supported examples:
 - `latest_note`
 - `latest_image`
 - `latest_file`
@@ -353,22 +387,24 @@ Examples of supported operations:
 ### `api/image_api.php`
 This is the image delivery endpoint.
 
-Examples of supported operations:
+Supported examples:
 - Direct display of saved images
-- Assist image copying from `media_files.php`
+- Image copy support from `media_files.php`
 - External integration using image URLs
+- Retrieval with size parameters via `w` / `h`
 
 ### `api/cleanup_api.php`
-This is the admin endpoint for destructive operations.
+This is the admin-only destructive-operation endpoint.
 
-Examples of supported operations:
+Supported examples:
 - Delete categories
 - Delete logs
 - Delete backups
 - Organize images / files
-- Selected deletion / delete all
+- Delete selected items / delete all
 - Rebuild `file_index.json`
-- Correct `file_latest.json`
+- Fix `file_latest.json`
+- Delete logs targeting `logs/<USER_NAME>/`
 
 ---
 
@@ -379,58 +415,60 @@ Examples of supported operations:
 /api/api.php?token=EXPECTED_TOKEN&category=INBOX&text=Hello
 ```
 
-### Get the latest note (excluding Logs, body only)
+### Retrieve the latest note (excluding Logs, body only)
 ```text
 /api/read_api.php?token=EXPECTED_TOKEN&action=latest_note&pretty=2
 ```
 
-### Get the latest image
+### Retrieve the latest image
 ```text
 /api/read_api.php?token=EXPECTED_TOKEN&action=latest_image
 ```
 
-### Get the latest file
+### Retrieve the latest file
 ```text
 /api/read_api.php?token=EXPECTED_TOKEN&action=latest_file
 ```
 
-### Direct image display (`image_api.php`)
+### Directly display an image (`image_api.php`)
 ```text
-/api/image_api.php?user=USER_NAME&file=IMAGE_FILE_NAME.png
+/api/image_api.php?user=<DIR_USER>&file=IMAGE_FILE_NAME.png
 ```
 
-### Get the latest clip type
+### Retrieve an image with width specified
+```text
+/api/image_api.php?user=<DIR_USER>&file=IMAGE_FILE_NAME.png&w=300
+```
+
+### Retrieve an image with height specified
+```text
+/api/image_api.php?user=<DIR_USER>&file=IMAGE_FILE_NAME.png&h=300
+```
+
+### Retrieve the latest clip type
 ```text
 /api/read_api.php?token=EXPECTED_TOKEN&action=latest_clip_type
 ```
 
 ### Bulk delete log files (POST)
 ```bash
-curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  --data-urlencode "token=ADMIN_TOKEN" \
-  --data-urlencode "purge_log=1" \
-  --data-urlencode "confirm=YES"
+curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php"   -H "Content-Type: application/x-www-form-urlencoded"   --data-urlencode "token=ADMIN_TOKEN"   --data-urlencode "purge_log=1"   --data-urlencode "confirm=YES"
 ```
 
 ### Bulk delete backup files (POST)
 ```bash
-curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  --data-urlencode "token=ADMIN_TOKEN" \
-  --data-urlencode "purge_bak=1" \
-  --data-urlencode "confirm=YES"
+curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php"   -H "Content-Type: application/x-www-form-urlencoded"   --data-urlencode "token=ADMIN_TOKEN"   --data-urlencode "purge_bak=1"   --data-urlencode "confirm=YES"
 ```
 
 ---
 
-## External Integrations
+## External Integration
 
-For specific usage examples (API calls / iPhone Shortcuts / Windows app integration, etc.), please also refer to:
+For specific usage methods (how to call the API, iPhone Shortcuts, Windows app integration, etc.), please also refer to the following:
 
 - [StayHomeLab YouTube ch](https://www.youtube.com/@StayHomeLab)
 - [Website](https://stayhomelab.net/notemod-selfhosted)
-- [ClipboardSender](https://github.com/StayHomeLabNet/ClipboardSender)
+- [ClipboardSync](https://github.com/StayHomeLabNet/ClipboardSync)
 
 ---
 
@@ -438,14 +476,16 @@ For specific usage examples (API calls / iPhone Shortcuts / Windows app integrat
 
 - **PHP 8.1 or later**
 - Apache recommended (because `.htaccess` is used)
-- Writable locations from PHP:
-  - `notemod-data/`
-  - `config/` (during initial setup)
-  - `logs/` or the configured log directory (optional)
+- Locations writable by PHP:
+  - `notemod-data/<USER_NAME>/`
+  - `config/<USER_NAME>/` (during initial setup)
+  - `logs/<USER_NAME>/`
 
 ---
 
 ## About `robots.txt`
+
+It is automatically created by `setup_auth.php`.
 
 Recommended:
 
@@ -456,16 +496,16 @@ Disallow: /
 
 Notes:
 - `robots.txt` is not access control
-- Use it together with Basic Auth / Web UI authentication / `.htaccess` protection
+- Use it together with Basic authentication / Web UI authentication / `.htaccess` protection, etc.
 
 ---
 
-## Division of Roles Between README and Web Manual
+## Division of Roles Between README and the Web Manual
 
-- **README**: overall project overview, installation, and guidance for the main features
-- **Web manual**: how to use each screen, settings items, operational procedures, and checkpoints when something goes wrong
+- **README**: overall project overview, introduction, and main feature guide
+- **Web manual**: how to use each screen, setting items, operation procedures, and troubleshooting checkpoints
 
-Instead of trying to explain every single operation in the README alone, it is recommended to move detailed usage instructions into the web manual.
+Rather than trying to explain every operation in the README alone, it is recommended to separate detailed operational instructions into the Web manual.
 
 ---
 
@@ -473,11 +513,11 @@ Instead of trying to explain every single operation in the README alone, it is r
 
 MIT License.
 
-This project is based on **Notemod by Oray Emre Gunduz (MIT)**.  
-As required by the MIT license, please **retain the copyright notice and the license text**.
+This project is based on **Notemod (MIT)** by Oray Emre Gunduz.  
+As required by the MIT License, please retain the copyright notice and the license text.
 
 ---
 
 ## Credits
 
-- Notemod (upstream): https://github.com/orayemre/Notemod
+- Notemod (original): https://github.com/orayemre/Notemod

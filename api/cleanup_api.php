@@ -794,30 +794,15 @@ if ($purgeBakBool) {
 }
 
 // =====================
-// 追加機能：logs フォルダー内の .log ファイル全削除（purge_log=1）
+// 追加機能：logs/<USER_NAME>/ 内の .log ファイル全削除（purge_log=1）
 // - dry_run=1: 対象一覧
 // - dry_run=2: 対象数のみ（NEW）
 // =====================
 if ($purgeLogBool) {
 
-    // logger.php の __DIR__ は public_html（想定）
-    // cleanup_api.php の __DIR__ は public_html/api なので、baseRoot は 1階層上（public_html）
-    $baseRoot = dirname(__DIR__);
-
-    // config/config.php の LOGGER_LOGS_DIRNAME を優先（無ければ 'logs'）
-    $logsDirName = (string)($commonCfg['LOGGER_LOGS_DIRNAME'] ?? '');
-    $logsDirName = trim($logsDirName) !== '' ? trim($logsDirName) : 'logs';
-
-    // 安全：フォルダ名だけ許可（/ や .. を拒否）
-    if (preg_match('/[\/\\\\]/', $logsDirName) || strpos($logsDirName, '..') !== false) {
-        respond_json([
-            'status'  => 'error',
-            'message' => 'Invalid LOGGER_LOGS_DIRNAME',
-            'value'   => $logsDirName,
-        ], 500);
-    }
-
-    $logsDir = $baseRoot . '/' . $logsDirName;
+    $logsDir = function_exists('nm_logs_dir')
+        ? nm_logs_dir($currentDirUser !== '' ? $currentDirUser : null)
+        : (dirname(__DIR__) . '/logs/' . $currentDirUser);
 
     if (!is_dir($logsDir)) {
         respond_json([
@@ -834,7 +819,6 @@ if ($purgeLogBool) {
 
         $name = $f->getFilename();
 
-        // 対象：拡張子が .log のみ
         if (preg_match('/\.log$/i', $name) === 1) {
             $targets[] = $name;
         }
@@ -869,7 +853,10 @@ if ($purgeLogBool) {
         if (@unlink($path)) {
             $deleted[] = $name;
         } else {
-            $errors[] = ['file' => $name, 'err' => error_get_last()];
+            $errors[] = [
+                'file' => $name,
+                'err'  => error_get_last(),
+            ];
         }
     }
 

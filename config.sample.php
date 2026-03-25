@@ -21,9 +21,6 @@ return [
     // Notemod Logs category (monthly note: access-YYYY-MM)
     'LOGGER_NOTEMOD_ENABLED' => true,
 
-    // (Optional) Change the logs directory name
-    // 'LOGGER_LOGS_DIRNAME' => 'logs',
-
     // Optional: customize Notemod initial snapshot
     // (Must be stored as a JSON string)
     // 'INITIAL_SNAPSHOT' => '{"categories":null,"hasSelectedLanguage":null,"notes":null,"selectedLanguage":null}',

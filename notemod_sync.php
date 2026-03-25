@@ -1,17 +1,41 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/auth_common.php';
+nm_auth_require_login();
+
 // notemod_sync.php
 header('Content-Type: application/json; charset=utf-8');
 
+
 // --------------------
-// 互換：PHP7系でも動くように polyfill
+// Safer write helper (keep response format/flow unchanged)
 // --------------------
-if (!function_exists('str_starts_with')) {
-    function str_starts_with(string $haystack, string $needle): bool
-    {
-        return $needle === '' || strncmp($haystack, $needle, strlen($needle)) === 0;
+function nm_sync_atomic_write_json(string $path, string $payload): bool
+{
+    $dir = dirname($path);
+    if (!is_dir($dir)) {
+        if (!@mkdir($dir, 0755, true)) return false;
     }
+
+    $tmp = $path . '.tmp-' . bin2hex(random_bytes(4));
+    $ok = @file_put_contents($tmp, $payload, LOCK_EX);
+    if ($ok === false) {
+        @unlink($tmp);
+        return false;
+    }
+
+    @chmod($tmp, 0644);
+
+    if (!@rename($tmp, $path)) {
+        @unlink($tmp);
+        return false;
+    }
+
+    if (function_exists('clearstatcache')) {
+        clearstatcache(true, $path);
+    }
+    return true;
 }
 
 // --------------------
@@ -104,14 +128,19 @@ HT;
 }
 
 // --------------------
-// パス設定
+// パス設定（DIR_USER ベース）
 // --------------------
-$baseDir   = __DIR__ . '/notemod-data';
-$dataFile  = $baseDir . '/data.json';
-$logFile   = $baseDir . '/_sync_debug.log';
+nm_auth_start_session();
 
-$configDir  = __DIR__ . '/config';
-$configPath = $configDir . '/config.php';
+$dirUser = nm_get_current_dir_user();
+$configPath = nm_config_path($dirUser);
+$configDir  = dirname($configPath);
+
+$dataFile = nm_data_json_path($dirUser);
+$baseDir  = dirname($dataFile);
+
+$logDir  = nm_logs_dir($dirUser);
+$logFile = rtrim($logDir, '/\\') . DIRECTORY_SEPARATOR . '_sync_debug.log';
 
 $apiDir = __DIR__ . '/api';
 
@@ -132,16 +161,28 @@ try {
 // --------------------
 if (!file_exists($configPath)) {
     http_response_code(500);
-    echo json_encode(['status' => 'error', 'message' => 'Missing config/config.php'], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['status' => 'error', 'message' => 'Missing config for current user', 'config_path' => $configPath], JSON_UNESCAPED_UNICODE);
     exit;
 }
 $cfg = require $configPath;
 if (!is_array($cfg)) $cfg = [];
 
+if ($dirUser === '') {
+    $dirUser = normalize_username((string)($cfg['DIR_USER'] ?? ''));
+    if ($dirUser !== '') {
+        $configPath = nm_config_path($dirUser);
+        $configDir  = dirname($configPath);
+        $dataFile   = nm_data_json_path($dirUser);
+        $baseDir    = dirname($dataFile);
+        $logDir     = nm_logs_dir($dirUser);
+        $logFile    = rtrim($logDir, '/\\') . DIRECTORY_SEPARATOR . '_sync_debug.log';
+    }
+}
+
 $SECRET = (string)($cfg['SECRET'] ?? '');
 if ($SECRET === '' || strlen($SECRET) < 16) {
     http_response_code(500);
-    echo json_encode(['status' => 'error', 'message' => 'SECRET is empty or too short in config/config.php'], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['status' => 'error', 'message' => 'SECRET is empty or too short in current user config', 'config_path' => $configPath], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -162,10 +203,22 @@ $INITIAL_SNAPSHOT = (string)($cfg['INITIAL_SNAPSHOT'] ?? json_encode([
 $DEBUG = (bool)($cfg['DEBUG'] ?? false);
 
 // --------------------
-// 保存先：notemod-data dir 作成（無ければ作る）
+// 保存先：logs / notemod-data dir 作成（無ければ作る）
 // --------------------
+if (!is_dir($logDir)) {
+    @mkdir($logDir, 0755, true);
+}
 if (!is_dir($baseDir)) {
     @mkdir($baseDir, 0755, true);
+}
+
+// --------------------
+// logs 保護：.htaccess が無ければ作成（deny）
+// --------------------
+try {
+    nm_ensure_htaccess_content($logDir, true, nm_default_deny_htaccess(), $DEBUG, $logFile);
+} catch (Throwable $e) {
+    if ($DEBUG) nm_log($logFile, 'logs_htaccess_exception', ['msg' => $e->getMessage()]);
 }
 
 // --------------------
@@ -212,6 +265,26 @@ if (!is_array($req)) {
     if (!empty($_POST) && is_array($_POST)) $req = $_POST;
     elseif (!empty($_GET) && is_array($_GET)) $req = $_GET;
     else $req = [];
+}
+
+if ($dirUser === '') {
+    foreach (['user', 'username'] as $key) {
+        if (isset($req[$key])) {
+            $tmpUser = normalize_username((string)$req[$key]);
+            if ($tmpUser !== '') {
+                $dirUser = $tmpUser;
+                break;
+            }
+        }
+    }
+    if ($dirUser !== '') {
+        $configPath = nm_config_path($dirUser);
+        $configDir  = dirname($configPath);
+        $dataFile   = nm_data_json_path($dirUser);
+        $baseDir    = dirname($dataFile);
+        $logDir     = nm_logs_dir($dirUser);
+        $logFile    = rtrim($logDir, '/\\') . DIRECTORY_SEPARATOR . '_sync_debug.log';
+    }
 }
 
 if ($DEBUG) {
@@ -264,7 +337,7 @@ if ($action === 'save') {
         exit;
     }
 
-    $ok = @file_put_contents($dataFile, $payload, LOCK_EX);
+    $ok = nm_sync_atomic_write_json($dataFile, $payload);
 
     if ($ok === false) {
         if ($DEBUG) nm_log($logFile, 'write_failed', ['err' => error_get_last()]);
@@ -273,7 +346,7 @@ if ($action === 'save') {
         exit;
     }
 
-    if ($DEBUG) nm_log($logFile, 'saved', ['bytes' => $ok]);
+    if ($DEBUG) nm_log($logFile, 'saved', ['bytes' => strlen($payload)]);
     echo json_encode(['status' => 'ok'], JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -293,7 +366,11 @@ if ($action === 'load') {
             exit;
         }
 
-        @file_put_contents($dataFile, $INITIAL_SNAPSHOT, LOCK_EX);
+        if (!nm_sync_atomic_write_json($dataFile, $INITIAL_SNAPSHOT)) {
+            http_response_code(500);
+            echo json_encode(['status' => 'error', 'message' => 'Failed to initialize data.json'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
         if ($DEBUG) nm_log($logFile, 'initialized', ['bytes' => strlen($INITIAL_SNAPSHOT)]);
     }
 

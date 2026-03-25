@@ -22,8 +22,11 @@ $theme = $ui['theme'];
 // --------------------
 // Paths
 // --------------------
-$configDir     = __DIR__ . '/config';
-$configApiPath = $configDir . '/config.api.php';
+$loginUser      = (string)nm_get_current_user();
+$currentDirUser = (string)nm_get_current_dir_user();
+$configDir      = dirname((string)nm_api_config_path($currentDirUser !== '' ? $currentDirUser : null));
+$configApiPath  = (string)nm_api_config_path($currentDirUser !== '' ? $currentDirUser : null);
+$configPath     = (string)nm_config_path($currentDirUser !== '' ? $currentDirUser : null);
 
 // --------------------
 // i18n (JP/EN)
@@ -32,6 +35,7 @@ $t = [
   'ja' => [
     'title' => 'バックアップ設定',
     'logged_as' => 'ログイン中:',
+    'storage_dir_user' => '保存ディレクトリ:',
     'back' => '戻る',
     'logout' => 'ログアウト',
     'lang_label' => '言語',
@@ -40,8 +44,8 @@ $t = [
     'light' => 'Light',
 
     'saved' => '保存しました',
-    'save_failed' => 'config/config.api.php の保存に失敗しました（権限を確認）',
-    'read_failed' => 'config/config.api.php の読み込みに失敗しました',
+    'save_failed' => '設定ファイルの保存に失敗しました（権限を確認）',
+    'read_failed' => '設定ファイルの読み込みに失敗しました',
     'deleted' => '削除しました',
     'delete_failed' => '削除に失敗したファイルがあります',
     'nothing_to_delete' => '削除対象のバックアップがありません',
@@ -76,6 +80,7 @@ $t = [
   'en' => [
     'title' => 'Backup settings',
     'logged_as' => 'Logged in as:',
+    'storage_dir_user' => 'Storage directory user:',
     'back' => 'Back',
     'logout' => 'Logout',
     'lang_label' => 'Language',
@@ -84,8 +89,8 @@ $t = [
     'light' => 'Light',
 
     'saved' => 'Saved',
-    'save_failed' => 'Failed to write config/config.api.php (permission?)',
-    'read_failed' => 'Failed to read config/config.api.php',
+    'save_failed' => 'Failed to write the config file (permission?)',
+    'read_failed' => 'Failed to read the config file',
     'deleted' => 'Deleted',
     'delete_failed' => 'Some files could not be deleted',
     'nothing_to_delete' => 'No backup files to delete',
@@ -156,52 +161,47 @@ function nm_update_config_api_values_preserve(string $configApiPath, array $upda
         if (!@mkdir($dir, 0755, true)) return false;
     }
 
-    if (!file_exists($configApiPath)) {
-        return false;
+    $cfg = [];
+    if (file_exists($configApiPath)) {
+        $cfg = nm_read_php_config_array($configApiPath);
+        if (!is_array($cfg)) {
+            return false;
+        }
     }
-
-    $raw = (string)@file_get_contents($configApiPath);
-    if ($raw === '') return false;
-
-    $replaceValueAnyType = function(string $content, string $key, $newVal): array {
-        if ($newVal === null) return [$content, false];
-
-        $export = var_export($newVal, true);
-
-        // 既存行を上書き（値の型は問わない）
-        $pattern = '/([\'"]' . preg_quote($key, '/') . '[\'"]\s*=>\s*)([^,]*)(\s*,)/u';
-
-        if (preg_match($pattern, $content)) {
-            $repl = '$1' . $export . '$3';
-            $content2 = preg_replace($pattern, $repl, $content, 1);
-            return [$content2 ?? $content, true];
-        }
-
-        // 無ければ末尾に追記
-        $pos = strrpos($content, '];');
-        if ($pos === false) {
-            $content .= "\n// Appended by bak_settings.php\n";
-            $content .= "return [\n    '" . $key . "' => " . $export . ",\n];\n";
-            return [$content, true];
-        }
-
-        $insert = "    '" . $key . "' => " . $export . ",\n";
-        $content2 = substr($content, 0, $pos) . $insert . substr($content, $pos);
-        return [$content2, true];
-    };
 
     $changed = false;
     foreach ($updates as $k => $v) {
-        [$raw, $c] = $replaceValueAnyType($raw, (string)$k, $v);
-        $changed = $changed || $c;
+        $k = (string)$k;
+        if ($k === '' || $v === null) continue;
+
+        if (!array_key_exists($k, $cfg) || $cfg[$k] !== $v) {
+            $cfg[$k] = $v;
+            $changed = true;
+        }
     }
 
-    if (!$changed) return true;
+    if (!$changed && file_exists($configApiPath)) {
+        return true;
+    }
 
-    $ok = @file_put_contents($configApiPath, $raw, LOCK_EX);
+    $php = "<?php
+return " . var_export($cfg, true) . ";
+";
+    $tmp = $configApiPath . '.tmp';
+
+    $ok = @file_put_contents($tmp, $php, LOCK_EX);
     if ($ok === false) return false;
 
+    @chmod($tmp, 0644);
+    if (!@rename($tmp, $configApiPath)) {
+        @unlink($tmp);
+        return false;
+    }
+
     @chmod($configApiPath, 0644);
+    if (function_exists('nm_invalidate_php_cache')) {
+        nm_invalidate_php_cache($configApiPath);
+    }
     return true;
 }
 
@@ -357,8 +357,8 @@ $backupPath = $dataJsonPath . $suffix . $ts;
 // --------------------
 // Auth / user
 // --------------------
-$cfgAuth = nm_auth_load();
-$user = (string)($cfgAuth['USERNAME'] ?? '');
+$user = $loginUser;
+$dirUser = $currentDirUser;
 
 // --------------------
 // UI links (toggles + back/logout)
@@ -375,7 +375,7 @@ $backUrl = rtrim($base, '/') . '/';
 // --------------------
 $tzName = 'Pacific/Auckland';
 $__nm_cfg_ret = null;
-$__nm_cfg_path = __DIR__ . '/config/config.php';
+$__nm_cfg_path = $configPath;
 
 // Prefer already-defined TIMEZONE (e.g., loaded by auth_common.php)
 // If not defined, try to load config/config.php safely.
@@ -416,7 +416,7 @@ try {
 }
 
 // Defaults
-$dataJson = (string)($cfgApi['DATA_JSON'] ?? (dirname(__DIR__) . '/notemod-data/data.json'));
+$dataJson = (string)($cfgApi['DATA_JSON'] ?? nm_data_json_path($currentDirUser !== '' ? $currentDirUser : null));
 $suffix   = (string)($cfgApi['CLEANUP_BACKUP_SUFFIX'] ?? '.bak-');
 
 $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? true);
@@ -602,7 +602,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
       padding:18px;
     }
 
-    .wrap{ width:min(720px, 100%); display:grid; gap:14px; }
+    .wrap{ width:min(990px, 100%); display:grid; gap:14px; }
     .card{
       background:var(--card);
       border:1px solid var(--line);
@@ -742,27 +742,8 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
       .wrap{ width:min(720px, 100%); }
     }
 
-    .action-row{
-      display:flex;
-      gap:10px;
-      justify-content:flex-end;
-      flex-wrap:wrap;
-      margin-top: -4px;
-    }
-
-    .action-row.bottom-left{
-      justify-content:flex-start;
-      margin-top: 14px;
-    }
-    .action-row a{
-      font-size:13px;
-      padding:8px 10px;
-      border-radius:12px;
-      background: color-mix(in srgb, var(--card2) 70%, transparent);
-      border:1px solid color-mix(in srgb, var(--line) 120%, transparent);
-      text-decoration:none;
-    }
-    .action-row a:hover{ text-decoration:none; filter: brightness(1.02); }
+    .row-links{ display:flex; gap:12px; flex-wrap:wrap; padding: 20px 0px;}
+    .row-links a{ font-size:13px; color:var(--accent); }
 
     .check{
       display:flex;
@@ -839,7 +820,11 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
       <div class="head">
         <div class="left">
           <h1 class="title"><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></h1>
-          <div class="sub"><?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b></div>
+          <div class="sub">
+            <?=htmlspecialchars($t[$lang]['logged_as'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?></b>
+            &nbsp;|&nbsp;
+            <?=htmlspecialchars($t[$lang]['storage_dir_user'], ENT_QUOTES, 'UTF-8')?> <b><?=htmlspecialchars($dirUser, ENT_QUOTES, 'UTF-8')?></b>
+          </div>
         </div>
 
         <div class="right">
@@ -893,13 +878,6 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
               </div>
             </label>
 
-            <form method="post" class="inline-form" style="margin: 8px 0 14px 0;">
-              <input type="hidden" name="mode" value="backup_now">
-              <button type="submit" class="btn-primary" style="width:100%; padding:10px 12px; font-size:13px; border-radius:12px;">
-                <?=htmlspecialchars($t[$lang]['backup_now'], ENT_QUOTES, 'UTF-8')?>
-              </button>
-            </form>
-
             <label><?=htmlspecialchars($t[$lang]['keep_label'], ENT_QUOTES, 'UTF-8')?></label>
             <input type="number" min="0" step="1" name="CLEANUP_BACKUP_KEEP"
                    value="<?=htmlspecialchars((string)$prefKeep, ENT_QUOTES, 'UTF-8')?>">
@@ -908,6 +886,13 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
             <div class="notice" style="margin-top:10px;"><?=htmlspecialchars($t[$lang]['note_suffix'], ENT_QUOTES, 'UTF-8')?></div>
 
             <button class="btn" type="submit"><?=htmlspecialchars($t[$lang]['btn_save'], ENT_QUOTES, 'UTF-8')?></button>
+          </form>
+
+          <form method="post" class="inline-form" style="margin: 8px 0 14px 0;">
+            <input type="hidden" name="mode" value="backup_now">
+            <button type="submit" class="btn-primary" style="width:100%; padding:10px 12px; font-size:13px; border-radius:12px;">
+              <?=htmlspecialchars($t[$lang]['backup_now'], ENT_QUOTES, 'UTF-8')?>
+            </button>
           </form>
 
           <form method="post" style="margin-top:10px;">
@@ -953,9 +938,9 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
               </select>
             </div>
 
-            <button class="btn" type="submit"
+            <button class="btn-primary" type="submit"
               onclick="return confirm('<?=htmlspecialchars($t[$lang]['confirm_restore'], ENT_QUOTES, 'UTF-8')?>');"
-              style="margin-top:12px;">
+              style="width:100%; padding:10px 12px; font-size:13px; border-radius:12px; margin-top:12px;">
               <?=htmlspecialchars($t[$lang]['btn_restore'], ENT_QUOTES, 'UTF-8')?>
             </button>
           </form>
@@ -985,8 +970,8 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
             })();
           </script>
 
-          <div class="action-row bottom-left">
-            <a class="btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
+          <div class="row-links">
+          <a class="btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
             <a class="btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
           </div>
 
