@@ -8,6 +8,7 @@ if (defined('LOGGER_ALREADY_RAN')) {
 define('LOGGER_ALREADY_RAN', true);
 
 require_once __DIR__ . '/auth_common.php';
+require_once __DIR__ . '/data_crypto.php';
 
 $currentDirUser = null;
 if (function_exists('nm_get_current_dir_user')) {
@@ -29,12 +30,16 @@ $configFile = function_exists('nm_config_path')
     : (__DIR__ . '/config/' . $currentDirUser . '/config.php');
 if (file_exists($configFile)) {
     $tmp = require $configFile;
-    if (is_array($tmp)) $cfg = $tmp;
+    if (is_array($tmp)) {
+        $cfg = $tmp;
+    }
 }
 
 // TIMEZONE（無ければ既定）
 $timezone = (string)($cfg['TIMEZONE'] ?? $cfg['timezone'] ?? (defined('APP_TIMEZONE') ? APP_TIMEZONE : 'Pacific/Auckland'));
-if ($timezone === '') $timezone = 'Asia/Tokyo';
+if ($timezone === '') {
+    $timezone = 'Asia/Tokyo';
+}
 @date_default_timezone_set($timezone);
 
 // ★logger のON/OFF（個別）
@@ -74,7 +79,7 @@ if (!function_exists('nm_ensure_log_dir_and_htaccess')) {
     {
         $dbg = function(string $msg, array $ctx = []) use ($debug, $debugFile) {
             if (!$debug) return;
-            $line = '[' . date('c') . '] ' . $msg . ' ' . json_encode($ctx, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES) . "\n";
+            $line = '[' . date('c') . '] ' . $msg . ' ' . json_encode($ctx, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
             if ($debugFile !== '') {
                 @file_put_contents($debugFile, $line, FILE_APPEND | LOCK_EX);
             } else {
@@ -97,14 +102,11 @@ if (!function_exists('nm_ensure_log_dir_and_htaccess')) {
         if (!is_dir($dir)) {
             $ok = mkdir($dir, 0755, true);
             if (!$ok) {
-                $err = error_get_last();
-                $dbg('mkdir_failed', ['dir' => $dir, 'err' => $err]);
+                $dbg('mkdir_failed', ['dir' => $dir, 'err' => error_get_last()]);
 
                 $ok2 = @mkdir($dir, 0775, true);
                 if (!$ok2) {
-                    $err2 = error_get_last();
-                    $dbg('mkdir_failed_0775', ['dir' => $dir, 'err' => $err2]);
-
+                    $dbg('mkdir_failed_0775', ['dir' => $dir, 'err' => error_get_last()]);
                     error_log('logger.php: failed to create log directory: ' . $dir);
                     return false;
                 }
@@ -182,7 +184,7 @@ if (!function_exists('nm_keep_latest_n_lines_in_notemod_log_content')) {
         $s = str_replace("\r", "\n", $s);
         $parts = preg_split("/<br>\n|<br\s*\/?>\n?/i", $s);
         if (!is_array($parts)) return $html;
-        while (!empty($parts) && trim(end($parts)) === '') {
+        while (!empty($parts) && trim((string) end($parts)) === '') {
             array_pop($parts);
         }
         if (count($parts) <= $maxLines) return $html;
@@ -335,16 +337,16 @@ if (!function_exists('nm_ip_first_seen_notify')) {
 
         $host = (string)($ctx['host'] ?? '');
         $lines = [];
-        $lines[] = "A new IP accessed your Notemod.";
-        $lines[] = "";
-        $lines[] = "Time   : " . (string)($ctx['datetime'] ?? date('c'));
-        $lines[] = "IP     : " . $ip;
-        $lines[] = "Host   : " . $host;
-        $lines[] = "Method : " . (string)($ctx['method'] ?? '');
-        $lines[] = "URI    : " . (string)($ctx['uri'] ?? '');
-        $lines[] = "UA     : " . (string)($ctx['ua_raw'] ?? '');
-        $lines[] = "";
-        $lines[] = "This notification is sent only once per IP (stored in _known_ips.json).";
+        $lines[] = 'A new IP accessed your Notemod.';
+        $lines[] = '';
+        $lines[] = 'Time   : ' . (string)($ctx['datetime'] ?? date('c'));
+        $lines[] = 'IP     : ' . $ip;
+        $lines[] = 'Host   : ' . $host;
+        $lines[] = 'Method : ' . (string)($ctx['method'] ?? '');
+        $lines[] = 'URI    : ' . (string)($ctx['uri'] ?? '');
+        $lines[] = 'UA     : ' . (string)($ctx['ua_raw'] ?? '');
+        $lines[] = '';
+        $lines[] = 'This notification is sent only once per IP (stored in _known_ips.json).';
         $body = implode("\n", $lines);
 
         $headers = ['Content-Type: text/plain; charset=UTF-8'];
@@ -353,54 +355,37 @@ if (!function_exists('nm_ip_first_seen_notify')) {
     }
 }
 
-
 if (!function_exists('nm_logger_locked_load_notemod')) {
     function nm_logger_locked_load_notemod(string $path)
     {
-        $fp = @fopen($path, 'c+');
-        if ($fp === false) {
-            return [null, null, 'open_failed'];
+        $lockPath = $path . '.lock';
+        $lockFp = @fopen($lockPath, 'c');
+        if ($lockFp === false) {
+            return [null, null, 'lock_open_failed'];
         }
-        if (!@flock($fp, LOCK_EX)) {
-            @fclose($fp);
+        if (!@flock($lockFp, LOCK_EX)) {
+            @fclose($lockFp);
             return [null, null, 'lock_failed'];
         }
 
-        clearstatcache(true, $path);
-        $raw = stream_get_contents($fp);
-        if ($raw === false) {
-            @flock($fp, LOCK_UN);
-            @fclose($fp);
-            return [null, null, 'read_failed'];
-        }
-        if ($raw === '') {
-            $raw = '{}';
+        list($ok, $data, $reason) = nm_try_load_data_file($path);
+        if (!$ok || !is_array($data)) {
+            @flock($lockFp, LOCK_UN);
+            @fclose($lockFp);
+            return [null, null, $reason ?: 'load_failed'];
         }
 
-        $data = json_decode($raw, true);
-        if (!is_array($data)) {
-            @flock($fp, LOCK_UN);
-            @fclose($fp);
-            return [null, null, 'json_invalid'];
-        }
-
-        return [$fp, $data, null];
+        return [$lockFp, $data, null];
     }
 }
 
 if (!function_exists('nm_logger_locked_save_notemod')) {
-    function nm_logger_locked_save_notemod($fp, array $data): bool
+    function nm_logger_locked_save_notemod($lockFp, string $path, array $data): bool
     {
-        $json = json_encode($data, JSON_UNESCAPED_UNICODE);
-        if ($json === false) return false;
-
-        if (@ftruncate($fp, 0) === false) return false;
-        if (@rewind($fp) === false) return false;
-        if (@fwrite($fp, $json) === false) return false;
-        @fflush($fp);
-        @flock($fp, LOCK_UN);
-        @fclose($fp);
-        return true;
+        $ok = nm_save_data_file($path, $data);
+        @flock($lockFp, LOCK_UN);
+        @fclose($lockFp);
+        return $ok;
     }
 }
 
@@ -447,7 +432,7 @@ if ($logFileEnabled) {
             $logFileEnabled = false;
         } else {
             $logFile = rtrim($logsDir, '/\\') . '/access-' . date('Y-m') . '.log';
-            $line = sprintf("[%s] %s %s\n", $datetime, $ip, $uri);
+            $line = sprintf('[%s] %s %s\n', $datetime, $ip, $uri);
             $result = @file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
             if ($result === false) {
                 error_log('logger.php: failed to write log file: ' . $logFile);
@@ -463,66 +448,73 @@ if ($logFileEnabled) {
 if ($logNotemodEnabled) {
     nm_ensure_log_dir_and_htaccess($dataDir);
 
-    if (file_exists($notemodFile) && is_readable($notemodFile) && is_writable($notemodFile)) {
-        $data = json_decode((string)file_get_contents($notemodFile), true) ?: [];
-        if (!isset($data['categories'])) $data['categories'] = '[]';
-        if (!isset($data['notes'])) $data['notes'] = '[]';
+    if (is_dir($dataDir)) {
+        list($lockFp, $data, $loadError) = nm_logger_locked_load_notemod($notemodFile);
+        if ($lockFp !== null && is_array($data)) {
+            if (!isset($data['categories'])) $data['categories'] = '[]';
+            if (!isset($data['notes'])) $data['notes'] = '[]';
 
-        $categoriesVal = $data['categories'];
-        $notesVal = $data['notes'];
+            $categoriesVal = $data['categories'];
+            $notesVal = $data['notes'];
 
-        $categoriesArr = is_string($categoriesVal) ? (json_decode($categoriesVal, true) ?: []) : (is_array($categoriesVal) ? $categoriesVal : []);
-        $notesArr = is_string($notesVal) ? (json_decode($notesVal, true) ?: []) : (is_array($notesVal) ? $notesVal : []);
+            $categoriesArr = is_string($categoriesVal) ? (json_decode($categoriesVal, true) ?: []) : (is_array($categoriesVal) ? $categoriesVal : []);
+            $notesArr = is_string($notesVal) ? (json_decode($notesVal, true) ?: []) : (is_array($notesVal) ? $notesVal : []);
 
-        $logsCategoryId = null;
-        $logsColor = 'b1653d';
-        foreach ($categoriesArr as $cat) {
-            if (($cat['name'] ?? '') === 'Logs') {
-                $logsCategoryId = $cat['id'] ?? null;
-                break;
+            $logsCategoryId = null;
+            $logsColor = 'b1653d';
+            foreach ($categoriesArr as $cat) {
+                if (($cat['name'] ?? '') === 'Logs') {
+                    $logsCategoryId = $cat['id'] ?? null;
+                    break;
+                }
             }
-        }
 
-        if ($logsCategoryId === null) {
-            $logsCategoryId = (int) round(microtime(true) * 1000);
-            $categoriesArr[] = ['id' => $logsCategoryId, 'name' => 'Logs', 'color' => $logsColor];
-        }
-
-        $noteTitle = 'access-' . date('Y-m');
-        $logsNoteIndex = null;
-        foreach ($notesArr as $i => $note) {
-            if (($note['title'] ?? '') === $noteTitle && in_array($logsCategoryId, $note['categories'] ?? [], true)) {
-                $logsNoteIndex = $i;
-                break;
+            if ($logsCategoryId === null) {
+                $logsCategoryId = (int) round(microtime(true) * 1000);
+                $categoriesArr[] = ['id' => $logsCategoryId, 'name' => 'Logs', 'color' => $logsColor];
             }
+
+            $noteTitle = 'access-' . date('Y-m');
+            $logsNoteIndex = null;
+            foreach ($notesArr as $i => $note) {
+                if (($note['title'] ?? '') === $noteTitle && in_array($logsCategoryId, $note['categories'] ?? [], true)) {
+                    $logsNoteIndex = $i;
+                    break;
+                }
+            }
+
+            if ($logsNoteIndex === null) {
+                $nowZ = gmdate('Y-m-d\\TH:i:s\\Z');
+                $notesArr[] = [
+                    'id' => (string) round(microtime(true) * 1000),
+                    'title' => $noteTitle,
+                    'color' => $logsColor,
+                    'task_content' => null,
+                    'content' => '',
+                    'categories' => [$logsCategoryId],
+                    'createdAt' => $nowZ,
+                    'updatedAt' => $nowZ,
+                ];
+                $logsNoteIndex = array_key_last($notesArr);
+            }
+
+            $uaIcon = uaEmoji($uaShort);
+            $humanLine = sprintf('[%s] %s %s %s %s', $datetime, $uaIcon, $uaShort, $ip, $uri);
+            $existing = (string)($notesArr[$logsNoteIndex]['content'] ?? '');
+            $newContent = htmlspecialchars($humanLine, ENT_QUOTES, 'UTF-8') . "<br>\n" . $existing;
+            $newContent = nm_keep_latest_n_lines_in_notemod_log_content($newContent, $maxNotemodLines);
+
+            $notesArr[$logsNoteIndex]['content'] = $newContent;
+            $notesArr[$logsNoteIndex]['updatedAt'] = gmdate('Y-m-d\\TH:i:s\\Z');
+
+            $data['categories'] = json_encode($categoriesArr, JSON_UNESCAPED_UNICODE);
+            $data['notes'] = json_encode($notesArr, JSON_UNESCAPED_UNICODE);
+
+            if (!nm_logger_locked_save_notemod($lockFp, $notemodFile, $data)) {
+                error_log('logger.php: failed to save notemod log data: ' . $notemodFile);
+            }
+        } elseif ($loadError !== 'missing') {
+            error_log('logger.php: failed to load notemod log data: ' . $notemodFile . ' (' . $loadError . ')');
         }
-
-        if ($logsNoteIndex === null) {
-            $nowZ = gmdate('Y-m-d\\TH:i:s\\Z');
-            $notesArr[] = [
-                'id' => (string) round(microtime(true) * 1000),
-                'title' => $noteTitle,
-                'color' => $logsColor,
-                'task_content' => null,
-                'content' => '',
-                'categories' => [$logsCategoryId],
-                'createdAt' => $nowZ,
-                'updatedAt' => $nowZ,
-            ];
-            $logsNoteIndex = array_key_last($notesArr);
-        }
-
-        $uaIcon = uaEmoji($uaShort);
-        $humanLine = sprintf('[%s] %s %s %s %s', $datetime, $uaIcon, $uaShort, $ip, $uri);
-        $existing = (string)($notesArr[$logsNoteIndex]['content'] ?? '');
-        $newContent = htmlspecialchars($humanLine, ENT_QUOTES, 'UTF-8') . "<br>\n" . $existing;
-        $newContent = nm_keep_latest_n_lines_in_notemod_log_content($newContent, $maxNotemodLines);
-
-        $notesArr[$logsNoteIndex]['content'] = $newContent;
-        $notesArr[$logsNoteIndex]['updatedAt'] = gmdate('Y-m-d\\TH:i:s\\Z');
-
-        $data['categories'] = json_encode($categoriesArr, JSON_UNESCAPED_UNICODE);
-        $data['notes'] = json_encode($notesArr, JSON_UNESCAPED_UNICODE);
-        @file_put_contents($notemodFile, json_encode($data, JSON_UNESCAPED_UNICODE), LOCK_EX);
     }
 }

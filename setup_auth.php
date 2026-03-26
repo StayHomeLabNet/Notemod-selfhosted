@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
+require_once __DIR__ . '/data_crypto.php';
 
 /*
  * setup_auth.php
@@ -13,6 +14,9 @@ require_once __DIR__ . '/auth_common.php';
  * - 設定は config/<DIR_USER>/ に保存
  * - データは notemod-data/<DIR_USER>/ に保存
  * - ログは logs/<DIR_USER>/ に保存
+ * - DATA_ENCRYPTION_KEY は config/<DIR_USER>/config.php に保存し、UIには実値を表示しない
+ * - DATA_ENCRYPTION_ENABLED は config/<DIR_USER>/config.php で管理する
+ * - 暗号化切替時は、切替前バックアップを1つ作成してから data.json を変換する
  */
 
 header('Content-Type: text/html; charset=utf-8');
@@ -41,7 +45,7 @@ $t = [
   'ja' => [
     'title' => '初期セットアップ / 認証設定',
     'desc'  => 'Notemod-selfhosted のログイン用ユーザー/パスワードを作成します。',
-    'desc2' => 'さらに、API用トークンと SECRET をセットできます。',
+    'desc2' => 'さらに、API用トークンと SECRET、暗号化設定を管理できます。',
     'logged_as' => 'ログイン中:',
     'dir_user' => '保存ディレクトリ:',
 
@@ -63,7 +67,7 @@ $t = [
     'go_log_settings' => 'ログ設定へ',
     'go_bak_settings' => 'バックアップ設定へ',
     'go_clipboard_sync' => 'クリップボード同期へ',
-    
+
     'lang_label' => '言語',
     'theme_label' => 'テーマ',
     'dark' => 'Dark',
@@ -74,6 +78,21 @@ $t = [
     'secret_status_ok' => 'SECRET は設定済みです',
     'secret_status_added' => 'SECRET を config/<USER_NAME>/config.php に保存しました',
     'secret_write_failed' => 'config/<USER_NAME>/config.php の更新に失敗しました（権限を確認）',
+
+    'enc_key_section' => '暗号化キー（config/<USER_NAME>/config.php）',
+    'enc_key_note' => "DATA_ENCRYPTION_KEY が無い場合は自動で設定します\nUIには実値を表示しません",
+    'enc_key_status_ok' => 'DATA_ENCRYPTION_KEY は設定済みです',
+    'enc_key_status_added' => 'DATA_ENCRYPTION_KEY を config/<USER_NAME>/config.php に保存しました',
+    'enc_key_write_failed' => 'config/<USER_NAME>/config.php の DATA_ENCRYPTION_KEY 更新に失敗しました（権限を確認）',
+
+    'enc_toggle_label' => 'data.json を暗号化する',
+    'enc_toggle_help' => "有効にすると data.json は AES-256-CBC + HMAC で保存されます\n切替直前に現在の data.json のバックアップを1つ作成します\nエクスポートは常に平文JSONです",
+    'enc_toggle_locked' => '※ 暗号化設定の変更はログイン後のみ可能です（初回セットアップ時を除く）',
+    'enc_toggle_saved' => '暗号化設定を更新しました',
+    'enc_toggle_unchanged' => '暗号化設定は変更されていません',
+    'enc_backup_failed' => '暗号化切替直前バックアップの作成に失敗しました',
+    'enc_convert_failed' => 'data.json の形式変換に失敗しました。設定は変更していません',
+    'enc_config_failed' => 'config/<USER_NAME>/config.php の DATA_ENCRYPTION_ENABLED 更新に失敗しました',
 
     'api_section' => 'API トークン（config/<USER_NAME>/config.api.php）',
     'expected_token' => 'EXPECTED_TOKEN（通常アクセス用）',
@@ -88,7 +107,7 @@ $t = [
   'en' => [
     'title' => 'Initial Setup / Authentication settings',
     'desc'  => 'Create username/password for Notemod-selfhosted login.',
-    'desc2' => 'You can also set API tokens and SECRET.',
+    'desc2' => 'You can also manage API tokens, SECRET, and encryption settings.',
     'logged_as' => 'Logged in as:',
     'dir_user' => 'Storage directory:',
 
@@ -121,6 +140,21 @@ $t = [
     'secret_status_ok' => 'SECRET is already set',
     'secret_status_added' => 'SECRET was saved to config/<USER_NAME>/config.php',
     'secret_write_failed' => 'Failed to update config/<USER_NAME>/config.php (permission?)',
+
+    'enc_key_section' => 'Encryption key (config/<USER_NAME>/config.php)',
+    'enc_key_note' => "If DATA_ENCRYPTION_KEY is missing, it will be generated automatically.\nThe actual value is never shown in the UI.",
+    'enc_key_status_ok' => 'DATA_ENCRYPTION_KEY is already set',
+    'enc_key_status_added' => 'DATA_ENCRYPTION_KEY was saved to config/<USER_NAME>/config.php',
+    'enc_key_write_failed' => 'Failed to update DATA_ENCRYPTION_KEY in config/<USER_NAME>/config.php (permission?)',
+
+    'enc_toggle_label' => 'Encrypt data.json',
+    'enc_toggle_help' => "When enabled, data.json is stored with AES-256-CBC + HMAC.\nA backup of the current data.json is created immediately before switching.\nExport is always plain JSON.",
+    'enc_toggle_locked' => 'Changing encryption settings is available only after login (except initial setup).',
+    'enc_toggle_saved' => 'Encryption setting was updated',
+    'enc_toggle_unchanged' => 'Encryption setting was unchanged',
+    'enc_backup_failed' => 'Failed to create the backup immediately before switching encryption',
+    'enc_convert_failed' => 'Failed to convert data.json. The setting was not changed',
+    'enc_config_failed' => 'Failed to update DATA_ENCRYPTION_ENABLED in config/<USER_NAME>/config.php',
 
     'api_section' => 'API tokens (config/<USER_NAME>/config.api.php)',
     'expected_token' => 'EXPECTED_TOKEN',
@@ -200,6 +234,126 @@ function user_exists(string $dirUser): bool {
     if ($dirUser === '') return false;
     return file_exists(nm_auth_config_path($dirUser));
 }
+function nm_read_file_text(string $path): string {
+    $raw = @file_get_contents($path);
+    return is_string($raw) ? $raw : '';
+}
+function nm_write_php_source(string $path, string $phpSource): bool {
+    $ok = @file_put_contents($path, $phpSource, LOCK_EX);
+    if ($ok === false) return false;
+    @chmod($path, 0644);
+    nm_invalidate_php_cache($path);
+    return true;
+}
+function nm_save_php_config_array(string $path, array $cfg): bool {
+    $phpSource = "<?php\n";
+    $phpSource .= "// config/<USER_NAME>/config.php\n";
+    $phpSource .= "// Automatically generated / updated by setup_auth.php\n\n";
+    $phpSource .= 'return ' . var_export($cfg, true) . ";\n";
+    return nm_write_php_source($path, $phpSource);
+}
+
+function nm_normalize_ip_alert_ignore_ips($raw): array {
+    $items = [];
+
+    if (is_array($raw)) {
+        foreach ($raw as $v) {
+            if (is_scalar($v)) {
+                $items[] = (string)$v;
+            }
+        }
+    } else {
+        $items = preg_split('/[\r\n,]+/', (string)$raw) ?: [];
+    }
+
+    $items = array_map('trim', $items);
+    $items = array_values(array_filter($items, function ($v) {
+        return $v !== '';
+    }));
+
+    return array_values(array_unique($items));
+}
+function nm_update_data_encryption_enabled_define(string $configPath, bool $enabled): bool {
+    $cfg = nm_read_php_config_array($configPath);
+    if (!$cfg) {
+        $cfg = [];
+    }
+    $cfg['DATA_ENCRYPTION_ENABLED'] = $enabled;
+    return nm_save_php_config_array($configPath, $cfg);
+}
+function nm_ensure_data_encryption_defines(string $configPath, bool &$didAddKey, bool &$didChangeEnabled): bool {
+    $didAddKey = false;
+    $didChangeEnabled = false;
+
+    $cfg = nm_read_php_config_array($configPath);
+    if (!is_array($cfg)) {
+        $cfg = [];
+    }
+
+    if (!array_key_exists('DATA_ENCRYPTION_KEY', $cfg) || trim((string)$cfg['DATA_ENCRYPTION_KEY']) === '') {
+        $cfg['DATA_ENCRYPTION_KEY'] = nm_generate_encryption_key(32);
+        $didAddKey = true;
+    }
+
+    if (!array_key_exists('DATA_ENCRYPTION_ENABLED', $cfg)) {
+        $cfg['DATA_ENCRYPTION_ENABLED'] = false;
+        $didChangeEnabled = true;
+    }
+
+    if (!$didAddKey && !$didChangeEnabled) {
+        return true;
+    }
+
+    return nm_save_php_config_array($configPath, $cfg);
+}
+function nm_read_data_encryption_enabled_from_config(string $configPath): bool {
+    $cfg = nm_read_php_config_array($configPath);
+    return !empty($cfg['DATA_ENCRYPTION_ENABLED']);
+}
+function nm_has_data_encryption_key_in_config(string $configPath): bool {
+    $cfg = nm_read_php_config_array($configPath);
+    return isset($cfg['DATA_ENCRYPTION_KEY']) && trim((string)$cfg['DATA_ENCRYPTION_KEY']) !== '';
+}
+function nm_backup_filename_for_current_mode(string $dataDir, bool $isEncrypted): string {
+    $stamp = date('Ymd-His');
+    $base = $isEncrypted ? 'data.enc.json.bak-' : 'data.json.bak-';
+    return rtrim($dataDir, '/\\') . '/' . $base . $stamp;
+}
+function nm_create_current_state_backup(string $dataFilePath, string $backupPath, bool $currentEncrypted): bool {
+    $dir = dirname($backupPath);
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+        return false;
+    }
+
+    if (file_exists($dataFilePath)) {
+        $raw = @file_get_contents($dataFilePath);
+        if ($raw === false) {
+            return false;
+        }
+        $ok = @file_put_contents($backupPath, $raw, LOCK_EX);
+        if ($ok === false) {
+            return false;
+        }
+        @chmod($backupPath, 0644);
+        return true;
+    }
+
+    $data = [];
+    if (function_exists('nm_save_data_file_mode')) {
+        return nm_save_data_file_mode($backupPath, $data, $currentEncrypted);
+    }
+
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    if ($json === false) {
+        return false;
+    }
+    $ok = @file_put_contents($backupPath, $json, LOCK_EX);
+    if ($ok === false) {
+        return false;
+    }
+    @chmod($backupPath, 0644);
+    return true;
+}
 
 /**
  * config/<DIR_USER>/config.php に SECRET を設定
@@ -212,59 +366,49 @@ function nm_ensure_secret_in_config(string $configPath, string $dirUser, bool &$
         return false;
     }
 
-    if (!file_exists($configPath)) {
-        $secret = nm_random_secret(32);
-        $content =
-            "<?php\n"
-          . "// config/<USER_NAME>/config.php\n"
-          . "// Automatically generated by setup_auth.php\n"
-          . "return [\n"
-          . "    'TIMEZONE' => 'Asia/Tokyo',\n\n"
-          . "    'DEBUG' => false,\n\n"
-          . "    'LOGGER_FILE_ENABLED' => true,\n"
-          . "    'LOGGER_NOTEMOD_ENABLED' => false,\n\n"
-          . "    'IP_ALERT_ENABLED' => false,\n"
-          . "    'IP_ALERT_TO'      => 'YOUR_EMAIL',\n"
-          . "    'IP_ALERT_FROM'    => 'no-reply@notemod',\n"
-          . "    'IP_ALERT_SUBJECT' => 'Notemod: First-time IP access',\n"
-          . "    'IP_ALERT_IGNORE_BOTS' => true,\n"
-          . "    'IP_ALERT_IGNORE_IPS'  => [''],\n"
-          . "    'IP_ALERT_STORE'   => dirname(__DIR__, 2) . '/notemod-data/' . " . var_export($dirUser, true) . " . '/_known_ips.json',\n\n"
-          . "    'LOGGER_FILE_MAX_LINES' => 500,\n"
-          . "    'LOGGER_NOTEMOD_MAX_LINES' => 50,\n\n"
-          . "    'SECRET' => " . var_export($secret, true) . ",\n"
-          . "];\n";
-        $ok = @file_put_contents($configPath, $content, LOCK_EX);
-        if ($ok === false) return false;
-        @chmod($configPath, 0644);
-        $didAdd = true;
-        nm_invalidate_php_cache($configPath);
-        return true;
+    $cfg = [];
+    if (file_exists($configPath)) {
+        $cfg = nm_read_php_config_array($configPath);
+        if (!is_array($cfg)) {
+            $cfg = [];
+        }
+    } else {
+        $cfg = [
+            'TIMEZONE' => 'Asia/Tokyo',
+            'DEBUG' => false,
+            'LOGGER_FILE_ENABLED' => true,
+            'LOGGER_NOTEMOD_ENABLED' => false,
+            'DATA_ENCRYPTION_ENABLED' => false,
+            'DATA_ENCRYPTION_KEY' => nm_generate_encryption_key(32),
+            'IP_ALERT_ENABLED' => false,
+            'IP_ALERT_TO' => 'YOUR_EMAIL',
+            'IP_ALERT_FROM' => 'no-reply@notemod',
+            'IP_ALERT_SUBJECT' => 'Notemod: First-time IP access',
+            'IP_ALERT_IGNORE_BOTS' => true,
+            'IP_ALERT_IGNORE_IPS' => array(),
+            'IP_ALERT_STORE' => dirname(__DIR__, 2) . '/notemod-data/' . $dirUser . '/_known_ips.json',
+            'LOGGER_FILE_MAX_LINES' => 500,
+            'LOGGER_NOTEMOD_MAX_LINES' => 50,
+        ];
     }
 
-    $cfg = nm_read_php_config_array($configPath);
+    if (array_key_exists('IP_ALERT_IGNORE_IPS', $cfg)) {
+        $cfg['IP_ALERT_IGNORE_IPS'] = nm_normalize_ip_alert_ignore_ips($cfg['IP_ALERT_IGNORE_IPS']);
+    } else {
+        $cfg['IP_ALERT_IGNORE_IPS'] = array();
+    }
+
     if (isset($cfg['SECRET']) && is_string($cfg['SECRET']) && trim($cfg['SECRET']) !== '') {
         return true;
     }
 
-    $raw = (string)@file_get_contents($configPath);
-    if ($raw === '') return false;
+    $cfg['SECRET'] = nm_random_secret(32);
 
-    $secret = nm_random_secret(32);
-    $pos = strrpos($raw, '];');
-    if ($pos === false) {
-        $raw .= "\n\n// Appended by setup_auth.php\n";
-        $raw .= "return [\n    'SECRET' => " . var_export($secret, true) . ",\n];\n";
-    } else {
-        $insert = "    // Appended by setup_auth.php\n    'SECRET' => " . var_export($secret, true) . ",\n";
-        $raw = substr($raw, 0, $pos) . $insert . substr($raw, $pos);
+    if (!nm_save_php_config_array($configPath, $cfg)) {
+        return false;
     }
 
-    $ok = @file_put_contents($configPath, $raw, LOCK_EX);
-    if ($ok === false) return false;
-
     $didAdd = true;
-    nm_invalidate_php_cache($configPath);
     return true;
 }
 
@@ -304,7 +448,7 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $dir
 
     $replaceValue = function(string $content, string $key, string $newVal): array {
         if ($newVal === '') return [$content, false];
-        $pattern = '/([\'"]' . preg_quote($key, '/') . '[\'"]\s*=>\s*)([\'"])(.*?)(\2)/u';
+        $pattern = '/([\'\"]' . preg_quote($key, '/') . '[\'\"]\s*=>\s*)([\'\"])(.*?)(\\2)/u';
         if (preg_match($pattern, $content)) {
             $repl = '$1' . "'" . addslashes($newVal) . "'";
             $content2 = preg_replace($pattern, $repl, $content, 1);
@@ -327,7 +471,7 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $dir
     [$raw, $c2] = $replaceValue($raw, 'ADMIN_TOKEN', $adminToken);
     $changed = $changed || $c2;
 
-    if (!preg_match('/([\'"]DATA_JSON[\'"]\s*=>\s*)(.+?)(,)/u', $raw)) {
+    if (!preg_match('/([\'\"]DATA_JSON[\'\"]\s*=>\s*)(.+?)(,)/u', $raw)) {
         $pos = strrpos($raw, '];');
         if ($pos !== false) {
             $insert = "    'DATA_JSON'      => dirname(__DIR__, 2) . '/notemod-data/' . " . var_export($dirUser, true) . " . '/data.json',\n";
@@ -377,6 +521,10 @@ function create_user_environment(string $dirUser, string $username, string $pass
     if (!nm_ensure_secret_in_config($configPath, $dirUser, $didAdd)) return false;
     if (!nm_update_config_api_tokens_preserve($configApiPath, $dirUser, '', '')) return false;
 
+    $didAddKey = false;
+    $didChangeEnabled = false;
+    if (!nm_ensure_data_encryption_defines($configPath, $didAddKey, $didChangeEnabled)) return false;
+
     $dataJsonPath = nm_data_json_path($dirUser);
     if (!file_exists($dataJsonPath)) {
         $json = nm_initial_snapshot_json($configPath);
@@ -419,6 +567,8 @@ $configDir     = $targetDirUser !== '' ? __DIR__ . '/config/' . $targetDirUser :
 $authPath      = $targetDirUser !== '' ? __DIR__ . '/config/' . $targetDirUser . '/auth.php' : '';
 $configPath    = $targetDirUser !== '' ? __DIR__ . '/config/' . $targetDirUser . '/config.php' : '';
 $configApiPath = $targetDirUser !== '' ? __DIR__ . '/config/' . $targetDirUser . '/config.api.php' : '';
+$dataJsonPath  = $targetDirUser !== '' ? __DIR__ . '/notemod-data/' . $targetDirUser . '/data.json' : '';
+$dataDirPath   = $targetDirUser !== '' ? __DIR__ . '/notemod-data/' . $targetDirUser : '';
 
 $isLoggedIn = function_exists('nm_auth_is_logged_in') ? (bool)nm_auth_is_logged_in() : false;
 $loggedUser = $isLoggedIn ? nm_get_current_user() : '';
@@ -428,14 +578,17 @@ if ($targetDirUser === '' && $isLoggedIn) {
     $authPath      = __DIR__ . '/config/' . $targetDirUser . '/auth.php';
     $configPath    = __DIR__ . '/config/' . $targetDirUser . '/config.php';
     $configApiPath = __DIR__ . '/config/' . $targetDirUser . '/config.api.php';
+    $dataJsonPath  = __DIR__ . '/notemod-data/' . $targetDirUser . '/data.json';
+    $dataDirPath   = __DIR__ . '/notemod-data/' . $targetDirUser;
 }
 
 $already = ($targetDirUser !== '' && file_exists($authPath));
-$canEditTokens  = (!$hasAnyUser) || $isLoggedIn;
+$canEditTokens     = (!$hasAnyUser) || $isLoggedIn;
+$canEditEncryption = (!$hasAnyUser) || $isLoggedIn;
 $showRealTokens = $canEditTokens;
 
 // --------------------
-// Prefill API tokens
+// Prefill API tokens / encryption status
 // --------------------
 $prefExpected = '';
 $prefAdmin    = '';
@@ -447,12 +600,22 @@ if ($configApiPath !== '' && file_exists($configApiPath)) {
 $displayExpected = $showRealTokens ? $prefExpected : nm_mask_token($prefExpected);
 $displayAdmin    = $showRealTokens ? $prefAdmin    : nm_mask_token($prefAdmin);
 
+$currentEncryptionEnabled = false;
+if ($configPath !== '' && file_exists($configPath)) {
+    $GLOBALS['cfg'] = nm_read_php_config_array($configPath);
+}
+if ($configPath !== '' && file_exists($configPath)) {
+    $currentEncryptionEnabled = nm_read_data_encryption_enabled_from_config($configPath);
+}
+
 // --------------------
 // Handle POST
 // --------------------
 $msg = '';
 $err = '';
 $secretInfo = '';
+$encKeyInfo = '';
+$encInfo = '';
 $apiInfo = '';
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
@@ -482,8 +645,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $authPath       = __DIR__ . '/config/' . $targetDirUser . '/auth.php';
                 $configPath     = __DIR__ . '/config/' . $targetDirUser . '/config.php';
                 $configApiPath  = __DIR__ . '/config/' . $targetDirUser . '/config.api.php';
+                $dataJsonPath   = __DIR__ . '/notemod-data/' . $targetDirUser . '/data.json';
+                $dataDirPath    = __DIR__ . '/notemod-data/' . $targetDirUser;
                 $hasAnyUser     = true;
                 $already        = true;
+                $currentEncryptionEnabled = file_exists($configPath) ? nm_read_data_encryption_enabled_from_config($configPath) : false;
             }
         }
     }
@@ -494,6 +660,69 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $err = $t[$lang]['secret_write_failed'];
         } else {
             $secretInfo = $didAdd ? $t[$lang]['secret_status_added'] : $t[$lang]['secret_status_ok'];
+        }
+    }
+
+    if ($err === '' && $targetDirUser !== '') {
+        $didAddKey = false;
+        $didChangeEnabled = false;
+        if (!nm_ensure_data_encryption_defines($configPath, $didAddKey, $didChangeEnabled)) {
+            $err = $t[$lang]['enc_key_write_failed'];
+        } else {
+            $encKeyInfo = $didAddKey ? $t[$lang]['enc_key_status_added'] : $t[$lang]['enc_key_status_ok'];
+            $GLOBALS['cfg'] = nm_read_php_config_array($configPath);
+            $currentEncryptionEnabled = !empty($GLOBALS['cfg']['DATA_ENCRYPTION_ENABLED']);
+        }
+    }
+
+    if ($err === '' && $canEditEncryption && $targetDirUser !== '') {
+        $newEncryptionEnabled = !empty($_POST['data_encryption_enabled']);
+        $oldEncryptionEnabled = $currentEncryptionEnabled;
+
+        if ($newEncryptionEnabled !== $oldEncryptionEnabled) {
+            list($loadOk, $currentData, $loadReason) = nm_try_load_data_file($dataJsonPath);
+
+            if (!$loadOk || !is_array($currentData)) {
+                if ($lang === 'ja') {
+                    if ($loadReason === 'read_failed') {
+                        $err = '現在の data.json の読み込みに失敗したため、暗号化設定を変更できませんでした';
+                    } elseif ($loadReason === 'decode_failed') {
+                        $err = '現在の data.json が破損しているか、復号に失敗したため、暗号化設定を変更できませんでした';
+                    } else {
+                        $err = '現在の data.json の読み込みに失敗したため、暗号化設定を変更できませんでした';
+                    }
+                } else {
+                    if ($loadReason === 'read_failed') {
+                        $err = 'Failed to read the current data.json, so the encryption setting could not be changed.';
+                    } elseif ($loadReason === 'decode_failed') {
+                        $err = 'The current data.json is corrupted or could not be decrypted, so the encryption setting could not be changed.';
+                    } else {
+                        $err = 'Failed to read the current data.json, so the encryption setting could not be changed.';
+                    }
+                }
+            } else {
+                $backupPath = nm_backup_filename_for_current_mode($dataDirPath, $oldEncryptionEnabled);
+                if (!nm_create_current_state_backup($dataJsonPath, $backupPath, $oldEncryptionEnabled)) {
+                    $err = $t[$lang]['enc_backup_failed'];
+                } else {
+                    $saveOk = false;
+                    if (function_exists('nm_save_data_file_mode')) {
+                        $saveOk = nm_save_data_file_mode($dataJsonPath, $currentData, $newEncryptionEnabled);
+                    }
+
+                    if (!$saveOk) {
+                        $err = $t[$lang]['enc_convert_failed'];
+                    } elseif (!nm_update_data_encryption_enabled_define($configPath, $newEncryptionEnabled)) {
+                        $err = $t[$lang]['enc_config_failed'];
+                    } else {
+                        $GLOBALS['cfg'] = nm_read_php_config_array($configPath);
+                        $encInfo = $t[$lang]['enc_toggle_saved'];
+                        $currentEncryptionEnabled = $newEncryptionEnabled;
+                    }
+                }
+            }
+        } else {
+            $encInfo = $t[$lang]['enc_toggle_unchanged'];
         }
     }
 
@@ -548,6 +777,14 @@ if ($secretInfo === '') {
         }
     } else {
         $secretInfo = $t[$lang]['secret_note'];
+    }
+}
+
+if ($encKeyInfo === '') {
+    if ($configPath !== '' && file_exists($configPath) && nm_has_data_encryption_key_in_config($configPath)) {
+        $encKeyInfo = $t[$lang]['enc_key_status_ok'];
+    } else {
+        $encKeyInfo = $t[$lang]['enc_key_note'];
     }
 }
 ?>
@@ -650,6 +887,17 @@ if ($secretInfo === '') {
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
     }
     input[disabled]{ opacity:.75; cursor:not-allowed; }
+    .checkline{
+      display:flex; gap:10px; align-items:flex-start;
+      padding:12px 0 2px;
+    }
+    .checkline input[type="checkbox"]{
+      width:18px; height:18px; margin-top:2px;
+      padding:0; border-radius:6px;
+      flex:0 0 auto;
+    }
+    .checklabel{ margin:0; color:var(--text); font-size:14px; font-weight:700; }
+    .helptext{ margin-top:8px; color:var(--muted); font-size:12px; line-height:1.55; white-space:pre-line; }
 
     .btn{
       border:none; border-radius:14px;
@@ -785,8 +1033,34 @@ if ($secretInfo === '') {
         </div>
 
         <div class="box">
+          <h3><?=htmlspecialchars($t[$lang]['enc_key_section'], ENT_QUOTES, 'UTF-8')?></h3>
+          <div class="notice"><?=htmlspecialchars($encKeyInfo, ENT_QUOTES, 'UTF-8')?></div>
+        </div>
+
+        <div class="box">
           <form method="post">
-            <h3><?=htmlspecialchars($t[$lang]['auth_section'], ENT_QUOTES, 'UTF-8')?></h3>
+            <div class="checkline">
+              <input
+                id="data_encryption_enabled"
+                name="data_encryption_enabled"
+                type="checkbox"
+                value="1"
+                <?= $currentEncryptionEnabled ? 'checked' : '' ?>
+                <?= $canEditEncryption ? '' : 'disabled' ?>
+              >
+              <div>
+                <label class="checklabel" for="data_encryption_enabled"><?=htmlspecialchars($t[$lang]['enc_toggle_label'], ENT_QUOTES, 'UTF-8')?></label>
+                <div class="helptext"><?=htmlspecialchars($t[$lang]['enc_toggle_help'], ENT_QUOTES, 'UTF-8')?></div>
+                <?php if (!$canEditEncryption): ?>
+                  <div class="helptext"><?=htmlspecialchars($t[$lang]['enc_toggle_locked'], ENT_QUOTES, 'UTF-8')?></div>
+                <?php endif; ?>
+                <?php if ($encInfo): ?>
+                  <div class="notice ok" style="margin-top:10px;"><?=htmlspecialchars($encInfo, ENT_QUOTES, 'UTF-8')?></div>
+                <?php endif; ?>
+              </div>
+            </div>
+
+            <h3 style="margin-top:14px;"><?=htmlspecialchars($t[$lang]['auth_section'], ENT_QUOTES, 'UTF-8')?></h3>
 
             <?php if (!$hasAnyUser): ?>
               <label><?=htmlspecialchars($t[$lang]['username'], ENT_QUOTES, 'UTF-8')?></label>

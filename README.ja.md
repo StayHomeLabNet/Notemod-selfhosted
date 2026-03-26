@@ -1,162 +1,76 @@
-# Notemod-selfhosted v1.4.0
+# Notemod-selfhosted（改造版 Notemod）v1.4.1
 
-これは、Windows アプリの **[ClipboardSync](https://github.com/StayHomeLabNet/ClipboardSync)** と連携して、特に iPhone と Windows PC 間のクリップボードの利用を快適にする目的で、 **[Notemod（本家）](https://github.com/orayemre/Notemod)**（MIT License）をベースに、**共用サーバーでも動く自己ホスト型メモ基盤**として拡張したフォークです。  
-**DB不要** で動作し、テキストだけでなく **画像** と **ファイル** のコピー＆ペースト連携、管理画面からの整理、バックアップ、Web UI認証までまとめて扱えます。
+これは **[Notemod（本家）](https://github.com/orayemre/Notemod)**（MIT License）をベースに、**共用サーバーでも動く自己ホスト型メモ基盤**として拡張したフォークです（DB不要）。
+データベースを使わないため、ウェブサーバーにアップロードして設定ファイルを用意すればすぐ使えます。
 
 動作確認済みの共用サーバー: Xサーバー、さくらインターネット、XREA（エクスリア）、InfinityFree  
 テスト済み PHP: 8.3.21（**PHP 8.1 以上が必須**）
 
-> **ユーザー別データソース:** `notemod-data/<USER_NAME>/data.json`
-
----
-
-## このバージョンのハイライト（v1.4.0）
-
-v1.4.0 では、v1.3.1 の **ユーザー別ディレクトリ構成** と **`USERNAME` / `DIR_USER` の分離** を土台に、**`config/<USER_NAME>/...` / `notemod-data/<USER_NAME>/...` / `logs/<USER_NAME>/...` 前提の運用をさらに徹底** しました。あわせて、`cleanup_api.php` や周辺管理機能の参照先をユーザー別構成へ寄せ、`LOGGER_LOGS_DIRNAME` のような旧来の可変ログディレクトリ前提を整理し、**`logs/<USER_NAME>/` を基準にした運用**へ揃えています。
-
-また、`media_files.php` では、**画像サムネイルをクリックして画像コピー**、**ファイル名をクリックして画像URLコピー** に加え、**横幅 / 縦幅の入力値を画像取得URLへ反映** できるように整理され、画像の外部利用やサイズ付き共有がしやすくなりました。
-
-- **ユーザー別ディレクトリ構成** を前提に整理
-- `config/<USER_NAME>/...` / `notemod-data/<USER_NAME>/...` / `logs/<USER_NAME>/...` に対応
-- **`USERNAME` と `DIR_USER` を分離** した運用を継続
-- **`logs/<USER_NAME>/` 基準のログ運用** へ整理
-- **`cleanup_api.php` の設定参照をユーザー別構成へ統一**
-- **`LOGGER_LOGS_DIRNAME` 前提を整理**
-- **画像サムネイルクリックで画像コピー**
-- **画像ファイル名クリックで画像URLコピー**
-- **横幅 / 縦幅入力を画像URLに反映**
-- **画像・ファイルのアップロード / ダウンロード / 整理** に対応
-- **Web UI認証** と **PWA対応** を継続搭載
-
-このアップデートにより、Notemod-selfhosted は **ユーザー別ディレクトリで整理しやすい自己ホスト環境** であることに加え、**画像・ファイル・ログ管理の運用をより一貫した構成で扱える版** になりました。
+> **単一データソース:** `notemod-data/<USER_NAME>/data.json`
 
 ---
 
 ## 開発の目的
 
 iPhone と Windows PC 間のクリップボード連携を、iPhone と Mac 間の快適さに少しでも近づける。  
-これを **外部サービスに依存せず** 実現することが目的です。
+これを **外部サービスに依存せず** 実現する。
 
-代表的な使い方:
-
-- Windows PC でコピーしたテキストを Notemod-selfhosted に送る（Windows アプリ ClipboardSync で自動化可能）
-- iPhone のショートカットやアプリ連携で最新テキストを取得する
-- 画像を保存・取得する
-- PDF やその他ファイルを保存・取得する
-- Web管理画面からメディアやバックアップを整理する
-- Webブラウザからアクセスすることで、異なるデバイスとのテキストやファイルのやり取りが容易になる
+- Windows PC でコピーされたテキストが即時に Notemod-selfhosted に送られる（**Windowsアプリ ClipboardSync**）
+- iPhone のショートカットを実行すると、そのテキストが iPhone でペーストできる
+- iPhone でコピーされたテキストが、iPhone ショートカットの実行で、即時に Notemod-selfhosted に送られる
+- Windows PC で、ホットキー（例 Ctrl + Alt + R）を実行すると、すぐにペーストできる（**Windowsアプリ ClipboardSync**）
 
 ---
 
-## 主な機能
+## v1.4.1 の主な変更点
 
-### 1. Notemod 本体の自己ホスト運用
-- Notemod UI をサーバー上で動かせます
-- データは `notemod-data/<USER_NAME>/data.json` に保存されます
-- DB不要です
+### 1) `data.json` の暗号化対応
+- `data.json` を **AES-256-CBC + HMAC** で暗号化保存できるようになりました
+- 暗号化設定は **`setup_auth.php` の Web UI** から切り替え可能です
+- 暗号化キーは **`config/<USER_NAME>/config.php`** に保存されます
+- **`DATA_ENCRYPTION_KEY` の実値は UI に表示しません**
+- 暗号化設定の切り替え直前に、**現在の `data.json` のバックアップを 1 つ自動作成**します
+- 形式変換に失敗した場合は、**設定を変更せず安全側に戻します**
+- エクスポートは **常に平文 JSON** のままです
 
-### 2. テキスト書き込み / 読み取り API
-- `api/api.php` でノート追加
-- `api/read_api.php` で最新ノート取得
-- `latest_note` は Logs カテゴリを除外
-- `pretty=2` で本文だけを返す運用に対応
+### 2) 暗号化対応を保存・読込・バックアップ処理まで横断反映
+- `data_crypto.php` を追加し、平文/暗号化の保存処理を共通化しました
+- `notemod_sync.php`、`api/api.php`、`api/read_api.php`、`api/cleanup_api.php`、`bak_settings.php` などが暗号化データを扱えるようになりました
+- バックアップからの復元時は、**現在の暗号化設定に合わせて `data.json` に再保存**します
 
-### 3. 画像 / ファイルのコピー＆ペースト対応
-- 画像アップロード
-- 一般ファイルアップロード
-- 最新画像 / 最新ファイル取得
-- 最新クリップ種別の判定
-- `media_files.php` からの画像 / ファイル整理
-- `media_files.php` で画像サムネイルをクリックして画像コピー
-- `media_files.php` で画像ファイル名をクリックして画像URLコピー
-- 横幅 / 縦幅指定付きの画像URL取得に対応
+### 3) メディア / ファイル管理画面を追加
+- `media_files.php` を追加し、**画像・ファイルの一覧表示 / 件数表示 / アップロード / ダウンロード / 削除導線**を整理しました
+- 画像はサムネイル付きで一覧表示できます
+- ファイルは `file_index.json` を優先して一覧表示し、必要に応じて履歴情報から復元します
+- `index.php` から **Media & Files** ボタンで遷移できます
 
-### 4. Cleanup API
-- 管理者トークンで破壊的操作を実行
-- バックアップ作成付き削除に対応（バックアップ作成のみも可能）
-- ログファイル / バックアップファイルの一括削除
-- 画像 / ファイル整理機能
-- `logs/<USER_NAME>/` を前提にしたログ削除に対応
+### 4) 画像配信用 API を追加
+- `api/image_api.php` を追加しました
+- 指定ユーザー配下の画像を **バイナリ配信**できます
+- 幅・高さを指定したリサイズ表示、キャッシュ、基本的な入力検証に対応しています
 
-### 5. Web UI認証
-- Basic認証が使えない環境でも、ログイン制で管理可能
-- `USERNAME`（表示 / ログイン名）と `DIR_USER`（保存先ディレクトリ名）を分離して運用可能
-- 設定画面や各種管理画面を保護
+### 5) ユーザーごとのディレクトリー構成を前提とした整理
+- 設定は **`config/<DIR_USER>/`**
+- データは **`notemod-data/<DIR_USER>/`**
+- ログは **`logs/<DIR_USER>/`**
+- `USERNAME` と保存先ディレクトリー名の `DIR_USER` を分離し、運用時の整合性を改善しました
+- ユーザー名を変更しても、**保存ディレクトリー名は変更されません**
 
-### 6. バックアップ / リストア
-- `bak_settings.php` から設定変更
-- 今すぐバックアップ
-- 最新から n 個残して古いバックアップ削除
-- バックアップ一覧から `data.json` を復元
+### 6) 「最新クリップ種別」判定の強化
+- テキスト追加時に **`note_latest.json`** を更新するようになりました
+- `read_api.php?action=latest_clip_type` で、**テキスト / 画像 / ファイルのどれが最後に送られたか**を判定できます
+- ClipboardSync 側の「最新を受信」機能と連携しやすくなりました
 
-### 7. ログ設定
-- `log_settings.php` から設定変更
-- アクセスログの有効 / 無効
-- アクセスログを Notemod のカテゴリーに保存の有効 / 無効
-- アクセスログの最大行数の設定
-- 初回IPアクセス通知の有効 / 無効
-- IPアクセス通知のメールアドレスを設定
+### 7) バックアップ / クリーンアップまわりの改善
+- バックアップファイル名は状態に応じて次の形式になります
+  - 平文: `data.json.bak-YYYYMMDD-HHMMSS`
+  - 暗号化: `data.enc.json.bak-YYYYMMDD-HHMMSS`
+- `cleanup_api.php` は `dry_run=2` に対応し、**削除対象の件数だけ**を返せます
+- `bak_settings.php` からバックアップの作成 / 一覧 / 復元 / 削除を扱えます
 
-### 8. PWA対応
-- iPhone / Android のホーム画面追加に対応
-- アプリのように起動できます
-
----
-
-## こんな人に向いています
-
-- 自分専用のクリップ / ノート基盤を持ちたい
-- 外部クラウドのクリップ同期に依存したくない
-- 共用サーバーで軽く動く仕組みがほしい
-- iPhone と Windows の橋渡しを自前で作りたい
-- テキストだけでなく画像やファイルも扱いたい
-- ユーザー別ディレクトリで整理して運用したい
-
----
-
-## 推奨ディレクトリ構成
-
-```text
-public_html/
-├─ index.php
-├─ logger.php
-├─ notemod_sync.php
-├─ setup_auth.php
-├─ login.php / logout.php
-├─ auth_common.php
-├─ account.php
-├─ clipboard_sync.php
-├─ bak_settings.php
-├─ log_settings.php
-├─ media_files.php
-├─ api/
-│  ├─ api.php
-│  ├─ read_api.php
-│  ├─ image_api.php
-│  └─ cleanup_api.php
-├─ config/
-│  └─ USER_NAME/
-│     ├─ auth.php
-│     ├─ config.php
-│     └─ config.api.php
-├─ logs/
-│  └─ USER_NAME/
-│     ├─ .htaccess
-│     └─ ...log files...
-├─ notemod-data/
-│  └─ USER_NAME/
-│     ├─ .htaccess
-│     ├─ data.json
-│     ├─ _known_ips.json
-│     ├─ images/
-│     └─ files/
-├─ pwa/
-│  ├─ icon-192.png
-│  └─ icon-512.png
-├─ manifest.php
-├─ service-worker.js / sw.php / sw-register.js
-└─ robots.txt
-```
+### 8) Web UI の整理と周辺ページの統一
+- `setup_auth.php` / `account.php` / `clipboard_sync.php` / `log_settings.php` / `bak_settings.php` / `media_files.php` などで、**JP/EN 切替・Dark/Light 切替・ログインユーザー表示**の整合性を改善しました
+- `robots.txt` の自動生成に対応し、検索エンジン向けの初期ガードを入れています
 
 ---
 
@@ -165,306 +79,101 @@ public_html/
 ### 1. サーバーへ配置
 このリポジトリ一式を、サーバーの公開フォルダー（例: `public_html/`）にアップロードします。
 
-> `config/` や `api/` は `index.php` と同じ階層を前提にしています。  
-> 構成を変える場合は PHP 側のパス調整が必要です。
+> 補足: `config/` や `api/` も `index.php` と同じ階層に置いてください  
+> （構成を変える場合は PHP 側のパス調整が必要です）
 
-### 2. 設定ファイルを作成
-リポジトリ一式をサーバーにアップロードして、**index.php にアクセスすることで自動的に作成します。** 初期セットアップ後に下記の各種設定が自動で作成されるので、すぐに利用開始できます。
+### 2. 設定ファイルを作成（重要）
 
-#### 共通設定 / API設定 / 認証設定
-v1.4.0 でも、初期セットアップ時に **ユーザー別ディレクトリ** へ設定ファイルを自動的に作成する前提です。
+#### 設定ファイルの自動生成
+v1.1.0 以降は、Web UI での初期設定時に自動的に生成されます。  
+v1.4.1 では、ユーザーごとに以下へ保存されます。
 
-作成先:
-- `config/<USER_NAME>/auth.php`
-- `config/<USER_NAME>/config.php`
-- `config/<USER_NAME>/config.api.php`
+- `config/<DIR_USER>/config.php`
+- `config/<DIR_USER>/config.api.php`
 
-主な項目:
-- `USERNAME`
-- `DIR_USER`
+タイムゾーンやログの ON/OFF、バックアップファイル自動作成の ON/OFF などは、上記設定ファイルを編集してください。
+
+#### 共通設定
+`config.sample.php` または `config.sample.ja.php` を参考に、`config/<DIR_USER>/config.php` を用意します。
+
+主な設定例:
 - `SECRET`
 - `TIMEZONE`
 - `DEBUG`
+- `LOGGER_FILE_ENABLED`
+- `LOGGER_NOTEMOD_ENABLED`
+- `IP_ALERT_*`
+- `DATA_ENCRYPTION_ENABLED`
+- `DATA_ENCRYPTION_KEY`
+
+#### API設定
+`config.api.sample.php` または `config.api.sample.ja.php` を参考に、`config/<DIR_USER>/config.api.php` を用意します。
+
+主な設定例:
 - `EXPECTED_TOKEN`
 - `ADMIN_TOKEN`
 - `DATA_JSON`
 - `DEFAULT_COLOR`
 - `CLEANUP_BACKUP_ENABLED`
 - `CLEANUP_BACKUP_SUFFIX`
+- `CLEANUP_BACKUP_KEEP`
 
-### 3. SECRET / TOKEN を変更
-サンプルのまま使わず、必ず長いランダム値に変更してください。
+### 3. SECRET / TOKEN の生成
+SECRET や TOKEN の生成にはパスワード生成サイトを利用できます（例）  
+<https://passwords-generator.org/>
 
-例:
-- `openssl rand -hex 32`
+- 第三者サイトが不安な場合は、OS標準のパスワード生成や `openssl rand -hex 32` 等でも OK です
+- `DATA_ENCRYPTION_KEY` は通常、`setup_auth.php` 側で自動生成できます
 
-### 4. 初回起動
-ブラウザで公開URLへアクセスし、初期セットアップを進めます。
+### 4. 初期化（初回のみ）
+公開URLへアクセスすると Notemod-selfhosted が開きます。  
+表示言語をセットし、最初のカテゴリーを作成してください。
 
-環境や設定に応じて、初回起動時に次のようなファイル / ディレクトリが生成されます。
+この操作により以下が、なければ自動生成されます（環境/設定による）。
 
-- `config/<USER_NAME>/auth.php`
-- `config/<USER_NAME>/config.php`
-- `config/<USER_NAME>/config.api.php`
-- `notemod-data/<USER_NAME>/data.json`
-- `notemod-data/<USER_NAME>/.htaccess`
-- `notemod-data/<USER_NAME>/_known_ips.json`
-- `notemod-data/<USER_NAME>/images/`
-- `notemod-data/<USER_NAME>/files/`
-- `logs/<USER_NAME>/`
-- `api/.htaccess`
-- ログ関連ファイル（設定による）
-
----
-
-## USERNAME と DIR_USER について（v1.4.0）
-
-v1.4.0 でも、**表示 / ログイン名としての `USERNAME`** と、**保存先ディレクトリ名としての `DIR_USER`** を分離して扱います。
-
-- `USERNAME`
-  - ログイン名 / 表示名
-  - `account.php` から変更可能
-- `DIR_USER`
-  - 保存先ディレクトリ名
-  - 小文字化して扱う
-  - 初期作成後は変更しない
-
-主な保存先:
-- `config/<DIR_USER>/auth.php`
 - `config/<DIR_USER>/config.php`
 - `config/<DIR_USER>/config.api.php`
 - `notemod-data/<DIR_USER>/data.json`
-- `notemod-data/<DIR_USER>/images/`
-- `notemod-data/<DIR_USER>/files/`
-- `logs/<DIR_USER>/`
-
-`account.php` では、ログイン名を変更しても保存先ディレクトリ名は変わらない前提で運用できます。
+- `notemod-data/<DIR_USER>/.htaccess`
+- （設定により）`logs/<DIR_USER>/` や `logs/<DIR_USER>/.htaccess`
+- `api/.htaccess`
+- `robots.txt`
 
 ---
 
 ## セキュリティ（重要）
 
-### Basic認証が使える場合
-最低でも `api/` ディレクトリに **Basic認証を強く推奨** します。
+### Basic認証が使える場合は「api/ に強く推奨」
+Notemod-selfhosted は「クリップボードの内容」「個人メモ」などの個人情報を扱います。  
+`.htaccess` や `robots.txt` を置いていても、公開サーバーに置く以上は、最低でも `api/` ディレクトリーに **Basic認証の導入を強く推奨** します。
 
-理由:
-- `robots.txt` はアクセス制御ではありません
-- 公開サーバー上の `/api/` は外部から到達可能です
-- 長期運用するトークンは総当たり対象になり得ます
-- Basic認証は PHP のトークン認証の前段に壁を作れます
+**なぜ必要か**
+- `robots.txt` は「検索エンジンへのお願い」であり、アクセス制限にはなりません
+- `/api/` は公開されていると外部から叩けます
+- トークンが長期で公開され続けると、総当たり（ブルートフォース）などの対象になり得ます
+- Basic認証は「PHPのトークン認証の前」に追加の壁を作れるため、安全性が大きく上がります
 
-### Basic認証が使えない場合
-**Web UI認証 + トークン運用** を使ってください。
+### Basic認証を使えない場合：Web UI認証
+共用サーバーによっては Basic認証を提供していない場合があります。  
+その場合は **Web UI認証 + トークン** で運用してください。
 
-- 初期セットアップ / 管理: `setup_auth.php`
-- ログイン後: `account.php` などから各設定画面へ移動
+- 初期セットアップ/管理: `setup_auth.php`
+- 未ログイン: 重要値は伏字、編集不可
+- ログイン中: アカウント/認証情報の管理が可能
 
----
+### `data.json` 暗号化について
+v1.4.1 では、保存される `data.json` を暗号化できます。  
+ただし、暗号化はサーバー侵入そのものを防ぐものではなく、**漏えい時の平文露出を減らすための追加レイヤー**です。
 
-## メディア / ファイル管理
-
-### 管理画面
-`media_files.php`
-
-この画面で次の操作ができます。
-
-- 画像一覧の表示
-- ファイル一覧の表示
-- 画像のドラッグ＆ドロップアップロード
-- ファイルのドラッグ＆ドロップアップロード
-- ダウンロード
-- 画像サムネイルをクリックして画像コピー
-- 画像ファイル名をクリックして画像URLコピー
-- 横幅 / 縦幅を指定した画像URLの取得
-- チェックボックスによる選択削除
-- 全選択 / 全解除
-- 画像全削除 / ファイル全削除
-- サーバーのアップロード / ダウンロード関連設定の確認
-
-### 保存先
-- 画像: `notemod-data/<USER_NAME>/images/`
-- ファイル: `notemod-data/<USER_NAME>/files/`
-
-※ `<USER_NAME>` は保存先ディレクトリ名です。
-
-### JSON管理の考え方
-画像とファイルでは管理方法が少し異なります。
-
-#### 画像側
-- `image_latest.json`
-  - 最新画像の情報を保持
-- 一覧表示はフォルダ走査ベース
-- 画像はサムネイルで識別できる前提
-
-#### ファイル側
-- `file.json`
-  - ファイル履歴ログ
-- `file_index.json`
-  - 現存ファイル一覧
-- `file_latest.json`
-  - 最新ファイル情報
-
-ファイル側で `file_index.json` を使う理由は、**保存名ではなく元のファイル名を一覧表示するため** です。
-
-### latest 保護について
-`cleanup_api.php` の整理系処理では、現在の実装上 **latest の実体を保護** する仕様があります。  
-そのため「全削除」でも latest 実体が残る場合があります。
+- まずは **Basic認証 / Web UI認証 / 強いトークン / 公開範囲の最小化** を優先してください
+- 暗号化キーを失うと復号できなくなるため、**安全な方法で別保管**してください
+- エクスポートは平文 JSON のため、エクスポートファイルの扱いにも注意してください
 
 ---
 
-## バックアップ設定
+## 使い方・連携
 
-### 管理画面
-`bak_settings.php`
-
-主な操作:
-- バックアップ機能の有効 / 無効
-- 保持数の設定
-- 今すぐバックアップ
-- 最新から n 個を残して古いバックアップを削除
-- バックアップ一覧から `data.json` をリストア
-
-特徴:
-- 復元前に現在の `data.json` を自動バックアップ
-- `TIMEZONE` を使った日時表示 / ファイル名運用
-
----
-
-## ログ設定
-
-### 管理画面
-`log_settings.php`
-
-主な設定:
-- アクセスログの有効 / 無効
-- Notemod の Logs カテゴリへの追記の有効 / 無効
-- ログ関連設定の保存
-- 初回IPアクセス通知の有効 / 無効
-- IPアクセス通知のメールアドレスを設定
-
-v1.4.0 では、ログ関連の運用は **`logs/<USER_NAME>/` を前提** に整理されています。
-
----
-
-## ClipboardSync 設定
-
-### 管理画面
-`clipboard_sync.php`
-
-この画面では、外部クライアント（Windows アプリ ClipboardSync）と連携するための API URL やトークン確認を行えます。  
-ClipboardSync のダウンロードリンクと iPhone との連携のための iOS ショートカットのダウンロードリンクを提供します。
-
-主な用途:
-- Windows アプリの設定
-- iPhone ショートカットへのURL転記（ショートカットの初期設定に使用）
-- `/api/` のURL確認
-- `api.php` / `read_api.php` / `cleanup_api.php` のURL確認
-- 現在の `DIR_USER` に対応する設定内容の確認
-
----
-
-## API 概要
-
-### `api/api.php`
-主に書き込み側のエンドポイントです。
-
-対応例:
-- ノート追加
-- 画像アップロード
-- ファイルアップロード
-- WebP 画像の扱い
-- `image_latest.json` / `file.json` / `file_index.json` / `file_latest.json` の更新
-
-### `api/read_api.php`
-読み取り側のエンドポイントです。
-
-対応例:
-- `latest_note`
-- `latest_image`
-- `latest_file`
-- `latest_clip_type`
-
-### `api/image_api.php`
-画像配信用のエンドポイントです。
-
-対応例:
-- 保存済み画像の直接表示
-- `media_files.php` からの画像コピー補助
-- 画像URLを使った外部連携
-- `w` / `h` パラメータによるサイズ指定付き取得
-
-### `api/cleanup_api.php`
-管理者用の破壊的操作エンドポイントです。
-
-対応例:
-- カテゴリ削除
-- ログ削除
-- バックアップ削除
-- 画像整理 / ファイル整理
-- 選択削除 / 全削除
-- `file_index.json` 再構築
-- `file_latest.json` 補正
-- `logs/<USER_NAME>/` を対象にしたログ削除
-
----
-
-## API使用例
-
-### ノート追加
-```text
-/api/api.php?token=EXPECTED_TOKEN&category=INBOX&text=Hello
-```
-
-### 最新ノート取得（Logs除外・本文のみ）
-```text
-/api/read_api.php?token=EXPECTED_TOKEN&action=latest_note&pretty=2
-```
-
-### 最新画像取得
-```text
-/api/read_api.php?token=EXPECTED_TOKEN&action=latest_image
-```
-
-### 最新ファイル取得
-```text
-/api/read_api.php?token=EXPECTED_TOKEN&action=latest_file
-```
-
-### 画像の直接表示（`image_api.php`）
-```text
-/api/image_api.php?user=<DIR_USER>&file=IMAGE_FILE_NAME.png
-```
-
-### 横幅を指定して画像取得
-```text
-/api/image_api.php?user=<DIR_USER>&file=IMAGE_FILE_NAME.png&w=300
-```
-
-### 縦幅を指定して画像取得
-```text
-/api/image_api.php?user=<DIR_USER>&file=IMAGE_FILE_NAME.png&h=300
-```
-
-### 最新クリップ種別取得
-```text
-/api/read_api.php?token=EXPECTED_TOKEN&action=latest_clip_type
-```
-
-### ログファイル一括削除（POST）
-```bash
-curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php"   -H "Content-Type: application/x-www-form-urlencoded"   --data-urlencode "token=ADMIN_TOKEN"   --data-urlencode "purge_log=1"   --data-urlencode "confirm=YES"
-```
-
-### バックアップファイル一括削除（POST）
-```bash
-curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php"   -H "Content-Type: application/x-www-form-urlencoded"   --data-urlencode "token=ADMIN_TOKEN"   --data-urlencode "purge_bak=1"   --data-urlencode "confirm=YES"
-```
-
----
-
-## 外部連携
-
-具体的な利用方法（APIの叩き方 / iPhoneショートカット / Windowsアプリ連携など）は以下も参照してください。
+具体的な利用方法（API叩き方 / iPhoneショートカット / ClipboardSync連携など）は、以下のリンクで紹介します。
 
 - [StayHomeLab YouTube ch](https://www.youtube.com/@StayHomeLab)
 - [Website](https://stayhomelab.net/notemod-selfhosted)
@@ -472,52 +181,260 @@ curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php"   -H "Content-Typ
 
 ---
 
-## 動作要件
+## この改造版で追加した主な機能
 
-- **PHP 8.1 以上**
-- Apache 推奨（`.htaccess` 利用のため）
-- PHP から書き込み可能な場所
-  - `notemod-data/<USER_NAME>/`
-  - `config/<USER_NAME>/`（初期セットアップ時）
-  - `logs/<USER_NAME>/`
+- **サーバー同期エンドポイント**（`notemod_sync.php`）
+  - トークン認証
+  - `save` / `load`
+  - `data.json` が無い場合は初期スナップショットで自動生成
+  - ユーザー別ディレクトリー構成に対応
+  - 暗号化保存データの読み書きに対応
+
+- **書き込みAPI**（`api/api.php`）
+  - 任意カテゴリにノート追加（カテゴリが無ければ自動作成）
+  - 画像アップロード対応
+  - ファイルアップロード対応
+  - テキスト追加時に `note_latest.json` を更新
+  - WebP画像を受信した場合、サーバー側で PNG に変換して保存
+
+- **読み取りAPI**（`api/read_api.php`）
+  - 読み取り専用
+  - `latest_note` は **Logsカテゴリを常に除外**
+  - `pretty=2` で *本文だけのプレーンテキスト* を返す（iPhoneショートカットやCLI向け）
+  - `latest_clip_type` で、最後に送られた種別（テキスト/画像/ファイル）を判定
+  - 暗号化保存データの読み取りに対応
+
+- **画像配信API**（`api/image_api.php`）
+  - 指定ユーザー配下の画像を配信
+  - 幅/高さ指定の簡易リサイズ
+  - キャッシュ制御
+
+- **削除API**（`api/cleanup_api.php`）※不要なら削除推奨
+  - カテゴリ単位で全削除（POST専用）
+  - `dry_run` 対応
+  - `dry_run=2` で対象数のみ取得
+  - バックアップ作成を設定で ON/OFF 可能
+  - バックアップ一括削除（`purge_bak=1`）
+  - ログファイル一括削除（`purge_log=1`）
+  - 画像 / ファイルの一括削除
+  - `file_index.json` の再生成補助
+
+- **メディア / ファイル管理画面**（`media_files.php`）
+  - サーバー設定の確認
+  - images/files 件数表示
+  - 画像一覧（サムネ + ダウンロード）
+  - ファイル一覧（履歴 / インデックス参照）
+  - ドラッグ＆ドロップアップロード
+
+- **アクセスログ統合**（`logger.php`）
+  - `/logs/<USER_NAME>/access-YYYY-MM.log` へのファイルログ（ON/OFF可能）
+  - Notemod の **Logsカテゴリ** への月別ノート追記（ON/OFF可能）
+  - タイムゾーンは config から取得
+  - ログフォルダーが無ければ作成 + `.htaccess` も作成
+
+- **toolbarにコピー / ペーストボタンを追加**（`index.php`）
+  - オリジナルのコピー＆ペーストボタン（sag-tik）を無効化
+  - 選択が無い場合はノート全体をコピー、選択がある場合は選択範囲をコピー
+
+- **Web UI認証**
+  - Basic認証なしでログイン制にできる
+  - UIに設定アイコン（歯車）を追加し、アカウント/認証情報へ遷移
+
+- **PWA対応**
+  - iPhone/Android の「ホーム画面に追加」でアプリっぽく起動（HTTPS推奨/実質必須）
 
 ---
 
-## `robots.txt` について
+## 動作要件
 
-`setup_auth.php` によって、自動作成されます
+- **PHP 8.1 以上**
+- Apache 推奨（`.htaccess` を使うため）
+- PHP から書き込み可能な場所
+  - `config/`
+  - `notemod-data/`
+  - （任意）`logs/`
 
-推奨:
+---
+
+## 推奨ディレクトリ構成
+
+```text
+public_html/
+├─ index.php
+├─ notemod_sync.php
+├─ logger.php
+├─ auth_common.php
+├─ data_crypto.php
+├─ setup_auth.php
+├─ login.php
+├─ logout.php
+├─ account.php
+├─ bak_settings.php
+├─ clipboard_sync.php
+├─ log_settings.php
+├─ media_files.php
+├─ manifest.php
+├─ sw-register.js
+├─ sw.php
+├─ service-worker.js
+├─ api/
+│  ├─ api.php
+│  ├─ read_api.php
+│  ├─ image_api.php
+│  └─ cleanup_api.php
+├─ config/
+│  └─ <DIR_USER>/
+│     ├─ config.php
+│     └─ config.api.php
+├─ notemod-data/
+│  └─ <DIR_USER>/
+│     ├─ data.json
+│     ├─ note_latest.json
+│     ├─ image_latest.json
+│     ├─ file_latest.json
+│     ├─ file.json
+│     ├─ file_index.json
+│     ├─ images/
+│     └─ files/
+├─ logs/
+│  └─ <DIR_USER>/
+│     └─ access-YYYY-MM.log
+└─ pwa/
+   ├─ icon-192.png
+   └─ icon-512.png
+```
+
+---
+
+## 設定ファイル（例）
+
+### `config/<DIR_USER>/config.php`
+
+```php
+<?php
+return [
+    'TIMEZONE' => 'Asia/Tokyo',
+    'DEBUG' => false,
+    'LOGGER_FILE_ENABLED' => true,
+    'LOGGER_NOTEMOD_ENABLED' => true,
+    'IP_ALERT_ENABLED' => true,
+    'IP_ALERT_TO' => 'YOUR_EMAIL',
+    'IP_ALERT_FROM' => 'notemod@localhost',
+    'IP_ALERT_SUBJECT' => 'Notemod: First-time IP access',
+    'IP_ALERT_IGNORE_BOTS' => true,
+    'IP_ALERT_IGNORE_IPS' => [''],
+    'LOGGER_FILE_MAX_LINES' => 500,
+    'LOGGER_NOTEMOD_MAX_LINES' => 50,
+    'SECRET' => 'CHANGE_ME_SECRET',
+    'DATA_ENCRYPTION_ENABLED' => false,
+    'DATA_ENCRYPTION_KEY' => 'CHANGE_ME_ENCRYPTION_KEY',
+];
+```
+
+### `config/<DIR_USER>/config.api.php`
+
+```php
+<?php
+return [
+    'EXPECTED_TOKEN' => 'CHANGE_ME_EXPECTED_TOKEN',
+    'ADMIN_TOKEN' => 'CHANGE_ME_ADMIN_TOKEN',
+    'DATA_JSON' => dirname(__DIR__, 2) . '/notemod-data/<DIR_USER>/data.json',
+    'DEFAULT_COLOR' => '3478bd',
+    'CLEANUP_BACKUP_ENABLED' => true,
+    'CLEANUP_BACKUP_SUFFIX' => '.bak-',
+    'CLEANUP_BACKUP_KEEP' => 10,
+];
+```
+
+---
+
+## API使用例
+
+### ノート追加（GET/POST）
+
+```text
+/api/api.php?token=EXPECTED_TOKEN&user=YOUR_DIR_USER&category=INBOX&text=Hello
+```
+
+### 最新ノート取得（Logs除外・本文のみ）
+
+```text
+/api/read_api.php?token=EXPECTED_TOKEN&user=YOUR_DIR_USER&action=latest_note&pretty=2
+```
+
+### 最新クリップ種別の取得
+
+```text
+/api/read_api.php?token=EXPECTED_TOKEN&user=YOUR_DIR_USER&action=latest_clip_type
+```
+
+### 画像取得
+
+```text
+/api/image_api.php?user=YOUR_DIR_USER&file=photo.png&w=300
+```
+
+### ログファイル一括削除（POST）
+
+```bash
+curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "user=YOUR_DIR_USER" \
+  --data-urlencode "token=ADMIN_TOKEN" \
+  --data-urlencode "purge_log=1" \
+  --data-urlencode "confirm=YES"
+```
+
+### バックアップファイル一括削除（POST）
+
+```bash
+curl -X POST "https://USER:PASS@YOUR_SITE/api/cleanup_api.php" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "user=YOUR_DIR_USER" \
+  --data-urlencode "token=ADMIN_TOKEN" \
+  --data-urlencode "purge_bak=1" \
+  --data-urlencode "confirm=YES"
+```
+
+---
+
+## ClipboardSync（Windowsアプリ）連携
+
+この改造版は外部クライアントからの投入を前提にしています（任意）。
+
+<https://github.com/StayHomeLabNet/ClipboardSync>
+
+よくある流れ:
+1. ClipboardSync がクリップボードを監視
+2. 有効化されている間、クリップボードの内容を `api/api.php` に送信
+3. `read_api.php?action=latest_clip_type` を利用して、最後に送った種別に応じた受信ができる
+4. Notemod UI または受信ホットキーで即反映
+
+---
+
+## robots.txt について（検索エンジン対策）
+
+推奨（全クローラー拒否）
 
 ```text
 User-agent: *
 Disallow: /
 ```
 
-注意:
-- `robots.txt` はアクセス制御ではありません
-- Basic認証 / Web UI認証 / `.htaccess` 等による保護を併用してください
-
----
-
-## README とウェブ用マニュアルの役割分担
-
-- **README**: プロジェクト全体の概要、導入、主な機能の案内
-- **ウェブ用マニュアル**: 各画面の使い方、設定項目、運用手順、トラブル時の確認ポイント
-
-README だけで全操作を説明しきるのではなく、詳細な操作説明はウェブ用マニュアルへ分ける構成をおすすめします。
+注意：
+- `robots.txt` はアクセス制御ではありません  
+  → **Basic認証** または **Web UI認証**、`.htaccess` 等で保護してください
 
 ---
 
 ## ライセンス
 
-MIT License。
-
-本プロジェクトは **Oray Emre Gunduz 氏の Notemod（MIT）** をベースにしています。  
+MIT License。  
+本プロジェクトは **Oray Emre Gündüz 氏の Notemod（MIT）** をベースにしています。  
 MITライセンスの条件として、**著作権表示とライセンステキストを保持**してください。
 
 ---
 
 ## クレジット
 
-- Notemod（本家）: https://github.com/orayemre/Notemod
+- Notemod（本家）: <https://github.com/orayemre/Notemod>

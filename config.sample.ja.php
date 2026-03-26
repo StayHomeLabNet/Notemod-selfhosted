@@ -1,5 +1,5 @@
 <?php
-// config/config.php
+// config/<USER_NAME>/config.php
 // この config/config.php は setup_auth.php により自動生成されました
 return [
     // PHP のタイムゾーン設定（例）
@@ -20,6 +20,10 @@ return [
 
     // Notemod の Logs カテゴリに記録（月別ノート: access-YYYY-MM）
     'LOGGER_NOTEMOD_ENABLED' => true,
+    
+    // data.json 暗号化の設定
+    'DATA_ENCRYPTION_ENABLED' => true,
+    'DATA_ENCRYPTION_KEY' => 'CHANGE_ME_DATA_ENCRYPTION_KEY',
 
     // （任意）Notemod の初期スナップショットをカスタマイズ
     // （JSON文字列として保存する必要があります）

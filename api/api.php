@@ -29,20 +29,12 @@ if ($dirUser === '') {
 }
 
 require_once __DIR__ . '/../logger.php';
+require_once dirname(__DIR__) . '/data_crypto.php';
 
 // =====================
-// タイムゾーン設定（config/config.php から読む）
+// タイムゾーン初期値（実際の common config 読み込み後に上書き）
 // =====================
-$tz = 'Pacific/Auckland';
-$cfgCommonFile = nm_config_path($dirUser !== '' ? $dirUser : null);
-if (file_exists($cfgCommonFile)) {
-    $common = require $cfgCommonFile;
-    if (is_array($common)) {
-        $t = (string)($common['TIMEZONE'] ?? $common['timezone'] ?? '');
-        if ($t !== '') $tz = $t;
-    }
-}
-date_default_timezone_set($tz);
+date_default_timezone_set('Pacific/Auckland');
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -62,53 +54,39 @@ function respond_json(array $payload, int $statusCode = 200): void
 }
 
 
-function nm_api_locked_load_notemod(string $path)
+function nm_api_acquire_data_lock(string $path)
 {
-    $fp = @fopen($path, 'c+');
+    $lockPath = $path . '.lock';
+    $fp = @fopen($lockPath, 'c+');
     if ($fp === false) {
-        return [null, null, 'open_failed'];
+        return [null, 'open_failed'];
     }
     if (!@flock($fp, LOCK_EX)) {
         @fclose($fp);
-        return [null, null, 'lock_failed'];
+        return [null, 'lock_failed'];
     }
-
-    clearstatcache(true, $path);
-    $raw = stream_get_contents($fp);
-    if ($raw === false) {
-        @flock($fp, LOCK_UN);
-        @fclose($fp);
-        return [null, null, 'read_failed'];
-    }
-    if ($raw === '') {
-        $raw = '{}';
-    }
-
-    $data = json_decode($raw, true);
-    if (!is_array($data)) {
-        @flock($fp, LOCK_UN);
-        @fclose($fp);
-        return [null, null, 'json_invalid'];
-    }
-
-    return [$fp, $data, null];
+    return [$fp, null];
 }
 
-function nm_api_locked_save_notemod($fp, array $data): bool
+function nm_api_release_data_lock($fp): void
 {
-    $json = json_encode($data, JSON_UNESCAPED_UNICODE);
-    if ($json === false) {
-        return false;
+    if (is_resource($fp)) {
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
     }
-
-    if (@ftruncate($fp, 0) === false) return false;
-    if (@rewind($fp) === false) return false;
-    if (@fwrite($fp, $json) === false) return false;
-    @fflush($fp);
-    @flock($fp, LOCK_UN);
-    @fclose($fp);
-    return true;
 }
+
+
+function nm_extract_dir_user_from_data_json_path(string $dataJsonPath): string
+{
+    $dataJsonPath = str_replace('\\', '/', $dataJsonPath);
+    if (preg_match('~/notemod-data/([^/]+)/data\.json$~', $dataJsonPath, $m)) {
+        return normalize_username((string)$m[1]);
+    }
+    $dir = basename(dirname($dataJsonPath));
+    return normalize_username((string)$dir);
+}
+
 
 
 // =====================
@@ -300,6 +278,27 @@ $defaultColor   = (string)($cfg['DEFAULT_COLOR'] ?? '3478bd');
 if ($EXPECTED_TOKEN === '' || $notemodFile === '') {
     respond_json(['status' => 'error', 'message' => 'Server not configured (EXPECTED_TOKEN / DATA_JSON)'], 500);
 }
+
+$resolvedDirUser = nm_extract_dir_user_from_data_json_path($notemodFile);
+if ($resolvedDirUser !== '') {
+    $dirUser = $resolvedDirUser;
+}
+
+$cfgCommonFile = nm_config_path($dirUser !== '' ? $dirUser : null);
+$cfgCommon = array();
+if (is_file($cfgCommonFile)) {
+    $tmpCfgCommon = require $cfgCommonFile;
+    if (is_array($tmpCfgCommon)) {
+        $cfgCommon = $tmpCfgCommon;
+    }
+}
+$GLOBALS['cfg'] = $cfgCommon;
+
+$tz = (string)($cfgCommon['TIMEZONE'] ?? $cfgCommon['timezone'] ?? '');
+if ($tz === '') {
+    $tz = 'Pacific/Auckland';
+}
+date_default_timezone_set($tz);
 
 // =====================
 // 1. パラメータ正規化（大小文字吸収 + POST/GET統一）
@@ -757,6 +756,7 @@ $categoryName = ($categoryParam !== '') ? $categoryParam : 'INBOX';
 
 // =====================
 // 4. Notemod の data.json をロック付きで読み込む
+//    ※ 暗号化対応のため data_crypto.php 経由で読む
 // =====================
 if (!file_exists($notemodFile)) {
     respond_json(['status' => 'error', 'message' => 'data.json not found'], 500);
@@ -765,9 +765,15 @@ if (!is_readable($notemodFile) || !is_writable($notemodFile)) {
     respond_json(['status' => 'error', 'message' => 'data.json not readable/writable'], 500);
 }
 
-[$fp, $data, $loadErr] = nm_api_locked_load_notemod($notemodFile);
-if ($loadErr !== null) {
-    respond_json(['status' => 'error', 'message' => 'failed to load data.json safely', 'detail' => $loadErr], 500);
+[$dataLockFp, $lockErr] = nm_api_acquire_data_lock($notemodFile);
+if ($lockErr !== null) {
+    respond_json(['status' => 'error', 'message' => 'failed to lock data.json safely', 'detail' => $lockErr], 500);
+}
+
+list($loadOk, $data, $loadReason) = nm_try_load_data_file($notemodFile);
+if (!$loadOk || !is_array($data)) {
+    nm_api_release_data_lock($dataLockFp);
+    respond_json(['status' => 'error', 'message' => 'failed to load data.json safely', 'detail' => $loadReason], 500);
 }
 
 $categoriesVal = $data['categories'] ?? '[]';
@@ -777,13 +783,11 @@ $categoriesArr = is_string($categoriesVal) ? json_decode($categoriesVal, true) :
 $notesArr      = is_string($notesVal) ? json_decode($notesVal, true) : $notesVal;
 
 if (!is_array($categoriesArr)) {
-    @flock($fp, LOCK_UN);
-    @fclose($fp);
+    nm_api_release_data_lock($dataLockFp);
     respond_json(['status' => 'error', 'message' => 'categories is invalid in data.json'], 500);
 }
 if (!is_array($notesArr)) {
-    @flock($fp, LOCK_UN);
-    @fclose($fp);
+    nm_api_release_data_lock($dataLockFp);
     respond_json(['status' => 'error', 'message' => 'notes is invalid in data.json'], 500);
 }
 
@@ -819,8 +823,7 @@ $createdAt = gmdate('Y-m-d\TH:i:s\Z');
 
 $safeText = notemod_text_to_html_preserve_newlines($textRaw);
 if ($safeText === '') {
-    @flock($fp, LOCK_UN);
-    @fclose($fp);
+    nm_api_release_data_lock($dataLockFp);
     respond_json(['status' => 'error', 'message' => 'text is required'], 400);
 }
 
@@ -859,7 +862,9 @@ $data['notes'] = is_string($notesVal)
     ? json_encode($notesArr, JSON_UNESCAPED_UNICODE)
     : $notesArr;
 
-if (!nm_api_locked_save_notemod($fp, $data)) {
+$saveOk = nm_save_data_file($notemodFile, $data);
+nm_api_release_data_lock($dataLockFp);
+if (!$saveOk) {
     respond_json(['status' => 'error', 'message' => 'failed to save data.json safely'], 500);
 }
 

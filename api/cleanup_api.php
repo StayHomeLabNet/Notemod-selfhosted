@@ -8,21 +8,37 @@
 //   2 = 実行しない（対象「数」だけ返す）← NEW
 
 require_once __DIR__ . '/../logger.php';
+require_once dirname(__DIR__) . '/data_crypto.php';
 
 // =====================
-// タイムゾーン設定（config/config.php から読む）
+// 利用ユーザー判定
 // =====================
-$tz = 'Pacific/Auckland';
-$cfgCommonFile = dirname(__DIR__) . '/config/config.php'; // api/ の1つ上 → config/
-$commonCfg = [];
-if (file_exists($cfgCommonFile)) {
-    $tmp = require $cfgCommonFile;
-    if (is_array($tmp)) $commonCfg = $tmp;
-
-    $t = (string)($commonCfg['TIMEZONE'] ?? $commonCfg['timezone'] ?? '');
-    if ($t !== '') $tz = $t;
+$dirUser = null;
+if (isset($currentDirUser) && is_string($currentDirUser) && $currentDirUser !== '') {
+    $dirUser = $currentDirUser;
 }
-date_default_timezone_set($tz);
+if (($dirUser === null || $dirUser === '') && function_exists('nm_get_current_dir_user')) {
+    $tmpUser = nm_get_current_dir_user();
+    if (is_string($tmpUser) && $tmpUser !== '') {
+        $dirUser = $tmpUser;
+    }
+}
+if ($dirUser === null || $dirUser === '') {
+    $rawUser = $_REQUEST['user'] ?? $_GET['user'] ?? $_POST['user'] ?? '';
+    if (function_exists('normalize_username')) {
+        $dirUser = normalize_username((string)$rawUser);
+    } else {
+        $dirUser = preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$rawUser);
+    }
+}
+if (!is_string($dirUser) || $dirUser === '') {
+    respond_json(['status' => 'error', 'message' => 'user not specified'], 400);
+}
+
+// =====================
+// タイムゾーン初期値（実際の common config 読み込み後に上書き）
+// =====================
+date_default_timezone_set('Pacific/Auckland');
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -40,6 +56,40 @@ function respond_json(array $payload, int $statusCode = 200): void
     exit;
 }
 
+function nm_cleanup_acquire_data_lock(string $path)
+{
+    $lockPath = $path . '.lock';
+    $fp = @fopen($lockPath, 'c+');
+    if ($fp === false) {
+        return [null, 'open_failed'];
+    }
+    if (!@flock($fp, LOCK_EX)) {
+        @fclose($fp);
+        return [null, 'lock_failed'];
+    }
+    return [$fp, null];
+}
+
+function nm_cleanup_release_data_lock($fp): void
+{
+    if (is_resource($fp)) {
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
+    }
+}
+
+
+function nm_extract_dir_user_from_data_json_path(string $dataJsonPath): string
+{
+    $dataJsonPath = str_replace('\\', '/', $dataJsonPath);
+    if (preg_match('~/notemod-data/([^/]+)/data\.json$~', $dataJsonPath, $m)) {
+        return normalize_username((string)$m[1]);
+    }
+    $dir = basename(dirname($dataJsonPath));
+    return normalize_username((string)$dir);
+}
+
+
 // =====================
 // 0. POST 強制（ただし GET action=backup_now は許可）
 // =====================
@@ -54,23 +104,24 @@ if ($method !== 'POST' && !$isBackupNowGet) {
 }
 
 // =====================
-// 1. 設定読み込み（config/config.api.php）
+// 1. 設定読み込み（config/<USER_NAME>/config.api.php）
 // =====================
-$configFile = dirname(__DIR__) . '/config/config.api.php';
+$configFile = function_exists('nm_api_config_path')
+    ? nm_api_config_path($dirUser)
+    : (dirname(__DIR__) . '/config/' . $dirUser . '/config.api.php');
 if (!file_exists($configFile)) {
-    respond_json(['status' => 'error', 'message' => 'config.api.php missing'], 500);
+    respond_json(['status' => 'error', 'message' => 'config.api.php missing', 'path' => 'config/' . $dirUser . '/config.api.php'], 500);
 }
 
 $cfg = require $configFile;
 if (!is_array($cfg)) $cfg = [];
 
-// cleanup用トークン（同じEXPECTED_TOKENでもいいし、分けたいなら ADMIN_TOKEN を追加してもOK）
+// cleanup用トークン
 $ADMIN_TOKEN = (string)($cfg['ADMIN_TOKEN'] ?? $cfg['EXPECTED_TOKEN'] ?? '');
 $notemodFile = (string)($cfg['DATA_JSON'] ?? '');
 
 // バックアップ設定
 $backupEnabled = (bool)($cfg['CLEANUP_BACKUP_ENABLED'] ?? true);
-$backupSuffix  = (string)($cfg['CLEANUP_BACKUP_SUFFIX'] ?? '.bak-');
 
 if ($ADMIN_TOKEN === '' || $notemodFile === '') {
     respond_json([
@@ -79,17 +130,40 @@ if ($ADMIN_TOKEN === '' || $notemodFile === '') {
     ], 500);
 }
 
+$resolvedDirUser = nm_extract_dir_user_from_data_json_path($notemodFile);
+if ($resolvedDirUser !== '') {
+    $dirUser = $resolvedDirUser;
+}
+
+$cfgCommonFile = function_exists('nm_config_path')
+    ? nm_config_path($dirUser)
+    : (dirname(__DIR__) . '/config/' . $dirUser . '/config.php');
+$commonCfg = [];
+if (is_file($cfgCommonFile)) {
+    $tmpCommon = require $cfgCommonFile;
+    if (is_array($tmpCommon)) $commonCfg = $tmpCommon;
+}
+$GLOBALS['cfg'] = $commonCfg;
+
+$tz = (string)($commonCfg['TIMEZONE'] ?? $commonCfg['timezone'] ?? '');
+if ($tz === '') {
+    $tz = 'Pacific/Auckland';
+}
+date_default_timezone_set($tz);
+
 if (!function_exists('nm_create_backup_now')) {
-    function nm_create_backup_now(string $notemodFile, string $backupSuffix): array
+    function nm_create_backup_now(string $notemodFile): array
     {
-        if (!file_exists($notemodFile)) {
+        if (!is_file($notemodFile)) {
             return ['ok' => false, 'message' => 'data.json not found'];
         }
-        if (!is_readable($notemodFile)) {
+        $raw = @file_get_contents($notemodFile);
+        if ($raw === false) {
             return ['ok' => false, 'message' => 'data.json not readable'];
         }
-        $backupFile = $notemodFile . $backupSuffix . date('Ymd-His');
-        if (!@copy($notemodFile, $backupFile)) {
+        $isEncrypted = function_exists('nm_is_encrypted_data_json') ? nm_is_encrypted_data_json($raw) : false;
+        $backupFile = dirname($notemodFile) . DIRECTORY_SEPARATOR . nm_get_backup_basename($isEncrypted, date('Ymd-His'));
+        if (!@file_put_contents($backupFile, $raw, LOCK_EX)) {
             return ['ok' => false, 'message' => 'failed to create backup'];
         }
         return [
@@ -101,7 +175,7 @@ if (!function_exists('nm_create_backup_now')) {
 }
 
 if ($isBackupNowGet) {
-    $r = nm_create_backup_now($notemodFile, $backupSuffix);
+    $r = nm_create_backup_now($notemodFile);
     if (!$r['ok']) {
         respond_json([
             'status' => 'error',
@@ -584,7 +658,7 @@ function nm_rebuild_file_index_and_fix_latest(string $userDir): array
 // =====================
 if ($purgeImagesBool || $purgeFilesBool || $deleteImagesBool || $deleteFilesBool) {
 
-    $username = nm_get_username();
+    $username = $dirUser;
     $userDir  = nm_get_user_dir($notemodFile, $username);
 
     $result = [
@@ -801,8 +875,8 @@ if ($purgeBakBool) {
 if ($purgeLogBool) {
 
     $logsDir = function_exists('nm_logs_dir')
-        ? nm_logs_dir($currentDirUser !== '' ? $currentDirUser : null)
-        : (dirname(__DIR__) . '/logs/' . $currentDirUser);
+        ? nm_logs_dir($dirUser !== '' ? $dirUser : null)
+        : (dirname(__DIR__) . '/logs/' . $dirUser);
 
     if (!is_dir($logsDir)) {
         respond_json([
@@ -881,8 +955,16 @@ if (!is_readable($notemodFile) || !is_writable($notemodFile)) {
     respond_json(['status' => 'error', 'message' => 'data.json not readable/writable'], 500);
 }
 
-$data = json_decode(file_get_contents($notemodFile), true);
-if (!is_array($data)) $data = [];
+list($dataLockFp, $lockErr) = nm_cleanup_acquire_data_lock($notemodFile);
+if ($lockErr !== null) {
+    respond_json(['status' => 'error', 'message' => 'failed to lock data.json safely', 'detail' => $lockErr], 500);
+}
+
+list($loadOk, $data, $loadReason) = nm_try_load_data_file($notemodFile);
+if (!$loadOk || !is_array($data)) {
+    nm_cleanup_release_data_lock($dataLockFp);
+    respond_json(['status' => 'error', 'message' => 'failed to load data.json safely', 'detail' => $loadReason], 500);
+}
 
 // Notemodの保存形式が「JSON文字列」でも「配列」でも対応
 $categoriesVal = $data['categories'] ?? '[]';
@@ -904,13 +986,13 @@ foreach ($categoriesArr as $cat) {
     $catName = (string)($cat['name'] ?? '');
     if ($catName !== '' && strcasecmp($catName, $categoryName) === 0) {
         $categoryId = $cat['id'] ?? null;
-        $resolvedCategoryName = $catName; // 既存表記に寄せる
+        $resolvedCategoryName = $catName;
         break;
     }
 }
 
 if ($categoryId === null) {
-    // dry_run=2 なら「数だけ」に寄せる
+    nm_cleanup_release_data_lock($dataLockFp);
     if ($dryRunMode === 2) {
         respond_json([
             'status'  => 'ok',
@@ -947,7 +1029,7 @@ foreach ($notesArr as $note) {
 }
 
 if ($dryRunBool) {
-    // dry_run=2: 数だけ返す（NEW）
+    nm_cleanup_release_data_lock($dataLockFp);
     if ($dryRunMode === 2) {
         respond_json([
             'status'  => 'ok',
@@ -957,7 +1039,6 @@ if ($dryRunBool) {
         ]);
     }
 
-    // dry_run=1: 従来どおり（※このAPIは「一覧」ではなく、削除数などの詳細を返す）
     respond_json([
         'status'   => 'ok',
         'message'  => 'dry run - nothing deleted',
@@ -974,9 +1055,16 @@ if ($dryRunBool) {
 $backupBaseName = null;
 
 if ($backupEnabled) {
-    $backupFile = $notemodFile . $backupSuffix . date('Ymd-His');
+    $backupRaw = @file_get_contents($notemodFile);
+    if ($backupRaw === false) {
+        nm_cleanup_release_data_lock($dataLockFp);
+        respond_json(['status' => 'error', 'message' => 'failed to read current data.json for backup'], 500);
+    }
+    $backupIsEncrypted = nm_is_encrypted_data_json($backupRaw);
+    $backupFile = dirname($notemodFile) . DIRECTORY_SEPARATOR . nm_get_backup_basename($backupIsEncrypted, date('Ymd-His'));
 
-    if (!copy($notemodFile, $backupFile)) {
+    if (@file_put_contents($backupFile, $backupRaw, LOCK_EX) === false) {
+        nm_cleanup_release_data_lock($dataLockFp);
         respond_json(['status' => 'error', 'message' => 'failed to create backup'], 500);
     }
 
@@ -984,20 +1072,17 @@ if ($backupEnabled) {
 }
 
 // =====================
-// 9. 保存（元の形式を維持）
+// 9. 保存（現在設定に従う）
 // =====================
 $data['notes'] = is_string($notesVal)
     ? json_encode($keptNotes, JSON_UNESCAPED_UNICODE)
     : $keptNotes;
 
-$saveResult = file_put_contents(
-    $notemodFile,
-    json_encode($data, JSON_UNESCAPED_UNICODE),
-    LOCK_EX
-);
+$saveResult = nm_save_data_file($notemodFile, $data);
+nm_cleanup_release_data_lock($dataLockFp);
 
 if ($saveResult === false) {
-    respond_json(['status' => 'error', 'message' => 'failed to save data.json'], 500);
+    respond_json(['status' => 'error', 'message' => 'failed to save data.json safely'], 500);
 }
 
 $out = [

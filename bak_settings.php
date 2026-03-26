@@ -1,14 +1,19 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
+require_once __DIR__ . '/data_crypto.php';
 
 /*
  * bak_settings.php
- * - config/config.api.php の CLEANUP_BACKUP_ENABLED をUIで編集（チェックボックス）
+ * - config/<USER_NAME>/config.api.php の CLEANUP_BACKUP_ENABLED をUIで編集（チェックボックス）
  * - バックアップファイル数 / 最新バックアップ作成日時を表示
  * - 「n個残す」を指定して、最新からn個を残し残りを削除（n=0で全削除）
- * - ★追加：バックアップ一覧から data.json をリストア
- * - UIは account.php と揃える（JP/EN, Dark/Light、右上トグル、上部にログイン中ユーザー名）
+ * - バックアップ一覧から data.json をリストア
+ * - 暗号化バックアップ命名:
+ *   - data.json.bak-YYYYMMDD-HHMMSS
+ *   - data.enc.json.bak-YYYYMMDD-HHMMSS
+ * - リストア時は、選択したバックアップを読み込み、
+ *   現在の DATA_ENCRYPTION_ENABLED に従って data.json に保存する
  */
 
 nm_auth_require_login();
@@ -56,7 +61,6 @@ $t = [
     'backup_latest' => '最新バックアップ',
     'backup_none' => 'なし',
 
-
     'backup_now' => '今すぐバックアップを作成',
     'backup_now_done' => 'バックアップを作成しました',
     'backup_now_failed' => 'バックアップの作成に失敗しました',
@@ -75,7 +79,7 @@ $t = [
     'btn_restore' => 'リストア',
     'confirm_restore' => '選択したバックアップを data.json に復元します。よろしいですか？',
 
-    'note_suffix' => '※ バックアップは DATA_JSON + CLEANUP_BACKUP_SUFFIX + タイムスタンプ の形式を想定しています',
+    'note_suffix' => '※ バックアップ形式は data.json.bak-YYYYMMDD-HHMMSS / data.enc.json.bak-YYYYMMDD-HHMMSS です',
   ],
   'en' => [
     'title' => 'Backup settings',
@@ -101,7 +105,6 @@ $t = [
     'backup_latest' => 'Latest backup',
     'backup_none' => 'None',
 
-
     'backup_now' => 'Create backup now',
     'backup_now_done' => 'Backup created',
     'backup_now_failed' => 'Failed to create backup',
@@ -120,7 +123,7 @@ $t = [
     'btn_restore' => 'Restore',
     'confirm_restore' => 'This will restore the selected backup into data.json. Continue?',
 
-    'note_suffix' => 'Note: Backup filename pattern is assumed as DATA_JSON + CLEANUP_BACKUP_SUFFIX + timestamp.',
+    'note_suffix' => 'Note: Backup filename patterns are data.json.bak-YYYYMMDD-HHMMSS and data.enc.json.bak-YYYYMMDD-HHMMSS.',
   ],
 ];
 
@@ -141,18 +144,8 @@ function nm_read_php_config_array(string $path): array {
     return is_array($arr) ? $arr : [];
 }
 
-function nm_php_value_literal(mixed $v): string {
-    if (is_bool($v)) return $v ? 'true' : 'false';
-    if (is_int($v)) return (string)$v;
-    if (is_float($v)) return (string)$v;
-    if (is_array($v)) return var_export($v, true);
-    return var_export((string)$v, true);
-}
-
 /**
- * config/config.api.php を「コメント等を保持したまま」指定キーだけ更新/追記
- * - $updates: ['KEY' => mixed, ...]
- * - null を渡した場合は更新しない（必要なら変更OK）
+ * config/<USER_NAME>/config.api.php を指定キーだけ更新/追記
  */
 function nm_update_config_api_values_preserve(string $configApiPath, array $updates): bool
 {
@@ -184,9 +177,7 @@ function nm_update_config_api_values_preserve(string $configApiPath, array $upda
         return true;
     }
 
-    $php = "<?php
-return " . var_export($cfg, true) . ";
-";
+    $php = "<?php\nreturn " . var_export($cfg, true) . ";\n";
     $tmp = $configApiPath . '.tmp';
 
     $ok = @file_put_contents($tmp, $php, LOCK_EX);
@@ -199,9 +190,7 @@ return " . var_export($cfg, true) . ";
     }
 
     @chmod($configApiPath, 0644);
-    if (function_exists('nm_invalidate_php_cache')) {
-        nm_invalidate_php_cache($configApiPath);
-    }
+    nm_invalidate_php_cache($configApiPath);
     return true;
 }
 
@@ -216,19 +205,28 @@ function nm_bool_from_post(string $key): bool {
     return isset($_POST[$key]) && $_POST[$key] === '1';
 }
 
-function nm_backup_files(string $dataJsonPath, string $suffix): array {
-    $pattern = $dataJsonPath . $suffix . '*';
-    $files = glob($pattern) ?: [];
+function nm_backup_files(string $dataJsonPath): array {
+    $dir = dirname($dataJsonPath);
+    if (!is_dir($dir)) return [];
+
+    $files = @scandir($dir);
+    if (!is_array($files)) return [];
+
     $out = [];
-    foreach ($files as $f) {
-        if (!is_file($f)) continue;
-        $mt = @filemtime($f);
-        $out[] = ['path' => $f, 'mtime' => $mt ?: 0];
+    foreach ($files as $name) {
+        if ($name === '.' || $name === '..') continue;
+        if (!nm_is_supported_backup_filename($name)) continue;
+
+        $path = $dir . DIRECTORY_SEPARATOR . $name;
+        if (!is_file($path)) continue;
+
+        $mt = @filemtime($path);
+        $out[] = ['path' => $path, 'mtime' => $mt ?: 0];
     }
+
     usort($out, fn($a, $b) => ($b['mtime'] <=> $a['mtime']));
     return $out;
 }
-
 
 /**
  * Format Unix timestamp in a specific timezone.
@@ -244,15 +242,14 @@ function nm_format_ts(int $ts, string $tzName): string {
     }
 }
 
-
 /**
  * 最新から keep 個残して残り削除（keep=0で全削除）
  */
-function nm_delete_old_backups(string $dataJsonPath, string $suffix, int $keep, int &$deletedCount, array &$failed): void {
+function nm_delete_old_backups(string $dataJsonPath, int $keep, int &$deletedCount, array &$failed): void {
     $deletedCount = 0;
     $failed = [];
 
-    $list = nm_backup_files($dataJsonPath, $suffix);
+    $list = nm_backup_files($dataJsonPath);
     if (empty($list)) return;
 
     $keep = max(0, $keep);
@@ -280,71 +277,65 @@ function nm_format_bytes(int $bytes): string {
     return rtrim(rtrim(number_format($v, 2, '.', ''), '0'), '.') . ' PB';
 }
 
-/**
- * 原子的にファイルを置き換える（tmpへ書いてから rename）
- * - $dst と同じディレクトリに tmp を作ることで rename を原子的にしやすい
- */
-function nm_atomic_replace_from_file(string $src, string $dst): bool {
-    if (!is_file($src) || !is_readable($src)) return false;
-
-    $dir = dirname($dst);
-    if (!is_dir($dir)) return false;
-
-    $tmp = $dst . '.tmp-' . bin2hex(random_bytes(4));
-
-    $in  = @fopen($src, 'rb');
-    if (!$in) return false;
-
-    $out = @fopen($tmp, 'wb');
-    if (!$out) { @fclose($in); return false; }
-
-    $ok = true;
-    if (function_exists('stream_copy_to_stream')) {
-        $copied = @stream_copy_to_stream($in, $out);
-        if ($copied === false) $ok = false;
-    } else {
-        while (!feof($in)) {
-            $buf = fread($in, 1024 * 1024);
-            if ($buf === false) { $ok = false; break; }
-            if (fwrite($out, $buf) === false) { $ok = false; break; }
-        }
-    }
-
-    @fclose($in);
-    @fclose($out);
-
-    if (!$ok) { @unlink($tmp); return false; }
-
-    @chmod($tmp, 0644);
-
-    // Windows互換：同名があると rename が失敗する環境があるので、先に消してみる
-    if (file_exists($dst)) {
-        @unlink($dst);
-    }
-
-    if (!@rename($tmp, $dst)) {
-        @unlink($tmp);
+function nm_with_data_lock(string $dataJsonPath, callable $callback): bool
+{
+    $lockPath = $dataJsonPath . '.lock';
+    $fp = @fopen($lockPath, 'c+');
+    if (!$fp) {
         return false;
     }
-    return true;
+
+    try {
+        if (!@flock($fp, LOCK_EX)) {
+            @fclose($fp);
+            return false;
+        }
+
+        $result = $callback();
+
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
+
+        return (bool)$result;
+    } catch (Throwable $e) {
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
+        return false;
+    }
+}
+
+function nm_detect_current_data_encrypted(string $dataJsonPath): bool
+{
+    if (!is_file($dataJsonPath)) {
+        return nm_data_encryption_enabled();
+    }
+
+    $raw = @file_get_contents($dataJsonPath);
+    if ($raw === false || trim($raw) === '') {
+        return nm_data_encryption_enabled();
+    }
+
+    return nm_is_encrypted_data_json($raw);
 }
 
 /**
- * data.json のバックアップを作成（既存の suffix 形式で作る）
+ * data.json の現在状態をそのままバックアップ
  */
-function nm_backup_current_datajson(string $dataJsonPath, string $suffix, string &$backupPath, string $tzName): bool {
+function nm_backup_current_datajson(string $dataJsonPath, string &$backupPath, string $tzName): bool {
     $backupPath = '';
     if (!is_file($dataJsonPath) || !is_readable($dataJsonPath)) return false;
 
     try {
-    $ts = (new DateTime('now', new DateTimeZone($tzName)))->format('Ymd-His');
-} catch (Throwable $e) {
-    $ts = date('Ymd-His');
-}
-$backupPath = $dataJsonPath . $suffix . $ts;
+        $ts = (new DateTime('now', new DateTimeZone($tzName)))->format('Ymd-His');
+    } catch (Throwable $e) {
+        $ts = date('Ymd-His');
+    }
+
+    $isEncrypted = nm_detect_current_data_encrypted($dataJsonPath);
+    $backupPath = nm_get_backup_file_path($dataJsonPath, $isEncrypted, $ts);
 
     if (file_exists($backupPath)) {
-        $backupPath = $dataJsonPath . $suffix . $ts . '-' . bin2hex(random_bytes(2));
+        $backupPath .= '-' . bin2hex(random_bytes(2));
     }
 
     $tmp = $backupPath . '.tmp-' . bin2hex(random_bytes(4));
@@ -369,29 +360,23 @@ $logoutUrl = nm_ui_url('/logout.php');
 $base = nm_auth_base_url();
 $backUrl = rtrim($base, '/') . '/';
 
+// --------------------
+// Load config/<USER_NAME>/config.php (array style)
+// --------------------
+$cfg = [];
+if (is_file($configPath)) {
+    try {
+        $cfg = nm_read_php_config_array($configPath);
+    } catch (Throwable $e) {
+        $cfg = [];
+    }
+}
+$GLOBALS['cfg'] = is_array($cfg) ? $cfg : [];
 
 // --------------------
-// TIMEZONE from config/config.php (for backup filenames & display)
+// TIMEZONE from config/<USER_NAME>/config.php
 // --------------------
-$tzName = 'Pacific/Auckland';
-$__nm_cfg_ret = null;
-$__nm_cfg_path = $configPath;
-
-// Prefer already-defined TIMEZONE (e.g., loaded by auth_common.php)
-// If not defined, try to load config/config.php safely.
-if (!defined('TIMEZONE') && is_file($__nm_cfg_path)) {
-    $__nm_cfg_ret = @include_once $__nm_cfg_path;
-}
-
-if (defined('TIMEZONE')) {
-    $tzName = (string)TIMEZONE;
-} elseif (isset($TIMEZONE) && is_string($TIMEZONE) && $TIMEZONE !== '') {
-    $tzName = (string)$TIMEZONE;
-} elseif (is_array($__nm_cfg_ret) && isset($__nm_cfg_ret['TIMEZONE'])) {
-    $tzName = (string)$__nm_cfg_ret['TIMEZONE'];
-}
-
-unset($__nm_cfg_ret, $__nm_cfg_path);
+$tzName = (string)($GLOBALS['cfg']['TIMEZONE'] ?? 'Pacific/Auckland');
 
 // Validate timezone
 try {
@@ -399,7 +384,6 @@ try {
 } catch (Throwable $e) {
     $tzName = 'Pacific/Auckland';
 }
-
 
 // --------------------
 // Load config.api.php
@@ -417,8 +401,6 @@ try {
 
 // Defaults
 $dataJson = (string)($cfgApi['DATA_JSON'] ?? nm_data_json_path($currentDirUser !== '' ? $currentDirUser : null));
-$suffix   = (string)($cfgApi['CLEANUP_BACKUP_SUFFIX'] ?? '.bak-');
-
 $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? true);
 $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? 20);
 
@@ -428,16 +410,11 @@ $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? 20);
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && $err === '') {
     $mode = (string)($_POST['mode'] ?? '');
 
-    // ----------------
-    // 1) Save / Delete は「設定更新」を伴う
-    // ----------------
     if ($mode === 'save' || $mode === 'delete') {
-
         $newEnabled = nm_bool_from_post('CLEANUP_BACKUP_ENABLED');
         $newKeep    = nm_int_from_post('CLEANUP_BACKUP_KEEP', $prefKeep);
         if ($newKeep < 0) $newKeep = 0;
 
-        // まず保存（キーが無ければ追記、あれば上書き）
         $updates = [
             'CLEANUP_BACKUP_ENABLED' => $newEnabled,
             'CLEANUP_BACKUP_KEEP'    => $newKeep,
@@ -448,11 +425,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && $err === '') {
         } else {
             $msg = $t[$lang]['saved'];
 
-            // 削除モード
             if ($mode === 'delete') {
                 $deletedCount = 0;
                 $failed = [];
-                nm_delete_old_backups($dataJson, $suffix, $newKeep, $deletedCount, $failed);
+                nm_delete_old_backups($dataJson, $newKeep, $deletedCount, $failed);
 
                 if ($deletedCount === 0 && empty($failed)) {
                     $msg = $t[$lang]['nothing_to_delete'];
@@ -464,41 +440,32 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && $err === '') {
                 }
             }
 
-            // 再読込して表示反映
             $cfgApi = nm_read_php_config_array($configApiPath);
             $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? $newEnabled);
             $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? $newKeep);
-
-            $dataJson = (string)($cfgApi['DATA_JSON'] ?? $dataJson);
-            $suffix   = (string)($cfgApi['CLEANUP_BACKUP_SUFFIX'] ?? $suffix);
+            $dataJson    = (string)($cfgApi['DATA_JSON'] ?? $dataJson);
         }
     }
 
-    // ----------------
-    
-    // ----------------
-    // 1.5) Backup now (manual)
-    // ----------------
     if ($mode === 'backup_now' && $err === '') {
         $manualBackupPath = '';
-        if (nm_backup_current_datajson($dataJson, $suffix, $manualBackupPath, $tzName)) {
+        $ok = nm_with_data_lock($dataJson, function() use ($dataJson, &$manualBackupPath, $tzName) {
+            return nm_backup_current_datajson($dataJson, $manualBackupPath, $tzName);
+        });
+
+        if ($ok) {
             $msg = $t[$lang]['backup_now_done'] . ': ' . basename($manualBackupPath);
         } else {
             $err = $t[$lang]['backup_now_failed'];
         }
     }
 
-// 2) Restore は「data.json の復元」だけ行い、設定は変更しない
-    // ----------------
     if ($mode === 'restore' && $err === '') {
-
         $restoreName = trim((string)($_POST['restore_file'] ?? ''));
         if ($restoreName === '') {
             $err = $t[$lang]['restore_select_required'];
         } else {
-
-            // バックアップ一覧から選択名を実パスへ解決（パストラバーサル防止）
-            $list = nm_backup_files($dataJson, $suffix);
+            $list = nm_backup_files($dataJson);
             $map = [];
             foreach ($list as $item) {
                 $map[basename((string)$item['path'])] = (string)$item['path'];
@@ -508,41 +475,37 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && $err === '') {
             if ($src === '' || !is_file($src)) {
                 $err = $t[$lang]['restore_failed'];
             } else {
-
-                // 復元前に「現在の data.json」をバックアップ
                 $preBackupPath = '';
-                $preOk = nm_backup_current_datajson($dataJson, $suffix, $preBackupPath, $tzName);
-                if (!$preOk) {
+                $restoreOk = nm_with_data_lock($dataJson, function() use ($dataJson, $src, &$preBackupPath, $tzName) {
+                    if (!nm_backup_current_datajson($dataJson, $preBackupPath, $tzName)) {
+                        return false;
+                    }
+                    list($ok, $reason) = nm_restore_backup_to_mode($src, $dataJson, nm_data_encryption_enabled());
+                    return $ok;
+                });
+
+                if (!$restoreOk) {
                     $err = $t[$lang]['restore_failed'];
                 } else {
-                    // 選択されたバックアップを data.json に上書き（原子的）
-                    $ok = nm_atomic_replace_from_file($src, $dataJson);
-                    if (!$ok) {
-                        $err = $t[$lang]['restore_failed'];
-                    } else {
-                        $msg = $t[$lang]['restore_done'];
-                        if ($preBackupPath !== '') {
-                            $msg .= " (" . $t[$lang]['restore_backup_created'] . ": " . basename($preBackupPath) . ")";
-                        }
+                    $msg = $t[$lang]['restore_done'];
+                    if ($preBackupPath !== '') {
+                        $msg .= " (" . $t[$lang]['restore_backup_created'] . ": " . basename($preBackupPath) . ")";
                     }
                 }
             }
         }
 
-        // 表示用：設定は再読込（復元で設定は変えてないが、OPcache対策も兼ねる）
         $cfgApi = nm_read_php_config_array($configApiPath);
         $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? $prefEnabled);
         $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? $prefKeep);
-
-        $dataJson = (string)($cfgApi['DATA_JSON'] ?? $dataJson);
-        $suffix   = (string)($cfgApi['CLEANUP_BACKUP_SUFFIX'] ?? $suffix);
+        $dataJson    = (string)($cfgApi['DATA_JSON'] ?? $dataJson);
     }
 }
 
 // --------------------
 // Backup info
 // --------------------
-$backups = nm_backup_files($dataJson, $suffix);
+$backups = nm_backup_files($dataJson);
 $backupCount = count($backups);
 $latestTs = ($backupCount > 0) ? (int)$backups[0]['mtime'] : 0;
 $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['backup_none'];
@@ -553,7 +516,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  
+
   <script>
     (function(){
       try{
@@ -778,6 +741,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
       font-size:12px;
       color:var(--muted);
     }
+
     .pill-mini{
       display:inline-flex;
       gap:6px;
@@ -925,7 +889,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
                       $p = (string)$b['path'];
                       $bn = basename($p);
                       $mt = (int)($b['mtime'] ?? 0);
-                      $dt = $mt > 0 ? date('Y-m-d H:i:s', $mt) : '-';
+                      $dt = $mt > 0 ? nm_format_ts($mt, $tzName) : '-';
                       $sz = @filesize($p);
                       $szText = is_int($sz) ? nm_format_bytes($sz) : '-';
                       $label = $bn . '  |  ' . $dt . '  |  ' . $szText;
@@ -946,7 +910,6 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
           </form>
 
           <script>
-            // keep入力を変更したら、削除フォームのhiddenにも即反映
             (function(){
               const keepInput = document.querySelector('input[name="CLEANUP_BACKUP_KEEP"]');
               const forms = document.querySelectorAll('form');
@@ -971,7 +934,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
           </script>
 
           <div class="row-links">
-          <a class="btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
+            <a class="btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
             <a class="btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
           </div>
 

@@ -1,5 +1,5 @@
 <?php
-// config/config.api.php
+// config/<USER_NAME>/config.api.php
 // この config/config.api.php は setup_auth.php によって自動生成されました
 // EXPECTED_TOKEN : 通常API用トークン（ノート追加・読み取りなど）
 // ADMIN_TOKEN    : cleanup 用の強力なトークン（破壊的操作）

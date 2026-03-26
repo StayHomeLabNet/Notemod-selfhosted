@@ -28,30 +28,16 @@ foreach (['dir_user', 'user', 'username'] as $key) {
         }
     }
 }
-if ($dirUser === '') {
+if ($dirUser === '' && function_exists('nm_get_current_dir_user')) {
     $dirUser = nm_get_current_dir_user();
 }
-$dirUser = function_exists('nm_get_current_dir_user') ? nm_get_current_dir_user() : '';
-foreach (['dir_user','user','username'] as $nmKey) {
-    if ($dirUser === '' && isset($_REQUEST[$nmKey])) {
-        $dirUser = normalize_username((string)$_REQUEST[$nmKey]);
-    }
-}
 
-require_once __DIR__ . '/../logger.php';
+$cfgCommon = array();
 
 // =====================
-// タイムゾーン設定（config/config.php から読む）
+// タイムゾーン初期値
 // =====================
 $tz = 'Pacific/Auckland';
-$cfgCommonFile = nm_config_path(isset($dirUser) ? $dirUser : null);
-if (file_exists($cfgCommonFile)) {
-    $common = require $cfgCommonFile;
-    if (is_array($common)) {
-        $t = (string)($common['TIMEZONE'] ?? $common['timezone'] ?? '');
-        if ($t !== '') $tz = $t;
-    }
-}
 date_default_timezone_set($tz);
 
 // =====================
@@ -190,36 +176,48 @@ if ($EXPECTED_TOKEN === '' || $notemodFile === '') {
     respond_json(['status' => 'error', 'message' => 'Server not configured (EXPECTED_TOKEN / DATA_JSON)'], 500, '0');
 }
 
+// =====================
+// 共通 config を確定（暗号化キー / タイムゾーン用）
+// - まずリクエストから得た dirUser を試す
+// - DATA_JSON が /notemod-data/<user>/data.json なら、その <user> から再推定
+// =====================
+$dirUserFromDataJson = '';
+$dataJsonDirName = basename(dirname($notemodFile));
+if (is_string($dataJsonDirName) && $dataJsonDirName !== '' && $dataJsonDirName !== '.' && $dataJsonDirName !== '..') {
+    $dirUserFromDataJson = normalize_username($dataJsonDirName);
+}
 
-// =====================
-// 追加：USERNAME（マルチユーザー想定・シングルでもOK）
-// =====================
-$USERNAME = 'default';
-$authFile = nm_auth_config_path(isset($dirUser) ? $dirUser : null);
-if (file_exists($authFile)) {
-    $auth = require $authFile;
-    if (is_array($auth) && isset($auth['USERNAME'])) {
-        $USERNAME = (string)$auth['USERNAME'];
-    } elseif (defined('USERNAME')) {
-        $USERNAME = (string)USERNAME;
+$resolvedDirUser = $dirUser;
+if ($dirUserFromDataJson !== '') {
+    $resolvedDirUser = $dirUserFromDataJson;
+}
+
+$configCommonFile = nm_config_path($resolvedDirUser !== '' ? $resolvedDirUser : null);
+if (is_file($configCommonFile)) {
+    $tmpCfg = require $configCommonFile;
+    if (is_array($tmpCfg)) {
+        $cfgCommon = $tmpCfg;
     }
 }
-// ディレクトリ名として安全な形に寄せる
-$USERNAME = preg_replace('/[^a-zA-Z0-9_-]/', '_', $USERNAME);
-if ($USERNAME === '' || $USERNAME === null) $USERNAME = 'default';
 
-// notemod-data のルートを推定（DATA_JSON が /notemod-data/<user>/data.json の場合にも対応）
-$dataJsonDir = realpath(dirname($notemodFile));
-$notemodDataRoot = $dataJsonDir ?: dirname($notemodFile);
+$GLOBALS['cfg'] = $cfgCommon;
 
-// 末尾が "/<user>" の場合はその1つ上をルート扱いにする
-if ($dataJsonDir && basename($dataJsonDir) === $USERNAME) {
-    $parent = realpath(dirname($dataJsonDir));
-    if ($parent) $notemodDataRoot = $parent;
+$t = (string)($cfgCommon['TIMEZONE'] ?? $cfgCommon['timezone'] ?? '');
+if ($t !== '') {
+    $tz = $t;
+    date_default_timezone_set($tz);
 }
 
-// ユーザーディレクトリ（存在しない場合でも参照できるようにパス組み立て）
-$userDir = rtrim($notemodDataRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $USERNAME;
+require_once dirname(__DIR__) . '/data_crypto.php';
+require_once __DIR__ . '/../logger.php';
+
+
+// =====================
+// latest系メタのあるユーザーディレクトリを確定
+// DATA_JSON が /notemod-data/<dirUser>/data.json なので、その親をそのまま使う
+// =====================
+$dataJsonDir = realpath(dirname($notemodFile));
+$userDir = $dataJsonDir ?: dirname($notemodFile);
 
 // =====================
 // 追加：バイナリ応答ヘルパー
@@ -335,7 +333,7 @@ if (!hash_equals($EXPECTED_TOKEN, $token)) {
 $action = (string)($params['action'] ?? 'list_categories');
 
 // =====================
-// 4. data.json を読み込む（shared lock）
+// 4. data.json を読み込む（暗号化ON/OFF両対応）
 // =====================
 if (!file_exists($notemodFile)) {
     respond_json(['status' => 'error', 'message' => 'data.json not found'], 500, $prettyMode === '1' ? '1' : '0');
@@ -344,14 +342,16 @@ if (!is_readable($notemodFile)) {
     respond_json(['status' => 'error', 'message' => 'data.json not readable'], 500, $prettyMode === '1' ? '1' : '0');
 }
 
-$json = nm_read_file_with_lock($notemodFile);
-if ($json === '') {
-    // lock読みに失敗した場合の保険
-    $json = (string)@file_get_contents($notemodFile);
+list($loadOk, $data, $loadReason) = nm_try_load_data_file($notemodFile);
+if (!$loadOk || !is_array($data)) {
+    $message = 'failed to read data.json';
+    if ($loadReason === 'decode_failed') {
+        $message = 'data.json is invalid or could not be decrypted';
+    } elseif ($loadReason === 'read_failed') {
+        $message = 'failed to read data.json';
+    }
+    respond_json(['status' => 'error', 'message' => $message], 500, $prettyMode === '1' ? '1' : '0');
 }
-
-$data = json_decode($json, true);
-if (!is_array($data)) $data = [];
 
 // Notemodの保存形式が「JSON文字列」でも「配列」でも対応
 $categoriesVal = $data['categories'] ?? '[]';
@@ -362,7 +362,6 @@ $notesArr      = is_string($notesVal) ? json_decode($notesVal, true) : $notesVal
 
 if (!is_array($categoriesArr)) $categoriesArr = [];
 if (!is_array($notesArr)) $notesArr = [];
-
 // =====================
 // 5. Logs カテゴリーID
 // =====================

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/auth_common.php';
+require_once __DIR__ . '/data_crypto.php';
 nm_auth_require_login();
 
 // notemod_sync.php
@@ -36,6 +37,37 @@ function nm_sync_atomic_write_json(string $path, string $payload): bool
         clearstatcache(true, $path);
     }
     return true;
+}
+
+
+function nm_sync_lock_path(string $dataFile): string
+{
+    return $dataFile . '.lock';
+}
+
+function nm_sync_with_lock(string $dataFile, callable $fn)
+{
+    $lockPath = nm_sync_lock_path($dataFile);
+    $lockFp = @fopen($lockPath, 'c');
+    if ($lockFp === false) {
+        return [false, 'lock_open_failed', null];
+    }
+
+    try {
+        if (!@flock($lockFp, LOCK_EX)) {
+            return [false, 'lock_failed', null];
+        }
+
+        $result = $fn();
+
+        @flock($lockFp, LOCK_UN);
+        @fclose($lockFp);
+        return [true, null, $result];
+    } catch (Throwable $e) {
+        @flock($lockFp, LOCK_UN);
+        @fclose($lockFp);
+        throw $e;
+    }
 }
 
 // --------------------
@@ -329,18 +361,20 @@ if ($action === 'save') {
     }
 
     // JSON妥当性チェック
-    json_decode($payload, true);
-    if (json_last_error() !== JSON_ERROR_NONE) {
+    $decodedPayload = json_decode($payload, true);
+    if (!is_array($decodedPayload)) {
         if ($DEBUG) nm_log($logFile, 'payload_invalid_json', ['err' => json_last_error_msg(), 'head' => substr($payload, 0, 200)]);
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'Data is not valid JSON', 'detail' => json_last_error_msg()], JSON_UNESCAPED_UNICODE);
         exit;
     }
 
-    $ok = nm_sync_atomic_write_json($dataFile, $payload);
+    list($lockOk, $lockErr, $saveOk) = nm_sync_with_lock($dataFile, function () use ($dataFile, $decodedPayload) {
+        return nm_save_data_file($dataFile, $decodedPayload);
+    });
 
-    if ($ok === false) {
-        if ($DEBUG) nm_log($logFile, 'write_failed', ['err' => error_get_last()]);
+    if (!$lockOk || $saveOk !== true) {
+        if ($DEBUG) nm_log($logFile, 'write_failed', ['lock_error' => $lockErr, 'err' => error_get_last()]);
         http_response_code(500);
         echo json_encode(['status' => 'error', 'message' => 'Failed to write file'], JSON_UNESCAPED_UNICODE);
         exit;
@@ -358,15 +392,18 @@ if ($action === 'load') {
 
     // 初回起動用：data.json が無ければ初期スナップショットで作成
     if (!file_exists($dataFile) || @filesize($dataFile) === 0) {
-
-        json_decode($INITIAL_SNAPSHOT, true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
+        $initialData = json_decode($INITIAL_SNAPSHOT, true);
+        if (!is_array($initialData)) {
             http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => 'INITIAL_SNAPSHOT is invalid JSON', 'detail' => json_last_error_msg()], JSON_UNESCAPED_UNICODE);
             exit;
         }
 
-        if (!nm_sync_atomic_write_json($dataFile, $INITIAL_SNAPSHOT)) {
+        list($lockOk, $lockErr, $initOk) = nm_sync_with_lock($dataFile, function () use ($dataFile, $initialData) {
+            return nm_save_data_file($dataFile, $initialData);
+        });
+
+        if (!$lockOk || $initOk !== true) {
             http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => 'Failed to initialize data.json'], JSON_UNESCAPED_UNICODE);
             exit;
@@ -374,13 +411,29 @@ if ($action === 'load') {
         if ($DEBUG) nm_log($logFile, 'initialized', ['bytes' => strlen($INITIAL_SNAPSHOT)]);
     }
 
-    $stored = (string)@file_get_contents($dataFile);
+    list($lockOk, $lockErr, $loaded) = nm_sync_with_lock($dataFile, function () use ($dataFile) {
+        return nm_try_load_data_file($dataFile);
+    });
 
-    json_decode($stored, true);
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        if ($DEBUG) nm_log($logFile, 'stored_invalid_json', ['err' => json_last_error_msg(), 'size' => @filesize($dataFile)]);
+    if (!$lockOk || !is_array($loaded)) {
+        if ($DEBUG) nm_log($logFile, 'stored_read_failed', ['lock_error' => $lockErr]);
         http_response_code(500);
-        echo json_encode(['status' => 'error', 'message' => 'Stored data.json is invalid JSON', 'detail' => json_last_error_msg()], JSON_UNESCAPED_UNICODE);
+        echo json_encode(['status' => 'error', 'message' => 'Failed to read stored data.json'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    list($loadOk, $storedData, $loadReason) = $loaded;
+    if (!$loadOk || !is_array($storedData)) {
+        if ($DEBUG) nm_log($logFile, 'stored_invalid_json', ['reason' => $loadReason, 'size' => @filesize($dataFile)]);
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Stored data.json is invalid or could not be decrypted', 'detail' => $loadReason], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $stored = nm_json_encode_data($storedData);
+    if (!is_string($stored) || $stored === false) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Failed to encode stored data.json'], JSON_UNESCAPED_UNICODE);
         exit;
     }
 
