@@ -29,12 +29,20 @@ if ($dirUser === '') {
 }
 
 require_once __DIR__ . '/../logger.php';
-require_once dirname(__DIR__) . '/data_crypto.php';
 
 // =====================
-// タイムゾーン初期値（実際の common config 読み込み後に上書き）
+// タイムゾーン設定（config/config.php から読む）
 // =====================
-date_default_timezone_set('Pacific/Auckland');
+$tz = 'Pacific/Auckland';
+$cfgCommonFile = nm_config_path($dirUser !== '' ? $dirUser : null);
+if (file_exists($cfgCommonFile)) {
+    $common = require $cfgCommonFile;
+    if (is_array($common)) {
+        $t = (string)($common['TIMEZONE'] ?? $common['timezone'] ?? '');
+        if ($t !== '') $tz = $t;
+    }
+}
+date_default_timezone_set($tz);
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -54,39 +62,53 @@ function respond_json(array $payload, int $statusCode = 200): void
 }
 
 
-function nm_api_acquire_data_lock(string $path)
+function nm_api_locked_load_notemod(string $path)
 {
-    $lockPath = $path . '.lock';
-    $fp = @fopen($lockPath, 'c+');
+    $fp = @fopen($path, 'c+');
     if ($fp === false) {
-        return [null, 'open_failed'];
+        return [null, null, 'open_failed'];
     }
     if (!@flock($fp, LOCK_EX)) {
         @fclose($fp);
-        return [null, 'lock_failed'];
+        return [null, null, 'lock_failed'];
     }
-    return [$fp, null];
-}
 
-function nm_api_release_data_lock($fp): void
-{
-    if (is_resource($fp)) {
+    clearstatcache(true, $path);
+    $raw = stream_get_contents($fp);
+    if ($raw === false) {
         @flock($fp, LOCK_UN);
         @fclose($fp);
+        return [null, null, 'read_failed'];
     }
+    if ($raw === '') {
+        $raw = '{}';
+    }
+
+    $data = json_decode($raw, true);
+    if (!is_array($data)) {
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
+        return [null, null, 'json_invalid'];
+    }
+
+    return [$fp, $data, null];
 }
 
-
-function nm_extract_dir_user_from_data_json_path(string $dataJsonPath): string
+function nm_api_locked_save_notemod($fp, array $data): bool
 {
-    $dataJsonPath = str_replace('\\', '/', $dataJsonPath);
-    if (preg_match('~/notemod-data/([^/]+)/data\.json$~', $dataJsonPath, $m)) {
-        return normalize_username((string)$m[1]);
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        return false;
     }
-    $dir = basename(dirname($dataJsonPath));
-    return normalize_username((string)$dir);
-}
 
+    if (@ftruncate($fp, 0) === false) return false;
+    if (@rewind($fp) === false) return false;
+    if (@fwrite($fp, $json) === false) return false;
+    @fflush($fp);
+    @flock($fp, LOCK_UN);
+    @fclose($fp);
+    return true;
+}
 
 
 // =====================
@@ -225,6 +247,52 @@ function notemod_text_to_html_preserve_newlines(string $text): string
 }
 
 
+
+
+function nm_api_normalize_notemod_snapshot(array $data): array
+{
+    foreach (['categories', 'notes', 'categoryOrder', 'noteOrder'] as $key) {
+        if (array_key_exists($key, $data) && is_string($data[$key])) {
+            $decoded = json_decode($data[$key], true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $data[$key] = $decoded;
+            }
+        }
+    }
+
+    foreach (['sidebarState', 'thizaState', 'tema'] as $key) {
+        if (array_key_exists($key, $data) && $data[$key] === 'null') {
+            $data[$key] = null;
+        }
+    }
+
+    if (isset($data['hasSelectedLanguage']) && is_string($data['hasSelectedLanguage'])) {
+        if ($data['hasSelectedLanguage'] === 'true') {
+            $data['hasSelectedLanguage'] = true;
+        } elseif ($data['hasSelectedLanguage'] === 'false') {
+            $data['hasSelectedLanguage'] = false;
+        } else {
+            $decoded = json_decode($data['hasSelectedLanguage'], true);
+            if (is_bool($decoded)) {
+                $data['hasSelectedLanguage'] = $decoded;
+            } elseif ($decoded === 'true') {
+                $data['hasSelectedLanguage'] = true;
+            } elseif ($decoded === 'false') {
+                $data['hasSelectedLanguage'] = false;
+            }
+        }
+    }
+
+    if (isset($data['selectedLanguage']) && is_string($data['selectedLanguage'])) {
+        $decoded = json_decode($data['selectedLanguage'], true);
+        if (is_string($decoded)) {
+            $data['selectedLanguage'] = $decoded;
+        }
+    }
+
+    return $data;
+}
+
 function nm_fix_filename_utf8(string $name): string
 {
     $name = trim(str_replace(["\0", "\r", "\n"], '', $name));
@@ -278,27 +346,6 @@ $defaultColor   = (string)($cfg['DEFAULT_COLOR'] ?? '3478bd');
 if ($EXPECTED_TOKEN === '' || $notemodFile === '') {
     respond_json(['status' => 'error', 'message' => 'Server not configured (EXPECTED_TOKEN / DATA_JSON)'], 500);
 }
-
-$resolvedDirUser = nm_extract_dir_user_from_data_json_path($notemodFile);
-if ($resolvedDirUser !== '') {
-    $dirUser = $resolvedDirUser;
-}
-
-$cfgCommonFile = nm_config_path($dirUser !== '' ? $dirUser : null);
-$cfgCommon = array();
-if (is_file($cfgCommonFile)) {
-    $tmpCfgCommon = require $cfgCommonFile;
-    if (is_array($tmpCfgCommon)) {
-        $cfgCommon = $tmpCfgCommon;
-    }
-}
-$GLOBALS['cfg'] = $cfgCommon;
-
-$tz = (string)($cfgCommon['TIMEZONE'] ?? $cfgCommon['timezone'] ?? '');
-if ($tz === '') {
-    $tz = 'Pacific/Auckland';
-}
-date_default_timezone_set($tz);
 
 // =====================
 // 1. パラメータ正規化（大小文字吸収 + POST/GET統一）
@@ -756,7 +803,6 @@ $categoryName = ($categoryParam !== '') ? $categoryParam : 'INBOX';
 
 // =====================
 // 4. Notemod の data.json をロック付きで読み込む
-//    ※ 暗号化対応のため data_crypto.php 経由で読む
 // =====================
 if (!file_exists($notemodFile)) {
     respond_json(['status' => 'error', 'message' => 'data.json not found'], 500);
@@ -765,29 +811,27 @@ if (!is_readable($notemodFile) || !is_writable($notemodFile)) {
     respond_json(['status' => 'error', 'message' => 'data.json not readable/writable'], 500);
 }
 
-[$dataLockFp, $lockErr] = nm_api_acquire_data_lock($notemodFile);
-if ($lockErr !== null) {
-    respond_json(['status' => 'error', 'message' => 'failed to lock data.json safely', 'detail' => $lockErr], 500);
+[$fp, $data, $loadErr] = nm_api_locked_load_notemod($notemodFile);
+if ($loadErr !== null) {
+    respond_json(['status' => 'error', 'message' => 'failed to load data.json safely', 'detail' => $loadErr], 500);
 }
 
-list($loadOk, $data, $loadReason) = nm_try_load_data_file($notemodFile);
-if (!$loadOk || !is_array($data)) {
-    nm_api_release_data_lock($dataLockFp);
-    respond_json(['status' => 'error', 'message' => 'failed to load data.json safely', 'detail' => $loadReason], 500);
-}
+$data = nm_api_normalize_notemod_snapshot($data);
 
-$categoriesVal = $data['categories'] ?? '[]';
-$notesVal      = $data['notes'] ?? '[]';
+$categoriesVal = $data['categories'] ?? array();
+$notesVal      = $data['notes'] ?? array();
 
-$categoriesArr = is_string($categoriesVal) ? json_decode($categoriesVal, true) : $categoriesVal;
-$notesArr      = is_string($notesVal) ? json_decode($notesVal, true) : $notesVal;
+$categoriesArr = is_array($categoriesVal) ? $categoriesVal : array();
+$notesArr      = is_array($notesVal) ? $notesVal : array();
 
 if (!is_array($categoriesArr)) {
-    nm_api_release_data_lock($dataLockFp);
+    @flock($fp, LOCK_UN);
+    @fclose($fp);
     respond_json(['status' => 'error', 'message' => 'categories is invalid in data.json'], 500);
 }
 if (!is_array($notesArr)) {
-    nm_api_release_data_lock($dataLockFp);
+    @flock($fp, LOCK_UN);
+    @fclose($fp);
     respond_json(['status' => 'error', 'message' => 'notes is invalid in data.json'], 500);
 }
 
@@ -823,7 +867,8 @@ $createdAt = gmdate('Y-m-d\TH:i:s\Z');
 
 $safeText = notemod_text_to_html_preserve_newlines($textRaw);
 if ($safeText === '') {
-    nm_api_release_data_lock($dataLockFp);
+    @flock($fp, LOCK_UN);
+    @fclose($fp);
     respond_json(['status' => 'error', 'message' => 'text is required'], 400);
 }
 
@@ -854,17 +899,10 @@ foreach ($notesArr as $n) {
 // =====================
 // 8. data.json に書き戻す（同じロック中）
 // =====================
-$data['categories'] = is_string($categoriesVal)
-    ? json_encode($categoriesArr, JSON_UNESCAPED_UNICODE)
-    : $categoriesArr;
+$data['categories'] = $categoriesArr;
+$data['notes'] = $notesArr;
 
-$data['notes'] = is_string($notesVal)
-    ? json_encode($notesArr, JSON_UNESCAPED_UNICODE)
-    : $notesArr;
-
-$saveOk = nm_save_data_file($notemodFile, $data);
-nm_api_release_data_lock($dataLockFp);
-if (!$saveOk) {
+if (!nm_api_locked_save_notemod($fp, $data)) {
     respond_json(['status' => 'error', 'message' => 'failed to save data.json safely'], 500);
 }
 

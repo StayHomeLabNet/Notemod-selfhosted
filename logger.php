@@ -451,8 +451,8 @@ if ($logNotemodEnabled) {
     if (is_dir($dataDir)) {
         list($lockFp, $data, $loadError) = nm_logger_locked_load_notemod($notemodFile);
         if ($lockFp !== null && is_array($data)) {
-            if (!isset($data['categories'])) $data['categories'] = '[]';
-            if (!isset($data['notes'])) $data['notes'] = '[]';
+            if (!isset($data['categories'])) $data['categories'] = array();
+            if (!isset($data['notes'])) $data['notes'] = array();
 
             $categoriesVal = $data['categories'];
             $notesVal = $data['notes'];
@@ -507,8 +507,8 @@ if ($logNotemodEnabled) {
             $notesArr[$logsNoteIndex]['content'] = $newContent;
             $notesArr[$logsNoteIndex]['updatedAt'] = gmdate('Y-m-d\\TH:i:s\\Z');
 
-            $data['categories'] = json_encode($categoriesArr, JSON_UNESCAPED_UNICODE);
-            $data['notes'] = json_encode($notesArr, JSON_UNESCAPED_UNICODE);
+            $data['categories'] = $categoriesArr;
+            $data['notes'] = $notesArr;
 
             if (!nm_logger_locked_save_notemod($lockFp, $notemodFile, $data)) {
                 error_log('logger.php: failed to save notemod log data: ' . $notemodFile);

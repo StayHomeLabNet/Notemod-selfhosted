@@ -66,7 +66,7 @@ if ($isLoggedIn) {
 // --------------------
 $t = [
   'ja' => [
-    'title' => 'ログ設定',
+    'title' => 'ログ / セッション設定',
     'desc'  => 'config/<DIR_USER>/config.php のログ・通知関連の設定を変更します。',
     'logged_as' => 'ログイン中:',
     'storage_user' => '保存先ディレクトリ:',
@@ -86,8 +86,13 @@ $t = [
 
     'section_general' => '一般',
     'timezone' => 'TIMEZONE（例：Asia/Tokyo / Australia/Sydney / Pacific/Auckland / America/New_York）',
+    'section_session' => 'セッション',
+    'session_cookie_lifetime' => 'セッションクッキー保持期間',
+    'session_server_gc' => 'サーバー側 PHP セッション保存期限（確認用）',
+    'session_server_gc_value' => 'session.gc_maxlifetime',
+    'session_warning' => 'ブラウザ側の保持期間です。サーバー側設定によっては、それより早くログインが切れる場合があります',
 
-    'section_logger' => 'ロガー',
+    'section_logger' => 'ログ',
     'logger_file_enabled' => 'LOGGER_FILE_ENABLED（Raw access log を出力）',
     'logger_notemod_enabled' => 'LOGGER_NOTEMOD_ENABLED（Notemod Logs カテゴリへ書く）',
     'logger_file_max_lines' => 'LOGGER_FILE_MAX_LINES（Raw log の最大行数 / 0=無制限）',
@@ -104,7 +109,7 @@ $t = [
     'go_back' => '戻る',
   ],
   'en' => [
-    'title' => 'Log settings',
+    'title' => 'Log / Session Settings',
     'desc'  => 'Edit logging / notification settings in config/<DIR_USER>/config.php.',
     'logged_as' => 'Logged in as:',
     'storage_user' => 'Storage directory user:',
@@ -124,6 +129,11 @@ $t = [
 
     'section_general' => 'General',
     'timezone' => 'TIMEZONE (e.g. Asia/Tokyo / Australia/Sydney / Pacific/Auckland / America/New_York)',
+    'section_session' => 'Session',
+    'session_cookie_lifetime' => 'Session cookie lifetime',
+    'session_server_gc' => 'Server-side PHP session retention (reference)',
+    'session_server_gc_value' => 'session.gc_maxlifetime',
+    'session_warning' => 'This is the browser-side retention period. Depending on the server-side settings, your login may expire earlier.',
 
     'section_logger' => 'Logger',
     'logger_file_enabled' => 'LOGGER_FILE_ENABLED (write raw access logs)',
@@ -201,6 +211,18 @@ function nm_php_value_literal(mixed $v): string {
     if (is_array($v)) return var_export($v, true);
     return var_export((string)$v, true);
 }
+
+function nm_session_seconds_to_label(int $seconds, string $lang): string {
+    if ($seconds <= 0) {
+        return $lang === 'ja' ? 'ブラウザを閉じるまで' : 'Until browser is closed';
+    }
+    $days = (int) floor($seconds / 86400);
+    if ($lang === 'ja') {
+        return $days . '日';
+    }
+    return $days . ' day' . ($days === 1 ? '' : 's');
+}
+
 
 /**
  * config/config.php を「既存のコメント/他設定を保持」しつつ更新する
@@ -312,6 +334,7 @@ try {
 // Prefill
 $pref = [
     'TIMEZONE' => (string)($cfg['TIMEZONE'] ?? 'Asia/Tokyo'),
+    'SESSION_COOKIE_LIFETIME' => (int)($cfg['SESSION_COOKIE_LIFETIME'] ?? 0),
 
     'LOGGER_FILE_ENABLED' => (bool)($cfg['LOGGER_FILE_ENABLED'] ?? true),
     'LOGGER_NOTEMOD_ENABLED' => (bool)($cfg['LOGGER_NOTEMOD_ENABLED'] ?? true),
@@ -332,6 +355,12 @@ $prefIgnoreIpsText = '';
 if (!empty($pref['IP_ALERT_IGNORE_IPS']) && is_array($pref['IP_ALERT_IGNORE_IPS'])) {
     $prefIgnoreIpsText = implode(", ", array_map('strval', $pref['IP_ALERT_IGNORE_IPS']));
 }
+$sessionLifetimeOptions = function_exists('nm_session_cookie_lifetime_options')
+    ? nm_session_cookie_lifetime_options()
+    : array(0 => 'Until browser is closed', 86400 => '1 day', 604800 => '7 days', 2592000 => '30 days');
+$serverGcMaxLifetime = function_exists('nm_server_session_gc_maxlifetime')
+    ? (int)nm_server_session_gc_maxlifetime()
+    : (int)ini_get('session.gc_maxlifetime');
 
 // --------------------
 // Handle POST
@@ -345,8 +374,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         $timezone = nm_str_from_post('TIMEZONE', $pref['TIMEZONE']);
         $ignoreIpsParsed = nm_parse_ignore_ips((string)($_POST['IP_ALERT_IGNORE_IPS'] ?? ''));
 
+        $sessionCookieLifetime = nm_int_from_post('SESSION_COOKIE_LIFETIME', $pref['SESSION_COOKIE_LIFETIME']);
+        if (!array_key_exists($sessionCookieLifetime, $sessionLifetimeOptions)) {
+            $sessionCookieLifetime = 0;
+        }
+
         $updates = [
             'TIMEZONE' => $timezone,
+            'SESSION_COOKIE_LIFETIME' => $sessionCookieLifetime,
 
             'LOGGER_FILE_ENABLED' => nm_bool_from_post('LOGGER_FILE_ENABLED'),
             'LOGGER_NOTEMOD_ENABLED' => nm_bool_from_post('LOGGER_NOTEMOD_ENABLED'),
@@ -378,6 +413,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $cfg = nm_read_php_config_array($configPath);
 
             $pref['TIMEZONE'] = (string)($cfg['TIMEZONE'] ?? $updates['TIMEZONE']);
+            $pref['SESSION_COOKIE_LIFETIME'] = (int)($cfg['SESSION_COOKIE_LIFETIME'] ?? $updates['SESSION_COOKIE_LIFETIME']);
 
             $pref['LOGGER_FILE_ENABLED'] = (bool)($cfg['LOGGER_FILE_ENABLED'] ?? $updates['LOGGER_FILE_ENABLED']);
             $pref['LOGGER_NOTEMOD_ENABLED'] = (bool)($cfg['LOGGER_NOTEMOD_ENABLED'] ?? $updates['LOGGER_NOTEMOD_ENABLED']);
@@ -514,7 +550,7 @@ $logoutUrl = nm_ui_url('/logout.php');
     }
     h3{ margin:0 0 10px; font-size:14px; }
     label{ display:block; font-size:12px; color:var(--muted); margin:10px 0 6px; }
-    input, textarea{
+    input, textarea, select{
       width:100%;
       padding:12px 12px;
       border-radius:14px;
@@ -524,11 +560,11 @@ $logoutUrl = nm_ui_url('/logout.php');
       outline:none;
     }
     textarea{ min-height: 64px; resize: vertical; }
-    input:focus, textarea:focus{
+    input:focus, textarea:focus, select:focus{
       border-color: color-mix(in srgb, var(--accent) 70%, transparent);
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
     }
-    input[disabled], textarea[disabled]{ opacity:.75; cursor:not-allowed; }
+    input[disabled], textarea[disabled], select[disabled]{ opacity:.75; cursor:not-allowed; }
     .btn{
       border:none; border-radius:14px;
       padding:12px 14px;
@@ -657,6 +693,32 @@ $logoutUrl = nm_ui_url('/logout.php');
             <input name="TIMEZONE"
                    value="<?=htmlspecialchars($pref['TIMEZONE'], ENT_QUOTES, 'UTF-8')?>"
                    <?= $canEdit ? '' : 'disabled' ?>>
+          </div>
+
+
+          <div class="box">
+            <h3><?=htmlspecialchars($t[$lang]['section_session'], ENT_QUOTES, 'UTF-8')?></h3>
+
+            <label><?=htmlspecialchars($t[$lang]['session_cookie_lifetime'], ENT_QUOTES, 'UTF-8')?></label>
+            <select name="SESSION_COOKIE_LIFETIME" <?= $canEdit ? '' : 'disabled' ?>>
+              <?php foreach ($sessionLifetimeOptions as $optValue => $optLabel): ?>
+                <option value="<?=htmlspecialchars((string)$optValue, ENT_QUOTES, 'UTF-8')?>"
+                        <?= ((int)$pref['SESSION_COOKIE_LIFETIME'] === (int)$optValue) ? 'selected' : '' ?>>
+                  <?=htmlspecialchars((string)$optLabel, ENT_QUOTES, 'UTF-8')?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+
+            <div class="notice" style="margin-top:10px;">
+              <?=htmlspecialchars($t[$lang]['session_server_gc'], ENT_QUOTES, 'UTF-8')?><br>
+              <b><?=htmlspecialchars($t[$lang]['session_server_gc_value'], ENT_QUOTES, 'UTF-8')?>:</b>
+              <?=htmlspecialchars((string)$serverGcMaxLifetime, ENT_QUOTES, 'UTF-8')?> sec
+              (<?=htmlspecialchars(nm_session_seconds_to_label((int)$serverGcMaxLifetime, $lang), ENT_QUOTES, 'UTF-8')?>)
+            </div>
+
+            <div class="notice" style="margin-top:10px;">
+              <?=htmlspecialchars($t[$lang]['session_warning'], ENT_QUOTES, 'UTF-8')?>
+            </div>
           </div>
 
           <div class="box">

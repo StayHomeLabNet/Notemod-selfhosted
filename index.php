@@ -381,7 +381,7 @@ button#settings{
   flex-direction: column-reverse;
 
   /* ★ 小さめにする */
-  min-width: 132px;      /* 168 → 132 */
+  min-width: 144px;
   padding: 5px;
   border-radius: 12px;
 
@@ -688,8 +688,25 @@ const SyncManager = {
         }
     },
     async load(forceClear = false) {
-        if (forceClear) clearNotemodKeysOnly();
-        if (typeof syncLoadFromServer === 'function') await syncLoadFromServer();
+        const backup = {};
+        if (forceClear) {
+            for (const key of NOTEMOD_KEYS) {
+                try { backup[key] = localStorage.getItem(key); } catch {}
+            }
+        }
+        if (typeof syncLoadFromServer === 'function') {
+            const ok = await syncLoadFromServer();
+            if (!ok && forceClear) {
+                for (const key of NOTEMOD_KEYS) {
+                    try {
+                        if (backup[key] === null || backup[key] === undefined) localStorage.removeItem(key);
+                        else localStorage.setItem(key, backup[key]);
+                    } catch {}
+                }
+            }
+            return ok;
+        }
+        return false;
     }
 };
 
@@ -702,7 +719,7 @@ window.addEventListener('DOMContentLoaded', function () {
         if (target.closest('#sync')) {
             event.preventDefault();
             event.stopImmediatePropagation();
-            SyncManager.load(true);
+            SyncManager.load(false);
             return;
         }
 
@@ -732,6 +749,8 @@ function notemodRestoreSnapshot(jsonStr) {
     return false
   }
 
+  const storeRawStringKeys = ['sidebarState', 'thizaState', 'tema', 'selectedLanguage', 'hasSelectedLanguage'];
+
   for (const key of NOTEMOD_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(obj, key)) continue
 
@@ -739,12 +758,14 @@ function notemodRestoreSnapshot(jsonStr) {
       const v = obj[key]
       if (v === null || v === undefined) {
         localStorage.removeItem(key)
+      } else if (storeRawStringKeys.includes(key)) {
+        localStorage.setItem(key, String(v))
       } else {
-        localStorage.setItem(key, v)
+        localStorage.setItem(key, JSON.stringify(v))
       }
     } catch (e) {
-      console.error('Restore failed at key:', key, e)
-      // 続行（他のキーは復元する）
+      console.error('Restore failed: localStorage setItem error', key, e)
+      return false
     }
   }
   return true
@@ -844,9 +865,42 @@ const NOTEMOD_KEYS = [
 // localStorage → まとめJSONを作る
 function notemodCreateSnapshot() {
   const obj = {};
+  const parseJsonKeys = ['categories', 'notes', 'categoryOrder', 'noteOrder'];
+  const rawStringKeys = ['selectedLanguage', 'hasSelectedLanguage', 'sidebarState', 'thizaState', 'tema'];
+
   for (const key of NOTEMOD_KEYS) {
-    obj[key] = localStorage.getItem(key); // そのまま文字列で保存
+    const raw = localStorage.getItem(key);
+
+    if (raw === null) {
+      obj[key] = null;
+      continue;
+    }
+
+    if (parseJsonKeys.includes(key)) {
+      try {
+        obj[key] = JSON.parse(raw);
+      } catch (e) {
+        obj[key] = raw;
+      }
+      continue;
+    }
+
+    if (rawStringKeys.includes(key)) {
+      if (key === 'hasSelectedLanguage') {
+        if (raw === 'true') obj[key] = true;
+        else if (raw === 'false') obj[key] = false;
+        else obj[key] = raw;
+      } else if ((key === 'sidebarState' || key === 'thizaState' || key === 'tema') && raw === 'null') {
+        obj[key] = null;
+      } else {
+        obj[key] = raw;
+      }
+      continue;
+    }
+
+    obj[key] = raw;
   }
+
   return JSON.stringify(obj);
 }
 
@@ -946,7 +1000,7 @@ async function syncSaveToServerBackground() {
     <button id="logout">Logout</button>
     <button id="account">Account</button>
     <button id="setup_auth">Credentials</button>
-    <button id="log_settings">Log settings</button>
+    <button id="log_settings">Log / Session Settings</button>
     <button id="bak_settings">Backup settings</button>
     <button id="clipboard_sync">Clipboard Sync</button>
     <button id="media_files">Media & Files</button>
@@ -1095,7 +1149,7 @@ settings:{AR:"الإعدادات",DE:"Einstellungen",EN:"Settings",ES:"Configura
 logout:{AR:"تسجيل الخروج",DE:"Abmelden",EN:"Logout",ES:"Cerrar sesión",FA:"خروج",FR:"Se déconnecter",HI:"लॉग आउट",ID:"Keluar",IT:"Disconnetti",JA:"ログアウト",KO:"로그아웃",SW:"Ondoka",PL:"Wyloguj",PT:"Sair",RU:"Выйти",VI:"Đăng xuất",TR:"Çıkış yap",UR:"لاگ آؤٹ",UZ:"Chiqish",ZH:"退出登录",NL:"Uitloggen",SV:"Logga ut",EL:"Αποσύνδεση",CS:"Odhlásit se",HU:"Kijelentkezés",RO:"Deconectare",BG:"Изход",DA:"Log ud",FI:"Kirjaudu ulos",SL:"Odjava"},
 account:{AR:"الحساب",DE:"Konto",EN:"Account",ES:"Cuenta",FA:"حساب",FR:"Compte",HI:"खाता",ID:"Akun",IT:"Account",JA:"アカウント",KO:"계정",SW:"Akaunti",PL:"Konto",PT:"Conta",RU:"Аккаунт",VI:"Tài khoản",TR:"Hesap",UR:"اکاؤنٹ",UZ:"Hisob",ZH:"账户",NL:"Account",SV:"Konto",EL:"Λογαριασμός",CS:"Účet",HU:"Fiók",RO:"Cont",BG:"Акаунт",DA:"Konto",FI:"Tili",SL:"Račun"},
 setup_auth:{AR:"إعدادات المصادقة",DE:"Authentifizierungseinstellungen",EN:"Authentication settings",ES:"Configuración de autenticación",FA:"تنظیمات احراز هویت",FR:"Paramètres d’authentification",HI:"प्रमाणीकरण सेटिंग्स",ID:"Pengaturan autentikasi",IT:"Impostazioni di autenticazione",JA:"認証設定",KO:"인증 설정",SW:"Mipangilio ya uthibitishaji",PL:"Ustawienia uwierzytelniania",PT:"Configurações de autenticação",RU:"Настройки аутентификации",VI:"Cài đặt xác thực",TR:"Kimlik doğrulama ayarları",UR:"توثیق کی ترتیبات",UZ:"Autentifikatsiya sozlamalari",ZH:"认证设置",NL:"Authenticatie-instellingen",SV:"Autentiseringsinställningar",EL:"Ρυθμίσεις αυθεντικοποίησης",CS:"Nastavení ověřování",HU:"Hitelesítési beállítások",RO:"Setări de autentificare",BG:"Настройки за автентикация",DA:"Autentificeringsindstillinger",FI:"Todennusasetukset",SL:"Nastavitve preverjanja pristnosti"},
-log_settings:{AR:"إعدادات السجل",DE:"Protokolleinstellungen",EN:"Log settings",ES:"Configuración de registros",FA:"تنظیمات لاگ",FR:"Paramètres des journaux",HI:"लॉग सेटिंग्स",ID:"Pengaturan log",IT:"Impostazioni log",JA:"ログ設定",KO:"로그 설정",SW:"Mipangilio ya logi",PL:"Ustawienia logów",PT:"Configurações de log",RU:"Настройки журнала",VI:"Cài đặt nhật ký",TR:"Günlük ayarları",UR:"لاگ سیٹنگز",UZ:"Log sozlamalari",ZH:"日志设置",NL:"Loginstellingen",SV:"Logginställningar",EL:"Ρυθμίσεις καταγραφής",CS:"Nastavení protokolu",HU:"Naplóbeállítások",RO:"Setări jurnal",BG:"Настройки на логовете",DA:"Logindstillinger",FI:"Lokiasetukset",SL:"Nastavitve dnevnika"},
+log_settings:{AR:"إعدادات السجل / الجلسة",DE:"Protokoll-/Sitzungseinstellungen",EN:"Log / Session Settings",ES:"Configuración de registros / sesión",FA:"تنظیمات لاگ / نشست",FR:"Paramètres des journaux / session",HI:"लॉग / सत्र सेटिंग्स",ID:"Pengaturan log / sesi",IT:"Impostazioni log / sessione",JA:"ログ / セッション設定",KO:"로그 / 세션 설정",SW:"Mipangilio ya logi / kipindi",PL:"Ustawienia logów / sesji",PT:"Configurações de log / sessão",RU:"Настройки журнала / сессии",VI:"Cài đặt nhật ký / phiên",TR:"Günlük / oturum ayarları",UR:"لاگ / سیشن سیٹنگز",UZ:"Log / sessiya sozlamalari",ZH:"日志/会话设置",NL:"Log- / sessie-instellingen",SV:"Logg- / sessionsinställningar",EL:"Ρυθμίσεις καταγραφής / συνεδρίας",CS:"Nastavení protokolu / relace",HU:"Napló- / munkamenetbeállítások",RO:"Setări jurnal / sesiune",BG:"Настройки на логове / сесия",DA:"Log- / sessionsindstillinger",FI:"Loki- / istuntoasetukset",SL:"Nastavitve dnevnika / seje"},
 bak_settings:{AR:"إعدادات النسخ الاحتياطي",DE:"Backup-Einstellungen",EN:"Backup settings",ES:"Configuración de copia de seguridad",FA:"تنظیمات پشتیبان‌گیری",FR:"Paramètres de sauvegarde",HI:"बैकअप सेटिंग्स",ID:"Pengaturan cadangan",IT:"Impostazioni di backup",JA:"バックアップ設定",KO:"백업 설정",SW:"Mipangilio ya chelezo",PL:"Ustawienia kopii zapasowej",PT:"Configurações de backup",RU:"Настройки резервного копирования",VI:"Cài đặt sao lưu",TR:"Yedekleme ayarları",UR:"بیک اپ سیٹنگز",UZ:"Zaxira sozlamalari",ZH:"备份设置",NL:"Back-upinstellingen",SV:"Säkerhetskopieringsinställningar",EL:"Ρυθμίσεις αντιγράφων ασφαλείας",CS:"Nastavení zálohování",HU:"Biztonsági mentés beállításai",RO:"Setări de backup",BG:"Настройки за архивиране",DA:"Backupindstillinger",FI:"Varmuuskopioinnin asetukset",SL:"Nastavitve varnostne kopije"},
 clipboard_sync:{AR:"مزامنة الحافظة",DE:"Zwischenablagen-Synchronisierung",EN:"Clipboard Sync",ES:"Sincronización del portapapeles",FA:"همگام‌سازی کلیپ‌بورد",FR:"Synchronisation du presse-papiers",HI:"क्लिपबोर्ड सिंक",ID:"Sinkronisasi Papan Klip",IT:"Sincronizzazione degli appunti",JA:"クリップボード同期",KO:"클립보드 동기화",SW:"Usawazishaji wa Ubao wa Kunakili",PL:"Synchronizacja schowka",PT:"Sincronização da área de transferência",RU:"Синхронизация буфера обмена",VI:"Đồng bộ khay nhớ tạm",TR:"Pano senkronizasyonu",UR:"کلپ بورڈ ہم وقت سازی",UZ:"Klipbordni sinxronlash",ZH:"剪贴板同步",NL:"Klembordsynchronisatie",SV:"Urklippssynkronisering",EL:"Συγχρονισμός Πρόχειρου",CS:"Synchronizace schránky",HU:"Vágólap szinkronizálás",RO:"Sincronizare clipboard",BG:"Синхронизиране на клипборда",DA:"Udklipssynkronisering",FI:"Leikepöydän synkronointi",SL:"Sinhronizacija odložišča"},
 media_files:{AR:"الوسائط والملفات",DE:"Medien & Dateien",EN:"Media & Files",ES:"Medios y archivos",FA:"رسانه‌ها و فایل‌ها",FR:"Médias et fichiers",HI:"मीडिया और फ़ाइलें",ID:"Media & File",IT:"Media e file",JA:"メディア＆ファイル",KO:"미디어 및 파일",SW:"Midia na Faili",PL:"Multimedia i pliki",PT:"Mídia e arquivos",RU:"Медиа и файлы",VI:"Phương tiện & Tệp",TR:"Medya ve Dosyalar",UR:"میڈیا اور فائلیں",UZ:"Media va fayllar",ZH:"媒体和文件",NL:"Media en bestanden",SV:"Media och filer",EL:"Μέσα & Αρχεία",CS:"Média a soubory",HU:"Média és fájlok",RO:"Media și fișiere",BG:"Медия и файлове",DA:"Medier og filer",FI:"Media ja tiedostot",SL:"Mediji in datoteke"},
@@ -1717,11 +1771,13 @@ var cleanContent = stripHtmlTags(note.content).toLowerCase();
     let tooltipTimeout;
     filteredNotes.forEach((note) => {
         const li = document.createElement('li');
-        li.innerHTML = `<span>${note.title}</span>`;
+        const titleSpan = document.createElement('span');
+        titleSpan.textContent = note.title ?? '';
+        titleSpan.id = 'renk' + note.color;
+        li.appendChild(titleSpan);
         li.dataset.id = note.id;
         li.dataset.type = 'note';
         li.classList.add('note-item');
-        li.querySelector('span').id = 'renk'+note.color;
         if (selectedNote && selectedNote.id === note.id) {
             li.classList.add('selected');
         }
@@ -2252,7 +2308,7 @@ function highlightTabsWithContent() {
 }
 function loadNoteContent() {
     if (selectedNote) {
-        noteEditor.innerHTML = selectedNote.content;
+        noteEditor.innerHTML = sanitizeNoteHtml(selectedNote.content);
         noteTitleInput.value = selectedNote.title;
         const createdAtDate = new Date(selectedNote.createdAt);
         const day = String(createdAtDate.getDate()).padStart(2, '0');
@@ -3225,7 +3281,7 @@ function saveNote() {
       alert(translate("note_title_empty"));
       return; 
     }
-        selectedNote.content = noteEditor.innerHTML;
+        selectedNote.content = sanitizeNoteHtml(noteEditor.innerHTML);
         saveData();
         renderNotes();
         loadNoteContent();
@@ -3237,7 +3293,7 @@ function editCategory(category) {
   modal.classList.add('modal');
   modal.innerHTML = `
     <div class="modal-content">
-      <input type="text" id="newCategoryName" value="${category.name}">
+      <input type="text" id="newCategoryName">
       <div class="colors">
         <div class="color-option" style="background-color: #b1653d;" data-color="b1653d"></div>
         <div class="color-option" style="background-color: #9a900b;" data-color="9a900b"></div>
@@ -3263,6 +3319,7 @@ document.getElementsByClassName('modal-content')[0].appendChild(deleteButton);
             deleteCategory(category);
         });
   const newCategoryName = document.getElementById('newCategoryName');
+  newCategoryName.value = category.name ?? '';
   const confirmDelete = document.getElementById('confirmDelete');
   const cancelDelete = document.getElementById('cancelDelete');
   const colorOptions = document.querySelectorAll('.color-option');
@@ -3306,7 +3363,7 @@ function editNote(note) {
   modal.classList.add('modal');
   modal.innerHTML = `
     <div class="modal-content">
-      <input type="text" id="newCategoryName" value="${note.title}">
+      <input type="text" id="newCategoryName">
       <div class="colors">
         <div class="color-option" style="background-color: #b1653d;" data-color="b1653d"></div>
         <div class="color-option" style="background-color: #9a900b;" data-color="9a900b"></div>
@@ -3332,6 +3389,7 @@ document.getElementsByClassName('modal-content')[0].appendChild(deleteButton);
             deleteNote(note);
         });
   const newCategoryName = document.getElementById('newCategoryName');
+  newCategoryName.value = note.title ?? '';
   const confirmDelete = document.getElementById('confirmDelete');
   const cancelDelete = document.getElementById('cancelDelete');
   const colorOptions = document.querySelectorAll('.color-option');
@@ -3624,6 +3682,85 @@ const removeModalChild = () => {
         if (!html) return '';
         return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
     }
+
+    function sanitizeNoteHtml(html) {
+        const template = document.createElement('template');
+        template.innerHTML = String(html ?? '');
+
+        const allowedTags = new Set([
+            'DIV', 'P', 'BR', 'B', 'STRONG', 'I', 'EM', 'U', 'S',
+            'UL', 'OL', 'LI', 'BLOCKQUOTE',
+            'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+            'A', 'IMG',
+            'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD',
+            'SPAN'
+        ]);
+
+        const allowedAttrs = {
+            A: new Set(['href', 'target', 'rel']),
+            IMG: new Set(['src', 'alt', 'width', 'height', 'style']),
+            TD: new Set(['colspan', 'rowspan']),
+            TH: new Set(['colspan', 'rowspan']),
+            SPAN: new Set(['style']),
+            DIV: new Set(['style']),
+            P: new Set(['style'])
+        };
+
+        const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT);
+        const toUnwrap = [];
+
+        while (walker.nextNode()) {
+            const el = walker.currentNode;
+            const tag = el.tagName;
+
+            if (!allowedTags.has(tag)) {
+                toUnwrap.push(el);
+                continue;
+            }
+
+            [...el.attributes].forEach((attr) => {
+                const attrName = attr.name;
+                const lowerName = attrName.toLowerCase();
+                const value = attr.value || '';
+                const allowedForTag = allowedAttrs[tag];
+
+                if (lowerName.startsWith('on')) {
+                    el.removeAttribute(attrName);
+                    return;
+                }
+
+                if (!allowedForTag || !allowedForTag.has(attrName)) {
+                    el.removeAttribute(attrName);
+                    return;
+                }
+
+                if ((lowerName === 'href' || lowerName === 'src') && /^\s*javascript:/i.test(value)) {
+                    el.removeAttribute(attrName);
+                    return;
+                }
+
+                if (lowerName === 'style' && /expression|url\s*\(|javascript:/i.test(value)) {
+                    el.removeAttribute(attrName);
+                }
+            });
+
+            if (tag === 'A') {
+                const href = el.getAttribute('href');
+                if (href && !/^(https?:|mailto:|tel:|\/|#)/i.test(href)) {
+                    el.removeAttribute('href');
+                }
+                if (el.getAttribute('target') === '_blank') {
+                    el.setAttribute('rel', 'noopener noreferrer');
+                }
+            }
+        }
+
+        toUnwrap.forEach((el) => {
+            el.replaceWith(...el.childNodes);
+        });
+
+        return template.innerHTML;
+    }
     noteSearchInput.addEventListener('input', renderNotes);
     noteContentSearchInput.addEventListener('input', renderNotes);
     addCategoryButton.addEventListener('click', addCategory);
@@ -3665,33 +3802,60 @@ const removeModalChild = () => {
 document.getElementById('import').addEventListener('click', () => {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.txt';
+  input.accept = '.txt,.json';
   input.addEventListener('change', async e => {
-      const data = JSON.parse(await e.target.files[0].text());
-      [...Array(localStorage.length)].forEach((_, i) => {
-        const key = localStorage.key(i);
-        if (key?.startsWith('noteOrder-') || key?.startsWith('taskOrder-')) {
-          localStorage.removeItem(key);
+      try {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+
+        const data = JSON.parse(await file.text());
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+          alert(translate("invalid_file_format"));
+          return;
         }
-      });
-      Object.entries(data).forEach(([k, v]) => {
-        if (k === 'sidebarState' || k === 'thizaState' || k === 'tema') {
-          localStorage.setItem(k, v);
-        } else {
+
+        [...Array(localStorage.length)].forEach((_, i) => {
+          const key = localStorage.key(i);
+          if (key?.startsWith('noteOrder-') || key?.startsWith('taskOrder-')) {
+            localStorage.removeItem(key);
+          }
+        });
+
+        Object.entries(data).forEach(([k, v]) => {
+          const storeRawStringKeys = ['sidebarState', 'thizaState', 'tema', 'selectedLanguage', 'hasSelectedLanguage'];
+
+          if (v === undefined) {
+            localStorage.removeItem(k);
+            return;
+          }
+
+          if (v === null) {
+            localStorage.setItem(k, 'null');
+            return;
+          }
+
+          if (storeRawStringKeys.includes(k)) {
+            localStorage.setItem(k, String(v));
+            return;
+          }
+
           localStorage.setItem(k, JSON.stringify(v));
-        }
-      });
-      
-      // サーバーにSAVE
-      syncSaveToServerBackground();
-      // ==== Local Storage をクリア
-      clearNotemodKeysOnly();
-      
-      alert(translate("data_imported_successfully"));
-      syncLoadFromServer();   // ←「サーバーから読み込み」関数
+        });
 
-setTimeout(() => {location.reload();}, 700);
+        // サーバーにSAVE
+        await syncSaveToServerBackground();
 
+        // ==== Local Storage をクリア
+        clearNotemodKeysOnly();
+
+        alert(translate("data_imported_successfully"));
+        await syncLoadFromServer();   // ←「サーバーから読み込み」関数
+
+        setTimeout(() => { location.reload(); }, 700);
+      } catch (err) {
+        console.error(err);
+        alert(translate("invalid_file_format"));
+      }
   });
   input.click();
 });
@@ -3846,7 +4010,7 @@ function htmlEkle() {
   modal.addEventListener('click', (e) => {
     if (e.target.id === 'confirmDelete' && textarea.value.trim()) {
       const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = textarea.value;
+      tempDiv.innerHTML = sanitizeNoteHtml(textarea.value);
       if (lastCaretPosition) {
         lastCaretPosition.deleteContents();
         lastCaretPosition.insertNode(tempDiv);

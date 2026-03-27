@@ -380,6 +380,7 @@ function nm_ensure_secret_in_config(string $configPath, string $dirUser, bool &$
             'LOGGER_NOTEMOD_ENABLED' => false,
             'DATA_ENCRYPTION_ENABLED' => false,
             'DATA_ENCRYPTION_KEY' => nm_generate_encryption_key(32),
+            'SESSION_COOKIE_LIFETIME' => 0,
             'IP_ALERT_ENABLED' => false,
             'IP_ALERT_TO' => 'YOUR_EMAIL',
             'IP_ALERT_FROM' => 'no-reply@notemod',

@@ -1,5 +1,0 @@
-
-AuthUserFile "/home/xs5335444/stayhomelab.net/htpasswd/n.stayhomelab.net/api/.htpasswd"
-AuthName "Member Site"
-AuthType BASIC
-require valid-user

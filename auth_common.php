@@ -75,10 +75,183 @@ function nm_url(string $path = ''): string
 }
 
 // ==============================
+// Session / Config helpers
+// ==============================
+
+/**
+ * セッション開始前でも安全に推定できる DIR_USER
+ * 優先順位:
+ * 1. 明示引数
+ * 2. 補助Cookie nm_dir_user
+ * 3. リクエストの user / username / dir_user
+ */
+function nm_guess_dir_user_for_cookie(?string $dirUser = null): string
+{
+    if ($dirUser !== null && $dirUser !== '') {
+        return normalize_username($dirUser);
+    }
+
+    $cookieDirUser = normalize_username((string)($_COOKIE['nm_dir_user'] ?? ''));
+    if ($cookieDirUser !== '') {
+        return $cookieDirUser;
+    }
+
+    foreach (['dir_user', 'user', 'username'] as $key) {
+        if (isset($_REQUEST[$key])) {
+            $v = normalize_username((string)$_REQUEST[$key]);
+            if ($v !== '') {
+                return $v;
+            }
+        }
+    }
+
+    return '';
+}
+
+if (!function_exists('nm_read_php_config_array')) {
+function nm_read_php_config_array(string $configPath): array
+{
+    if (!is_file($configPath)) {
+        return [];
+    }
+
+    $cfg = require $configPath;
+    return is_array($cfg) ? $cfg : [];
+}
+}
+
+
+if (!function_exists('nm_read_common_config_for_dir_user')) {
+function nm_read_common_config_for_dir_user(?string $dirUser = null): array
+{
+    $dirUser = nm_guess_dir_user_for_cookie($dirUser);
+    if ($dirUser === '') {
+        return [];
+    }
+
+    $configPath = __DIR__ . '/config/' . $dirUser . '/config.php';
+    return nm_read_php_config_array($configPath);
+}
+}
+
+
+if (!function_exists('nm_session_cookie_lifetime_value')) {
+function nm_session_cookie_lifetime_value(?string $dirUser = null): int
+{
+    $cfg = nm_read_common_config_for_dir_user($dirUser);
+    $value = $cfg['SESSION_COOKIE_LIFETIME'] ?? 0;
+
+    if (is_string($value) && ctype_digit($value)) {
+        $value = (int)$value;
+    }
+
+    if (!is_int($value) || $value < 0) {
+        $value = 0;
+    }
+
+    return $value;
+}
+}
+
+
+if (!function_exists('nm_server_session_gc_maxlifetime')) {
+function nm_server_session_gc_maxlifetime(): int
+{
+    $v = ini_get('session.gc_maxlifetime');
+    if ($v === false || $v === null || $v === '') {
+        return 0;
+    }
+    return max(0, (int)$v);
+}
+}
+
+
+if (!function_exists('nm_effective_session_cookie_lifetime')) {
+function nm_effective_session_cookie_lifetime(?string $dirUser = null): int
+{
+    $cookieLifetime = nm_session_cookie_lifetime_value($dirUser);
+    if ($cookieLifetime <= 0) {
+        return 0;
+    }
+
+    $gc = nm_server_session_gc_maxlifetime();
+    if ($gc > 0 && $gc < $cookieLifetime) {
+        return $gc;
+    }
+
+    return $cookieLifetime;
+}
+}
+
+
+if (!function_exists('nm_session_cookie_lifetime_options')) {
+function nm_session_cookie_lifetime_options(): array
+{
+    return [
+        0 => 'ブラウザを閉じるまで',
+        86400 => '1日',
+        604800 => '7日',
+        2592000 => '30日',
+    ];
+}
+}
+
+
+if (!function_exists('nm_refresh_dir_user_cookie')) {
+function nm_refresh_dir_user_cookie(?string $dirUser = null, ?int $lifetime = null): void
+{
+    $dirUser = normalize_username((string)$dirUser);
+    if ($dirUser === '') {
+        return;
+    }
+
+    $cookiePath = nm_auth_cookie_path();
+    $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    $lifetime = $lifetime ?? nm_session_cookie_lifetime_value($dirUser);
+    $expires = $lifetime > 0 ? (time() + $lifetime) : 0;
+
+    if (PHP_VERSION_ID >= 70300) {
+        setcookie('nm_dir_user', $dirUser, [
+            'expires' => $expires,
+            'path' => $cookiePath,
+            'secure' => $secure,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+    } else {
+        setcookie('nm_dir_user', $dirUser, $expires, $cookiePath . '; samesite=Lax', '', $secure, true);
+    }
+
+    $_COOKIE['nm_dir_user'] = $dirUser;
+}
+}
+
+
+function nm_clear_dir_user_cookie(): void
+{
+    $cookiePath = nm_auth_cookie_path();
+    $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+
+    if (PHP_VERSION_ID >= 70300) {
+        setcookie('nm_dir_user', '', [
+            'expires' => time() - 3600,
+            'path' => $cookiePath,
+            'secure' => $secure,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+    } else {
+        setcookie('nm_dir_user', '', time() - 3600, $cookiePath . '; samesite=Lax', '', $secure, true);
+    }
+
+    unset($_COOKIE['nm_dir_user']);
+}
+
+// ==============================
 // Session helpers
 // ==============================
 
-function nm_auth_start_session(): void
+function nm_auth_start_session(?string $dirUser = null): void
 {
     if (session_status() === PHP_SESSION_ACTIVE) {
         return;
@@ -88,20 +261,26 @@ function nm_auth_start_session(): void
 
     $cookiePath = nm_auth_cookie_path();
     $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    $lifetime = nm_session_cookie_lifetime_value($dirUser);
 
     if (PHP_VERSION_ID >= 70300) {
         session_set_cookie_params([
-            'lifetime' => 0,
+            'lifetime' => $lifetime,
             'path' => $cookiePath,
             'secure' => $secure,
             'httponly' => true,
             'samesite' => 'Lax',
         ]);
     } else {
-        session_set_cookie_params(0, $cookiePath . '; samesite=Lax', '', $secure, true);
+        session_set_cookie_params($lifetime, $cookiePath . '; samesite=Lax', '', $secure, true);
     }
 
     @session_start();
+
+    $sessionDirUser = normalize_username((string)($_SESSION['nm_dir_user'] ?? ''));
+    if ($sessionDirUser !== '') {
+        nm_refresh_dir_user_cookie($sessionDirUser, $lifetime);
+    }
 }
 
 // ==============================
@@ -121,7 +300,7 @@ function nm_get_current_dir_user(?string $dirUser = null): string
         return normalize_username($dirUser);
     }
 
-    nm_auth_start_session();
+    nm_auth_start_session($dirUser);
 
     $s = (string)($_SESSION['nm_dir_user'] ?? '');
     if ($s !== '') {
@@ -414,6 +593,7 @@ function nm_auth_require_login(): void
                 if (!empty($found['USERNAME'])) {
                     $_SESSION['nm_username'] = (string)$found['USERNAME'];
                 }
+                nm_refresh_dir_user_cookie($dirUser);
             }
         }
     }
