@@ -355,9 +355,12 @@ $prefIgnoreIpsText = '';
 if (!empty($pref['IP_ALERT_IGNORE_IPS']) && is_array($pref['IP_ALERT_IGNORE_IPS'])) {
     $prefIgnoreIpsText = implode(", ", array_map('strval', $pref['IP_ALERT_IGNORE_IPS']));
 }
-$sessionLifetimeOptions = function_exists('nm_session_cookie_lifetime_options')
-    ? nm_session_cookie_lifetime_options()
-    : array(0 => 'Until browser is closed', 86400 => '1 day', 604800 => '7 days', 2592000 => '30 days');
+$sessionLifetimeOptions = array(
+    0 => ($lang === 'ja' ? 'ブラウザを閉じるまで' : 'Until browser is closed'),
+    86400 => ($lang === 'ja' ? '1日' : '1 day'),
+    604800 => ($lang === 'ja' ? '7日' : '7 days'),
+    2592000 => ($lang === 'ja' ? '30日' : '30 days'),
+);
 $serverGcMaxLifetime = function_exists('nm_server_session_gc_maxlifetime')
     ? (int)nm_server_session_gc_maxlifetime()
     : (int)ini_get('session.gc_maxlifetime');
