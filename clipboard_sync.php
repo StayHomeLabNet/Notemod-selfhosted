@@ -38,8 +38,8 @@ $currentDirUser = $isLoggedIn && function_exists('nm_get_current_dir_user') ? (s
 // --------------------
 $LINKS = [
   // ClipboardSync (Windows) ダウンロードリンク（URLは画面に表示せずボタンにする）
-  'download_win_x64'   => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSync.exe',
-  'download_win_arm64' => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.0.1/ClipboardSyncARM64.exe',
+  'download_win_x64'   => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.1.1/ClipboardSync.exe',
+  'download_win_arm64' => 'https://github.com/StayHomeLabNet/ClipboardSync/releases/download/v1.1.1/ClipboardSyncARM64.exe',
 
   // arm64説明（JP/EN）
   'arm64_note' => [
