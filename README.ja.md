@@ -1,4 +1,4 @@
-# Notemod-selfhosted v1.4.2
+# Notemod-selfhosted v1.4.3
 
 これは **[Notemod（本家）](https://github.com/orayemre/Notemod)**（MIT License）をベースに、**共用サーバーでも動く自己ホスト型メモ基盤**として拡張したフォークです。  
 DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/data.json`** を使います。
@@ -30,50 +30,89 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 
 ---
 
-## v1.4.2 で整理・修正された主な内容
+## v1.4.3 の主な追加・改善
 
-### 1. 同期・インポートまわりの型崩れ対策
-- `index.php` の同期スナップショット作成を見直し、`categories` / `notes` / `categoryOrder` / `noteOrder` を **配列として送信** するよう修正
-- `notemod_sync.php` の `save` で **`nm_sync_normalize_snapshot()`** を通し、文字列化された配列や `null` / bool を正規化してから保存するよう改善
-- インポート時の `selectedLanguage` / `hasSelectedLanguage` / `sidebarState` / `thizaState` / `tema` の扱いを見直し、**二重文字列化が起きにくい** よう修正
-- `.txt` / `.json` のインポートに対応
+### 1. 新しい追記 API `append_api.php` を追加
+- 既存ノートの末尾へ、安全に追記できる API を追加
+- 追記先は
+  - `category + note`
+  - `target_note_id`
+  のどちらでも指定可能
+- 追記本文 `text` の前後に、必要に応じて以下を挿入可能
+  - 日付
+  - 時刻
+  - 日時
+  - カテゴリ名
+  - ノート名
+- ラベル付き挿入に対応
+  - `label_date`
+  - `label_time`
+  - `label_datetime`
+  - `label_category`
+  - `label_note`
+- `prefix` / `suffix` による固定文字列の前後追加に対応
+- `dry_run=1` で保存せずにプレビュー確認可能
+- `pretty` 未指定時は **text/plain** で見やすく返却
+- `pretty=1` で整形 JSON、`pretty=2` でテキスト表示
 
-### 2. API / logger / cleanup の保存形式修正
+### 2. 新しい検索 API `search_api.php` を追加
+- Notemod のカテゴリ / ノートタイトル / 本文を横断検索できる API を追加
+- `type` により検索対象を切り替え可能
+  - `all`
+  - `note_title`
+  - `category`
+  - `content`
+- `q` による検索語指定
+- `match=partial|exact` による一致方法指定
+- `limit` による件数制限
+- `category` によるカテゴリ絞り込み
+- `snippet` / `snippet_length` による本文抜粋表示
+- 検索結果から `note_id` を取得し、`append_api.php` の `target_note_id` と連携可能
+- `pretty` 未指定時は **text/plain** で見やすく返却
+
+### 3. 新しいジャーナル API `journal_api.php` を追加
+- 日記 / 日報 / 作業ログ向けの高水準 API を追加
+- `mode` に応じて追記先ノートを自動決定
+  - `date`
+  - `month`
+  - `week`
+  - `fixed`
+- 必要に応じてカテゴリやノートを自動作成
+  - `create_category_if_missing`
+  - `create_if_missing`
+- `template` による定型記録に対応
+  - `journal`
+  - `log`
+  - `plain`
+  - `task`
+- `insert_weekday=1` と `weekday_lang=ja|en` による曜日付与に対応
+- `dry_run=1` で保存せずにプレビュー確認可能
+- `pretty` 未指定時は **text/plain** で見やすく返却
+
+### 4. 既存 API 群との役割分担を整理
 - `api/api.php`
-- `logger.php`
+  - 追加系 API（テキスト / 画像 / ファイル）
+- `api/read_api.php`
+  - 読み取り系 API
+- `api/image_api.php`
+  - 画像配信 API
 - `api/cleanup_api.php`
+  - 整理 / 削除 / バックアップ API
+- `api/append_api.php`
+  - 既存ノート追記 API
+- `api/search_api.php`
+  - 検索 API
+- `api/journal_api.php`
+  - 日付ベース記録 API
 
-で、`categories` / `notes` を **再度 `json_encode()` して文字列化してしまう経路** を修正し、**常に配列のまま `data.json` に保存** するよう整理
-
-### 3. read API / cleanup API のユーザー別設定参照の整理
-- API は **`config/<DIR_USER>/config.api.php`** を参照する前提に統一
-- `config.api.php` から得た `DATA_JSON` の実パスと、対象 `DIR_USER` の整合を取るよう改善
-- `read_api.php` の latest系メタ参照先を、**実際の `DATA_JSON` と同じユーザーディレクトリ** に揃えるよう修正
-
-### 4. 同期ボタンの安全性向上
-- save 側で「危険な空保存」を止めるガードを追加
-- save 前にログイン状態を確認
-- 差分判定を追加
-- save 前の自動バックアップを追加
-- 同期ボタン押下時に **先に localStorage を消さない** よう見直し
-
-### 5. セッション設定を追加
-- `SESSION_COOKIE_LIFETIME` を `config/<DIR_USER>/config.php` に保存
-- `log_settings.php` から
-  - ブラウザを閉じるまで
-  - 1日
-  - 7日
-  - 30日
-  を選択可能
-- サーバー側の `session.gc_maxlifetime` も画面上で確認可能
-
-### 6. 暗号化設定を setup_auth に集約
-- `setup_auth.php` で
-  - `DATA_ENCRYPTION_KEY` の自動生成
-  - `DATA_ENCRYPTION_ENABLED` の ON/OFF
-  - 切替直前バックアップ
-  を扱う
-- `DATA_ENCRYPTION_KEY` の実値は UI に表示せず、**「設定済み」** のみ表示
+### 5. v1.4.2 までの安定化内容も継続
+- sync save 前の **スナップショット正規化**
+- `.txt` / `.json` インポート対応
+- `categories` / `notes` の文字列化崩れ対策
+- `SESSION_COOKIE_LIFETIME` 対応
+- `log_settings.php` のログ / セッション設定対応
+- `index.php` の XSS 対策強化
+- `data.json` の任意暗号化保存
 
 ---
 
@@ -84,6 +123,7 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 /setup_auth.php
 /login.php
 /logout.php
+/account.php
 /auth_common.php
 /data_crypto.php
 /logger.php
@@ -97,6 +137,9 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
   read_api.php
   cleanup_api.php
   image_api.php
+  append_api.php
+  search_api.php
+  journal_api.php
 /config/<DIR_USER>/
   config.php
   config.api.php
@@ -174,7 +217,7 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 可能なら `api/` に Basic認証を設定してください。
 
 ### Web UI認証
-Basic認証が使えない場合は、`setup_auth.php` と `login.php` / `logout.php` を使った Web UI認証で運用することで、一定のセキュリティーを確保できます。
+Basic認証が使えない場合は、`setup_auth.php` と `login.php` / `logout.php` を使った Web UI認証で運用することで、一定のセキュリティを確保できます。
 
 ### `data.json` 暗号化
 - `DATA_ENCRYPTION_ENABLED` が `true` のとき、`data.json` は暗号化保存されます
@@ -219,6 +262,123 @@ Basic認証が使えない場合は、`setup_auth.php` と `login.php` / `logout
 - 画像配信
 - 簡易リサイズ
 - キャッシュ制御
+
+### `api/append_api.php`
+- 既存ノートの末尾に追記
+- `category + note` または `target_note_id` で対象指定
+- 日付 / 時刻 / 日時 / カテゴリ名 / ノート名の挿入
+- `prefix` / `suffix`
+- `dry_run`
+- `pretty` 未指定で text/plain
+
+### `api/search_api.php`
+- カテゴリ名 / ノートタイトル / 本文検索
+- `type`
+- `q`
+- `match`
+- `limit`
+- `snippet`
+- `category` 絞り込み
+- `note_id` 取得
+
+### `api/journal_api.php`
+- 日付ベース / 月次 / 週次 / 固定ノート追記
+- `mode=date|month|week|fixed`
+- `template=journal|log|plain|task`
+- カテゴリ / ノート自動作成
+- 曜日挿入
+- `dry_run`
+- `pretty` 未指定で text/plain
+
+---
+
+## append_api.php の概要
+
+### 主なパラメータ
+- `token`
+- `text`
+- `category`
+- `note`
+- `target_note_id`
+- `insert_date`
+- `insert_time`
+- `insert_datetime`
+- `insert_category`
+- `insert_note`
+- `label_date`
+- `label_time`
+- `label_datetime`
+- `label_category`
+- `label_note`
+- `prefix`
+- `suffix`
+- `source_category`
+- `source_note`
+- `source_pos`
+- `dry_run`
+- `pretty`
+
+### 主な用途
+- 既存ノートへの追記
+- target_note_id 指定による安全な追記
+- テンプレート風の柔軟な追記
+- 保存前プレビュー
+
+---
+
+## search_api.php の概要
+
+### 主なパラメータ
+- `token`
+- `q`
+- `type=all|note_title|category|content`
+- `category`
+- `limit`
+- `match=partial|exact`
+- `case_sensitive`
+- `snippet`
+- `snippet_length`
+- `include_content`
+- `pretty`
+
+### 主な用途
+- ノートIDの取得
+- カテゴリ横断検索
+- append_api 用の target_note_id 探索
+- 本文検索
+
+---
+
+## journal_api.php の概要
+
+### 主なパラメータ
+- `token`
+- `text`
+- `category`
+- `mode=date|month|week|fixed`
+- `note`
+- `create_if_missing`
+- `create_category_if_missing`
+- `template=journal|log|plain|task`
+- `insert_weekday`
+- `weekday_lang=ja|en`
+- `date_format`
+- `time_format`
+- `datetime_format`
+- `label_date`
+- `label_time`
+- `label_datetime`
+- `prefix`
+- `suffix`
+- `dry_run`
+- `pretty`
+
+### 主な用途
+- 日記
+- 日報
+- 作業ログ
+- 週報 / 月報
+- ショートカットからの定型記録
 
 ---
 
@@ -268,3 +428,4 @@ Basic認証が使えない場合は、`setup_auth.php` と `login.php` / `logout
 - APIや cleanup は、**必ず `config/<DIR_USER>/config.api.php`** を参照する前提です
 - 旧仕様の `/config/config.api.php` 前提には戻さないでください
 - 壊れた旧形式の `data.json` を扱う場合でも、現行コードでは可能な範囲で正規化してから保存する想定です
+- `append_api.php` / `search_api.php` / `journal_api.php` は、未指定時に `pretty=2` 相当で **人間が読みやすい text/plain** を返す設計です

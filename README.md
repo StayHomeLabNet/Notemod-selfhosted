@@ -1,10 +1,10 @@
-# Notemod-selfhosted v1.4.2
+# Notemod-selfhosted v1.4.3
 
-This is a fork based on **[Notemod (original)](https://github.com/orayemre/Notemod)** (MIT License), expanded into a **self-hosted memo platform that works even on shared hosting**.  
+This is a fork based on **[Notemod (upstream)](https://github.com/orayemre/Notemod)** (MIT License), expanded as a **self-hosted memo platform that can run even on shared servers**.  
 No database is required, and it uses **`notemod-data/<DIR_USER>/data.json`** as the single data source.
 
-Verified shared hosting: Xserver, Sakura Internet, XREA, InfinityFree  
-Tested PHP: 8.3.21 (**PHP 8.1 or later is required**)
+Verified shared hosting servers: Xserver, Sakura Internet, XREA, InfinityFree  
+Tested PHP: 8.3.21 (**PHP 8.1 or higher required**)
 
 > **Single data source:** `notemod-data/<DIR_USER>/data.json`
 
@@ -25,53 +25,93 @@ Tested PHP: 8.3.21 (**PHP 8.1 or later is required**)
   - `SESSION_COOKIE_LIFETIME`
   - Can be changed from `log_settings.php`
 - **Backup naming**
-  - Plaintext: `data.json.bak-YYYYMMDD-HHMMSS`
+  - Plain text: `data.json.bak-YYYYMMDD-HHMMSS`
   - Encrypted: `data.enc.json.bak-YYYYMMDD-HHMMSS`
 
 ---
 
-## Main items organized and fixed in v1.4.2
+## Main additions and improvements in v1.4.3
 
-### 1. Countermeasures against type corruption around sync and import
-- Reviewed sync snapshot creation in `index.php` and fixed it so that `categories` / `notes` / `categoryOrder` / `noteOrder` are **sent as arrays**
-- Improved `save` in `notemod_sync.php` so that it passes through **`nm_sync_normalize_snapshot()`**, normalizing stringified arrays and `null` / bool values before saving
-- Reviewed the handling of `selectedLanguage` / `hasSelectedLanguage` / `sidebarState` / `thizaState` / `tema` during import, and fixed it so that **double-stringification is less likely to occur**
-- Added support for importing `.txt` / `.json`
+### 1. Added the new append API `append_api.php`
+- Added an API that can safely append to the end of an existing note
+- The append destination can be specified by either:
+  - `category + note`
+  - `target_note_id`
+- The following can be inserted before or after the append body `text` as needed:
+  - date
+  - time
+  - datetime
+  - category name
+  - note name
+- Supports labeled insertion:
+  - `label_date`
+  - `label_time`
+  - `label_datetime`
+  - `label_category`
+  - `label_note`
+- Supports adding fixed strings before and after using `prefix` / `suffix`
+- `dry_run=1` allows previewing without saving
+- When `pretty` is omitted, it returns **text/plain** in an easy-to-read format
+- `pretty=1` returns formatted JSON, and `pretty=2` returns text display
 
-### 2. Save-format fixes for API / logger / cleanup
+### 2. Added the new search API `search_api.php`
+- Added an API that can search across Notemod categories / note titles / content
+- Search targets can be switched by `type`:
+  - `all`
+  - `note_title`
+  - `category`
+  - `content`
+- Specify search terms with `q`
+- Specify matching method with `match=partial|exact`
+- Limit the number of results with `limit`
+- Filter by category with `category`
+- Display content excerpts with `snippet` / `snippet_length`
+- Can retrieve `note_id` from search results and link it with `append_api.php`’s `target_note_id`
+- When `pretty` is omitted, it returns **text/plain** in an easy-to-read format
+
+### 3. Added the new journal API `journal_api.php`
+- Added a high-level API for diaries / daily reports / work logs
+- Automatically determines the append destination note according to `mode`:
+  - `date`
+  - `month`
+  - `week`
+  - `fixed`
+- Automatically creates categories or notes as needed:
+  - `create_category_if_missing`
+  - `create_if_missing`
+- Supports fixed-format recording by `template`:
+  - `journal`
+  - `log`
+  - `plain`
+  - `task`
+- Supports adding weekdays with `insert_weekday=1` and `weekday_lang=ja|en`
+- `dry_run=1` allows previewing without saving
+- When `pretty` is omitted, it returns **text/plain** in an easy-to-read format
+
+### 4. Organized the role separation among existing API groups
 - `api/api.php`
-- `logger.php`
+  - Add-type API (text / image / file)
+- `api/read_api.php`
+  - Read-type API
+- `api/image_api.php`
+  - Image delivery API
 - `api/cleanup_api.php`
+  - Cleanup / delete / backup API
+- `api/append_api.php`
+  - Existing note append API
+- `api/search_api.php`
+  - Search API
+- `api/journal_api.php`
+  - Date-based recording API
 
-In these files, the paths that **re-applied `json_encode()` to `categories` / `notes` and turned them into strings again** were fixed, and the code was reorganized so they are **always saved to `data.json` as arrays**
-
-### 3. Organization of per-user configuration references for read API / cleanup API
-- APIs were unified on the assumption that they refer to **`config/<DIR_USER>/config.api.php`**
-- Improved consistency between the actual path of `DATA_JSON` obtained from `config.api.php` and the target `DIR_USER`
-- Fixed the latest-related metadata references in `read_api.php` so that they are aligned with the **same user directory as the actual `DATA_JSON`**
-
-### 4. Improved safety of the sync button
-- Added a guard on the save side to stop “dangerous empty saves”
-- Check login state before save
-- Added diff checking
-- Added automatic backup before save
-- Reviewed the sync button so that it **does not clear localStorage first** when clicked
-
-### 5. Added session settings
-- Save `SESSION_COOKIE_LIFETIME` in `config/<DIR_USER>/config.php`
-- From `log_settings.php`, you can select:
-  - Until browser is closed
-  - 1 day
-  - 7 days
-  - 30 days
-- The server-side `session.gc_maxlifetime` can also be checked on screen
-
-### 6. Centralized encryption settings in setup_auth
-- In `setup_auth.php`, handle:
-  - Automatic generation of `DATA_ENCRYPTION_KEY`
-  - ON/OFF of `DATA_ENCRYPTION_ENABLED`
-  - Backup immediately before switching
-- The actual value of `DATA_ENCRYPTION_KEY` is not shown in the UI; only **“Configured”** is displayed
+### 5. The stabilization content up to v1.4.2 also continues
+- **Snapshot normalization** before sync save
+- Support for `.txt` / `.json` import
+- Countermeasures against stringification corruption of `categories` / `notes`
+- Support for `SESSION_COOKIE_LIFETIME`
+- Support for log / session settings in `log_settings.php`
+- Strengthened XSS protection in `index.php`
+- Optional encrypted storage of `data.json`
 
 ---
 
@@ -82,6 +122,7 @@ In these files, the paths that **re-applied `json_encode()` to `categories` / `n
 /setup_auth.php
 /login.php
 /logout.php
+/account.php
 /auth_common.php
 /data_crypto.php
 /logger.php
@@ -95,6 +136,9 @@ In these files, the paths that **re-applied `json_encode()` to `categories` / `n
   read_api.php
   cleanup_api.php
   image_api.php
+  append_api.php
+  search_api.php
+  journal_api.php
 /config/<DIR_USER>/
   config.php
   config.api.php
@@ -110,7 +154,7 @@ In these files, the paths that **re-applied `json_encode()` to `categories` / `n
 ## Initial setup
 
 ### 1. Upload to the server
-Upload the entire repository to the public folder.
+Upload the full repository set to the public folder.
 
 ### 2. First access
 Access `setup_auth.php` / `index.php` and perform the initial setup.
@@ -169,15 +213,15 @@ Main keys:
 ## Security
 
 ### Basic authentication is strongly recommended
-If possible, set Basic authentication on `api/`.
+If possible, set Basic Authentication on `api/`.
 
 ### Web UI authentication
-If Basic authentication cannot be used, you can still secure the system to a certain extent by operating it with Web UI authentication using `setup_auth.php` and `login.php` / `logout.php`.
+If Basic Authentication cannot be used, operating with Web UI authentication using `setup_auth.php` and `login.php` / `logout.php` can provide a certain level of security.
 
 ### `data.json` encryption
 - When `DATA_ENCRYPTION_ENABLED` is `true`, `data.json` is stored encrypted
-- Export is **always plaintext JSON**
-- If you lose the encryption key, you will not be able to decrypt the data
+- Export is always **plain JSON**
+- If the encryption key is lost, it cannot be decrypted
 
 ---
 
@@ -187,7 +231,7 @@ If Basic authentication cannot be used, you can still secure the system to a cer
 - Add text
 - Upload images
 - Upload files
-- Automatically create categories if necessary
+- Automatically create categories if needed
 - Update `note_latest.json`
 
 ### `api/read_api.php`
@@ -197,9 +241,9 @@ If Basic authentication cannot be used, you can still secure the system to a cer
 - `latest_image`
 - `latest_file`
 
-> When calling the API, it is **recommended to include `user=<DIR_USER>`**
+> It is recommended to operate API calls with **`user=<DIR_USER>` attached**
 
-Example for `latest_note`:
+Example of `latest_note`:
 
 - Get as JSON  
   `...?token=...&user=USER_NAME&action=latest_note&pretty=1`
@@ -214,46 +258,163 @@ Example for `latest_note`:
 - Bulk delete images / files
 
 ### `api/image_api.php`
-- Serve images
-- Simple resize
+- Image delivery
+- Simple resizing
 - Cache control
+
+### `api/append_api.php`
+- Append to the end of an existing note
+- Specify the target by `category + note` or `target_note_id`
+- Insert date / time / datetime / category name / note name
+- `prefix` / `suffix`
+- `dry_run`
+- `text/plain` when `pretty` is omitted
+
+### `api/search_api.php`
+- Category name / note title / content search
+- `type`
+- `q`
+- `match`
+- `limit`
+- `snippet`
+- `category` filter
+- `note_id` retrieval
+
+### `api/journal_api.php`
+- Date-based / monthly / weekly / fixed-note append
+- `mode=date|month|week|fixed`
+- `template=journal|log|plain|task`
+- Automatic category / note creation
+- Weekday insertion
+- `dry_run`
+- `text/plain` when `pretty` is omitted
+
+---
+
+## Overview of append_api.php
+
+### Main parameters
+- `token`
+- `text`
+- `category`
+- `note`
+- `target_note_id`
+- `insert_date`
+- `insert_time`
+- `insert_datetime`
+- `insert_category`
+- `insert_note`
+- `label_date`
+- `label_time`
+- `label_datetime`
+- `label_category`
+- `label_note`
+- `prefix`
+- `suffix`
+- `source_category`
+- `source_note`
+- `source_pos`
+- `dry_run`
+- `pretty`
+
+### Main uses
+- Appending to existing notes
+- Safe appending by specifying `target_note_id`
+- Flexible template-like appending
+- Preview before saving
+
+---
+
+## Overview of search_api.php
+
+### Main parameters
+- `token`
+- `q`
+- `type=all|note_title|category|content`
+- `category`
+- `limit`
+- `match=partial|exact`
+- `case_sensitive`
+- `snippet`
+- `snippet_length`
+- `include_content`
+- `pretty`
+
+### Main uses
+- Retrieving note IDs
+- Cross-category search
+- Searching for `target_note_id` for append_api
+- Content search
+
+---
+
+## Overview of journal_api.php
+
+### Main parameters
+- `token`
+- `text`
+- `category`
+- `mode=date|month|week|fixed`
+- `note`
+- `create_if_missing`
+- `create_category_if_missing`
+- `template=journal|log|plain|task`
+- `insert_weekday`
+- `weekday_lang=ja|en`
+- `date_format`
+- `time_format`
+- `datetime_format`
+- `label_date`
+- `label_time`
+- `label_datetime`
+- `prefix`
+- `suffix`
+- `dry_run`
+- `pretty`
+
+### Main uses
+- Diaries
+- Daily reports
+- Work logs
+- Weekly / monthly reports
+- Fixed-format recording from shortcuts
 
 ---
 
 ## Backups
 
 ### Automatic backups
-Backups are created at the following times.
+Backups are created at timings such as the following.
 
 - Immediately before switching encryption settings
 - Before sync save
 - Before destructive cleanup operations (depending on settings)
 
 ### Naming rules
-- Plaintext: `data.json.bak-YYYYMMDD-HHMMSS`
+- Plain text: `data.json.bak-YYYYMMDD-HHMMSS`
 - Encrypted: `data.enc.json.bak-YYYYMMDD-HHMMSS`
 
 ### Restore
 You can restore from `bak_settings.php`.  
-When restoring an encrypted backup, the corresponding `DATA_ENCRYPTION_KEY` is required.
+When restoring encrypted backups, the corresponding `DATA_ENCRYPTION_KEY` is required.
 
 ---
 
 ## Log / session settings
 
-Items handled in `log_settings.php`:
+Items that can be handled in `log_settings.php`:
 
 - File log ON/OFF
 - Notemod Logs category log ON/OFF
 - `SESSION_COOKIE_LIFETIME`
-- Display check for `session.gc_maxlifetime`
+- Display of `session.gc_maxlifetime`
 
-Description:
-> This is the browser-side retention period. Depending on the server-side settings, the login may expire earlier.
+Description text:
+> This is the retention period on the browser side. Depending on server-side settings, login may expire earlier than this.
 
 ---
 
-## Integration
+## Links
 
 - [StayHomeLab YouTube ch](https://www.youtube.com/@StayHomeLab)
 - [Website](https://stayhomelab.net/notemod-selfhosted)
@@ -263,6 +424,7 @@ Description:
 
 ## Notes
 
-- APIs and cleanup are assumed to **always refer to `config/<DIR_USER>/config.api.php`**
-- Do not revert to the old `/config/config.api.php` assumption
-- Even when handling broken old-format `data.json`, the current code is designed to normalize it as much as possible before saving
+- APIs and cleanup are based on the assumption that they **always refer to `config/<DIR_USER>/config.api.php`**
+- Do not revert to the old assumption of `/config/config.api.php`
+- Even when handling broken old-format `data.json`, the current code is intended to normalize it as much as possible before saving
+- `append_api.php` / `search_api.php` / `journal_api.php` are designed to return **human-readable text/plain** equivalent to `pretty=2` when omitted
