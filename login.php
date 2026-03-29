@@ -46,6 +46,8 @@ $t = [
     'dark' => 'Dark',
     'light' => 'Light',
     'go_setup' => '今すぐセットアップを開く',
+    'forgot_password' => 'パスワードを忘れた場合',
+    'reset_success' => 'パスワードを更新しました。新しいパスワードでログインしてください。',
   ],
   'en' => [
     'title' => 'Notemod-selfhosted Login',
@@ -63,6 +65,8 @@ $t = [
     'dark' => 'Dark',
     'light' => 'Light',
     'go_setup' => 'Open setup now',
+    'forgot_password' => 'Forgot your password?',
+    'reset_success' => 'Your password has been updated. Please log in with your new password.',
   ],
 ];
 
@@ -110,6 +114,11 @@ if (!nm_any_auth_exists()) {
 }
 
 $error = '';
+$success = '';
+
+if ((string)($_GET['reset'] ?? '') === 'success') {
+    $success = $t[$lang]['reset_success'];
+}
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     nm_auth_start_session();
@@ -146,6 +155,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
 $u = nm_ui_toggle_urls('/login.php', $lang, $theme);
 $accountUrl = nm_ui_url('/account.php');
+$forgotUrl = nm_ui_url('/forgot_password.php');
 ?>
 <!doctype html>
 <html lang="<?=htmlspecialchars($lang, ENT_QUOTES, 'UTF-8')?>" data-theme="<?=htmlspecialchars($theme, ENT_QUOTES, 'UTF-8')?>">
@@ -154,8 +164,8 @@ $accountUrl = nm_ui_url('/account.php');
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></title>
   <style>
-    html[data-theme="dark"]{--bg0:#070b14;--bg1:#0b1222;--card:rgba(15,23,42,.78);--card2:rgba(2,6,23,.22);--line:rgba(148,163,184,.20);--text:#e5e7eb;--muted:#a3b0c2;--accent:#a2c1f4;--danger:#fb7185;--shadow:0 18px 50px rgba(0,0,0,.55);}    
-    html[data-theme="light"]{--bg0:#f6f8fc;--bg1:#eef2ff;--card:rgba(255,255,255,.82);--card2:rgba(255,255,255,.70);--line:rgba(15,23,42,.12);--text:#0b1222;--muted:#4b5563;--accent:#2563eb;--danger:#e11d48;--shadow:0 18px 50px rgba(15,23,42,.14);}    
+    html[data-theme="dark"]{--bg0:#070b14;--bg1:#0b1222;--card:rgba(15,23,42,.78);--card2:rgba(2,6,23,.22);--line:rgba(148,163,184,.20);--text:#e5e7eb;--muted:#a3b0c2;--accent:#a2c1f4;--danger:#fb7185;--success:#34d399;--shadow:0 18px 50px rgba(0,0,0,.55);}    
+    html[data-theme="light"]{--bg0:#f6f8fc;--bg1:#eef2ff;--card:rgba(255,255,255,.82);--card2:rgba(255,255,255,.70);--line:rgba(15,23,42,.12);--text:#0b1222;--muted:#4b5563;--accent:#2563eb;--danger:#e11d48;--success:#059669;--shadow:0 18px 50px rgba(15,23,42,.14);}    
     :root{--r:18px}*{box-sizing:border-box}
     body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;color:var(--text);background:radial-gradient(900px 600px at 20% 10%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),radial-gradient(800px 600px at 80% 30%, rgba(16,185,129,.10), transparent 55%),linear-gradient(180deg,var(--bg0),var(--bg1));padding:18px}
     .wrap{width:min(760px,100%)}
@@ -166,12 +176,14 @@ $accountUrl = nm_ui_url('/account.php');
     .sub{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:1.55}
     .body{padding:16px 18px 18px}
     .err{background:color-mix(in srgb,var(--danger) 12%,transparent);border:1px solid color-mix(in srgb,var(--danger) 25%,transparent);color:color-mix(in srgb,var(--danger) 70%,var(--text));padding:10px 12px;border-radius:14px;font-size:13px;margin-bottom:12px}
+    .ok{background:color-mix(in srgb,var(--success) 12%,transparent);border:1px solid color-mix(in srgb,var(--success) 25%,transparent);color:color-mix(in srgb,var(--success) 70%,var(--text));padding:10px 12px;border-radius:14px;font-size:13px;margin-bottom:12px}
     label{display:block;font-size:12px;color:var(--muted);margin:10px 0 6px}
     input{width:100%;padding:12px 12px;border-radius:14px;border:1px solid color-mix(in srgb,var(--line) 140%,transparent);background:var(--card2);color:var(--text);outline:none}
     input:focus{border-color:color-mix(in srgb,var(--accent) 70%,transparent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 14%,transparent)}
     .btn{width:100%;border:none;border-radius:14px;padding:12px 14px;font-weight:800;cursor:pointer;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 100%,#fff),color-mix(in srgb,var(--accent) 70%,#6366f1));color:color-mix(in srgb,var(--text) 0%,#061021);box-shadow:0 10px 25px color-mix(in srgb,var(--accent) 20%,transparent);transition:transform .12s ease,filter .12s ease;margin-top:12px}
     .btn:hover{transform:translateY(-1px);filter:brightness(1.03)}
     .btn:active{transform:translateY(0);filter:brightness(.98)}
+    .helper-links{margin-top:12px;display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}
     .foot{padding:12px 18px 16px;border-top:1px solid var(--line);background:color-mix(in srgb,var(--card2) 70%,transparent);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
     a{color:var(--accent);text-decoration:none}
     a:hover{text-decoration:underline}
@@ -182,7 +194,7 @@ $accountUrl = nm_ui_url('/account.php');
     .pill{display:inline-flex;gap:10px;align-items:center;flex-wrap:nowrap;padding:10px 12px;border-radius:999px;border:1px solid var(--line);background: color-mix(in srgb, var(--card2) 75%, transparent);font-size:13px;}
     .pill a{font-size:12px;font-weight:800;padding:6px 8px;border-radius:999px;color:var(--muted);text-decoration:none;border:1px solid transparent;white-space:nowrap;line-height:1.1;}
     .pill a.active{background: color-mix(in srgb, var(--accent) 12%, transparent);color: var(--text);border-color: color-mix(in srgb, var(--accent) 45%, var(--line));}
-    @media (max-width: 760px){.wrap{width:min(760px,100%)}.head{flex-wrap:wrap}.head-right{width:100%; justify-content:flex-start}.toggles{flex-wrap:wrap}}
+    @media (max-width: 760px){.wrap{width:min(760px,100%)}.head{flex-wrap:wrap}.head-right{width:100%; justify-content:flex-start}.toggles{flex-wrap:wrap}.helper-links{justify-content:flex-start}}
   </style>
 </head>
 <body>
@@ -213,6 +225,7 @@ $accountUrl = nm_ui_url('/account.php');
         </div>
       </div>
       <div class="body">
+        <?php if ($success): ?><div class="ok"><?=htmlspecialchars($success, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
         <?php if ($error): ?><div class="err"><?=htmlspecialchars($error, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
         <form method="post" autocomplete="on">
           <label><?=htmlspecialchars($t[$lang]['username'], ENT_QUOTES, 'UTF-8')?></label>
@@ -221,10 +234,12 @@ $accountUrl = nm_ui_url('/account.php');
           <input name="password" type="password" required autocomplete="current-password">
           <button class="btn" type="submit"><?=htmlspecialchars($t[$lang]['login'], ENT_QUOTES, 'UTF-8')?></button>
         </form>
+        <div class="helper-links">
+        </div>
       </div>
       <div class="foot">
         <span>Notemod-selfhosted Screen Login</span>
-        <span><a href="<?=htmlspecialchars($accountUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['account'], ENT_QUOTES, 'UTF-8')?></a></span>
+        <span><a href="<?=htmlspecialchars($forgotUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['forgot_password'], ENT_QUOTES, 'UTF-8')?></a></span>
       </div>
     </div>
   </div>

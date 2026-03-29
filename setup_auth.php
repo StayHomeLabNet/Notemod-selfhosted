@@ -52,6 +52,8 @@ $t = [
     'username' => 'ユーザー名',
     'password' => 'パスワード（10文字以上）',
     'password2'=> 'パスワード（再入力）',
+    'email' => 'メールアドレス',
+    'password_optional' => '※ 変更時は、パスワードを空欄のまま保存すると変更しません',
     'btn' => '保存',
     'ok' => '保存しました',
     'err_write_auth' => '認証設定の保存に失敗しました（権限を確認）',
@@ -59,7 +61,10 @@ $t = [
     'err_pw_short' => 'パスワードは10文字以上にしてください',
     'err_user_empty' => 'ユーザー名が空です',
     'err_user_invalid' => 'ユーザー名が無効です（英小文字・数字・_・- を使用）',
-    'exists' => 'このユーザーは既に設定済みです。必要ならアカウント画面から変更してください。',
+    'err_email_empty' => 'メールアドレスを入力してください',
+    'err_email_invalid' => 'メールアドレスの形式が正しくありません',
+    'exists' => 'このユーザーは既に設定済みです。必要ならログイン後にこの画面から変更してください。',
+    'auth_locked' => '認証設定の変更はログイン後のみ可能です。',
     'go_back' => '戻る',
     'logout' => 'ログアウト',
     'go_login' => 'ログインへ',
@@ -114,6 +119,8 @@ $t = [
     'username' => 'Username',
     'password' => 'Password (min 10 chars)',
     'password2'=> 'Repeat password',
+    'email' => 'Email address',
+    'password_optional' => 'Leave the password blank to keep the current password when editing.',
     'btn' => 'Save',
     'ok' => 'Saved',
     'err_write_auth' => 'Failed to save authentication settings (permission?)',
@@ -121,7 +128,10 @@ $t = [
     'err_pw_short' => 'Password must be at least 10 characters',
     'err_user_empty' => 'Username is empty',
     'err_user_invalid' => 'Invalid username (use lowercase letters, numbers, _ and -)',
-    'exists' => 'This user is already configured. Use Account page to change it if needed.',
+    'err_email_empty' => 'Email address is required',
+    'err_email_invalid' => 'Invalid email address format',
+    'exists' => 'This user is already configured. Log in first to change it on this page if needed.',
+    'auth_locked' => 'Authentication settings can be changed only after login.',
     'go_back' => 'Back',
     'logout' => 'Logout',
     'go_login' => 'Go to Login',
@@ -237,6 +247,35 @@ function user_exists(string $dirUser): bool {
 function nm_read_file_text(string $path): string {
     $raw = @file_get_contents($path);
     return is_string($raw) ? $raw : '';
+}
+function nm_auth_email_is_valid(string $email): bool {
+    $email = trim($email);
+    if ($email == '') return false;
+    return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+}
+function nm_auth_load_config_local(string $path): array {
+    $cfg = nm_read_php_config_array($path);
+    return is_array($cfg) ? $cfg : [];
+}
+function nm_auth_write_config_local(string $username, string $passwordHash, string $dirUser, string $email): bool {
+    $dirUser = normalize_username($dirUser);
+    if ($dirUser === '' || $username === '' || $passwordHash === '') {
+        return false;
+    }
+    $authPath = nm_auth_config_path($dirUser);
+    $dir = dirname($authPath);
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+        return false;
+    }
+    $auth = array(
+        'USERNAME' => $username,
+        'DIR_USER' => $dirUser,
+        'PASSWORD_HASH' => $passwordHash,
+        'EMAIL' => $email,
+        'UPDATED_AT' => gmdate('c'),
+    );
+    $phpSource = "<?php\nreturn " . var_export($auth, true) . ";\n";
+    return nm_write_php_source($authPath, $phpSource);
 }
 function nm_write_php_source(string $path, string $phpSource): bool {
     $ok = @file_put_contents($path, $phpSource, LOCK_EX);
@@ -491,7 +530,7 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $dir
     return true;
 }
 
-function create_user_environment(string $dirUser, string $username, string $password): bool
+function create_user_environment(string $dirUser, string $username, string $password, string $email): bool
 {
     $dirUser = normalize_username($dirUser);
     if ($dirUser === '' || $password === '') return false;
@@ -513,7 +552,7 @@ function create_user_environment(string $dirUser, string $username, string $pass
 
     $passwordHash = password_hash($password, PASSWORD_DEFAULT);
     if (!$passwordHash) return false;
-    if (!nm_auth_write_config($username, $passwordHash, $dirUser)) return false;
+    if (!nm_auth_write_config_local($username, $passwordHash, $dirUser, $email)) return false;
 
     $configPath = nm_config_path($dirUser);
     $configApiPath = nm_api_config_path($dirUser);
@@ -584,6 +623,11 @@ if ($targetDirUser === '' && $isLoggedIn) {
 }
 
 $already = ($targetDirUser !== '' && file_exists($authPath));
+$currentAuth = ($authPath !== '' && file_exists($authPath)) ? nm_auth_load_config_local($authPath) : array();
+$currentAuthUsername = (string)($currentAuth['USERNAME'] ?? ($targetDirUser !== '' ? $targetDirUser : ''));
+$currentAuthEmail = (string)($currentAuth['EMAIL'] ?? '');
+$authNeedsEmail = $already && trim($currentAuthEmail) === '';
+$canEditAuth = (!$hasAnyUser) || $isLoggedIn;
 $canEditTokens     = (!$hasAnyUser) || $isLoggedIn;
 $canEditEncryption = (!$hasAnyUser) || $isLoggedIn;
 $showRealTokens = $canEditTokens;
@@ -626,11 +670,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         $uDir = normalize_username($uRaw);
         $p1   = (string)($_POST['password'] ?? '');
         $p2   = (string)($_POST['password2'] ?? '');
+        $email = trim((string)($_POST['email'] ?? ''));
 
         if ($uRaw === '') {
             $err = $t[$lang]['err_user_empty'];
         } elseif ($uDir === '') {
             $err = $t[$lang]['err_user_invalid'];
+        } elseif ($email === '') {
+            $err = $t[$lang]['err_email_empty'];
+        } elseif (!nm_auth_email_is_valid($email)) {
+            $err = $t[$lang]['err_email_invalid'];
         } elseif ($p1 !== $p2) {
             $err = $t[$lang]['err_pw_mismatch'];
         } elseif (strlen($p1) < 10) {
@@ -638,7 +687,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         } elseif (user_exists($uDir)) {
             $err = $t[$lang]['exists'];
         } else {
-            if (!create_user_environment($uDir, $uRaw, $p1)) {
+            if (!create_user_environment($uDir, $uRaw, $p1, $email)) {
                 $err = $t[$lang]['err_write_auth'];
             } else {
                 $targetDirUser  = $uDir;
@@ -650,7 +699,51 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $dataDirPath    = __DIR__ . '/notemod-data/' . $targetDirUser;
                 $hasAnyUser     = true;
                 $already        = true;
+                $canEditAuth    = true;
                 $currentEncryptionEnabled = file_exists($configPath) ? nm_read_data_encryption_enabled_from_config($configPath) : false;
+                $currentAuth = nm_auth_load_config_local($authPath);
+                $currentAuthUsername = (string)($currentAuth['USERNAME'] ?? $uRaw);
+                $currentAuthEmail = (string)($currentAuth['EMAIL'] ?? $email);
+                $authNeedsEmail = trim($currentAuthEmail) === '';
+            }
+        }
+    } elseif ($isLoggedIn && $targetDirUser !== '' && $authPath !== '' && file_exists($authPath)) {
+        $authCfg = nm_auth_load_config_local($authPath);
+        $currentUsername = (string)($authCfg['USERNAME'] ?? $targetDirUser);
+        $email = trim((string)($_POST['email'] ?? ''));
+        $p1   = (string)($_POST['password'] ?? '');
+        $p2   = (string)($_POST['password2'] ?? '');
+
+        if ($email === '') {
+            $err = $t[$lang]['err_email_empty'];
+        } elseif (!nm_auth_email_is_valid($email)) {
+            $err = $t[$lang]['err_email_invalid'];
+        } elseif ($p1 !== '' || $p2 !== '') {
+            if ($p1 !== $p2) {
+                $err = $t[$lang]['err_pw_mismatch'];
+            } elseif (strlen($p1) < 10) {
+                $err = $t[$lang]['err_pw_short'];
+            }
+        }
+
+        if ($err === '') {
+            $passwordHash = (string)($authCfg['PASSWORD_HASH'] ?? '');
+            if ($p1 !== '') {
+                $newHash = password_hash($p1, PASSWORD_DEFAULT);
+                if (!$newHash) {
+                    $err = $t[$lang]['err_write_auth'];
+                } else {
+                    $passwordHash = $newHash;
+                }
+            }
+            if ($err === '' && !nm_auth_write_config_local($currentUsername, $passwordHash, $targetDirUser, $email)) {
+                $err = $t[$lang]['err_write_auth'];
+            }
+            if ($err === '') {
+                $currentAuth = nm_auth_load_config_local($authPath);
+                $currentAuthUsername = (string)($currentAuth['USERNAME'] ?? $currentUsername);
+                $currentAuthEmail = (string)($currentAuth['EMAIL'] ?? $email);
+                $authNeedsEmail = trim($currentAuthEmail) === '';
             }
         }
     }
@@ -1063,17 +1156,35 @@ if ($encKeyInfo === '') {
 
             <h3 style="margin-top:14px;"><?=htmlspecialchars($t[$lang]['auth_section'], ENT_QUOTES, 'UTF-8')?></h3>
 
-            <?php if (!$hasAnyUser): ?>
+            <?php if (!$hasAnyUser || $isLoggedIn): ?>
               <label><?=htmlspecialchars($t[$lang]['username'], ENT_QUOTES, 'UTF-8')?></label>
-              <input name="username" required value="<?=htmlspecialchars((string)($_POST['username'] ?? ''), ENT_QUOTES, 'UTF-8')?>">
+              <?php if (!$hasAnyUser): ?>
+                <input name="username" required value="<?=htmlspecialchars((string)($_POST['username'] ?? ''), ENT_QUOTES, 'UTF-8')?>">
+              <?php else: ?>
+                <input name="username_display" value="<?=htmlspecialchars((string)$currentAuthUsername, ENT_QUOTES, 'UTF-8')?>" readonly>
+                <input type="hidden" name="username" value="<?=htmlspecialchars((string)$currentAuthUsername, ENT_QUOTES, 'UTF-8')?>">
+              <?php endif; ?>
+
+              <label><?=htmlspecialchars($t[$lang]['email'], ENT_QUOTES, 'UTF-8')?></label>
+              <input
+                name="email"
+                type="email"
+                required
+                value="<?=htmlspecialchars((string)($_POST['email'] ?? ($currentAuthEmail ?? '')), ENT_QUOTES, 'UTF-8')?>"
+                autocomplete="email"
+              >
 
               <label><?=htmlspecialchars($t[$lang]['password'], ENT_QUOTES, 'UTF-8')?></label>
-              <input name="password" type="password" required autocomplete="new-password">
+              <input name="password" type="password" <?= !$hasAnyUser ? 'required' : '' ?> autocomplete="new-password">
 
               <label><?=htmlspecialchars($t[$lang]['password2'], ENT_QUOTES, 'UTF-8')?></label>
-              <input name="password2" type="password" required autocomplete="new-password">
+              <input name="password2" type="password" <?= !$hasAnyUser ? 'required' : '' ?> autocomplete="new-password">
+
+              <?php if ($hasAnyUser): ?>
+                <div class="notice"><?=htmlspecialchars($t[$lang]['password_optional'], ENT_QUOTES, 'UTF-8')?></div>
+              <?php endif; ?>
             <?php else: ?>
-              <div class="notice"><?=htmlspecialchars($t[$lang]['exists'], ENT_QUOTES, 'UTF-8')?></div>
+              <div class="notice"><?=htmlspecialchars($t[$lang]['auth_locked'], ENT_QUOTES, 'UTF-8')?></div>
             <?php endif; ?>
 
             <h3 style="margin-top:14px;"><?=htmlspecialchars($t[$lang]['api_section'], ENT_QUOTES, 'UTF-8')?></h3>

@@ -349,9 +349,11 @@ if (!function_exists('nm_ip_first_seen_notify')) {
         $lines[] = 'This notification is sent only once per IP (stored in _known_ips.json).';
         $body = implode("\n", $lines);
 
-        $headers = ['Content-Type: text/plain; charset=UTF-8'];
-        if ($from !== '') $headers[] = 'From: ' . $from;
-        @mail($to, $subject, $body, implode("\r\n", $headers));
+        $mailError = null;
+        $sent = nm_send_mail_common($to, $subject, $body, $from, $mailError);
+        if (!$sent) {
+            error_log('logger.php: first-ip mail send failed: ' . (string)$mailError);
+        }
     }
 }
 

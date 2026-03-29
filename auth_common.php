@@ -430,6 +430,416 @@ function nm_api_config_path(?string $dirUser = null): string
     return nm_config_dir($dirUser) . '/config.api.php';
 }
 
+
+// ==============================
+// Common mail config / send helpers
+// ==============================
+
+function nm_mail_config_path(): string
+{
+    return __DIR__ . '/config/mail.php';
+}
+
+function nm_mail_default_config(): array
+{
+    return array(
+        'MAIL_TRANSPORT' => 'mail',
+        'SMTP_ENABLED' => 0,
+        'SMTP_HOST' => '',
+        'SMTP_PORT' => 587,
+        'SMTP_ENCRYPTION' => 'tls',
+        'SMTP_AUTH' => 1,
+        'SMTP_USERNAME' => '',
+        'SMTP_PASSWORD' => '',
+        'SMTP_FROM' => '',
+        'SMTP_FROM_NAME' => '',
+        'SMTP_FALLBACK_TO_MAIL' => 0,
+        'UPDATED_AT' => '',
+    );
+}
+
+function nm_load_mail_config(): array
+{
+    $path = nm_mail_config_path();
+    $cfg = nm_mail_default_config();
+
+    if (!is_file($path)) {
+        return $cfg;
+    }
+
+    $loaded = require $path;
+    if (!is_array($loaded)) {
+        return $cfg;
+    }
+
+    $cfg = array_merge($cfg, $loaded);
+    $cfg['MAIL_TRANSPORT'] = strtolower(trim((string)($cfg['MAIL_TRANSPORT'] ?? 'mail')));
+    if (!in_array($cfg['MAIL_TRANSPORT'], array('mail', 'smtp'), true)) {
+        $cfg['MAIL_TRANSPORT'] = 'mail';
+    }
+
+    $cfg['SMTP_ENABLED'] = !empty($cfg['SMTP_ENABLED']) ? 1 : 0;
+    $cfg['SMTP_PORT'] = (int)($cfg['SMTP_PORT'] ?? 0);
+    if ($cfg['SMTP_PORT'] <= 0) {
+        $cfg['SMTP_PORT'] = 587;
+    }
+
+    $enc = strtolower(trim((string)($cfg['SMTP_ENCRYPTION'] ?? '')));
+    if (!in_array($enc, array('', 'tls', 'ssl'), true)) {
+        $enc = '';
+    }
+    $cfg['SMTP_ENCRYPTION'] = $enc;
+    $cfg['SMTP_AUTH'] = !empty($cfg['SMTP_AUTH']) ? 1 : 0;
+    $cfg['SMTP_FALLBACK_TO_MAIL'] = !empty($cfg['SMTP_FALLBACK_TO_MAIL']) ? 1 : 0;
+    $cfg['SMTP_HOST'] = trim((string)($cfg['SMTP_HOST'] ?? ''));
+    $cfg['SMTP_USERNAME'] = trim((string)($cfg['SMTP_USERNAME'] ?? ''));
+    $cfg['SMTP_PASSWORD'] = (string)($cfg['SMTP_PASSWORD'] ?? '');
+    $cfg['SMTP_FROM'] = trim((string)($cfg['SMTP_FROM'] ?? ''));
+    $cfg['SMTP_FROM_NAME'] = trim((string)($cfg['SMTP_FROM_NAME'] ?? ''));
+    $cfg['UPDATED_AT'] = trim((string)($cfg['UPDATED_AT'] ?? ''));
+
+    return $cfg;
+}
+
+function nm_save_mail_config(array $config): bool
+{
+    $path = nm_mail_config_path();
+    $dir = dirname($path);
+
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+        return false;
+    }
+
+    $data = array_merge(nm_mail_default_config(), $config);
+    $data['MAIL_TRANSPORT'] = strtolower(trim((string)($data['MAIL_TRANSPORT'] ?? 'mail')));
+    if (!in_array($data['MAIL_TRANSPORT'], array('mail', 'smtp'), true)) {
+        $data['MAIL_TRANSPORT'] = 'mail';
+    }
+    $data['SMTP_ENABLED'] = !empty($data['SMTP_ENABLED']) ? 1 : 0;
+    $data['SMTP_PORT'] = (int)($data['SMTP_PORT'] ?? 587);
+    if ($data['SMTP_PORT'] <= 0) {
+        $data['SMTP_PORT'] = 587;
+    }
+    $enc = strtolower(trim((string)($data['SMTP_ENCRYPTION'] ?? '')));
+    if (!in_array($enc, array('', 'tls', 'ssl'), true)) {
+        $enc = '';
+    }
+    $data['SMTP_ENCRYPTION'] = $enc;
+    $data['SMTP_AUTH'] = !empty($data['SMTP_AUTH']) ? 1 : 0;
+    $data['SMTP_HOST'] = trim((string)($data['SMTP_HOST'] ?? ''));
+    $data['SMTP_USERNAME'] = trim((string)($data['SMTP_USERNAME'] ?? ''));
+    $data['SMTP_PASSWORD'] = (string)($data['SMTP_PASSWORD'] ?? '');
+    $data['SMTP_FROM'] = trim((string)($data['SMTP_FROM'] ?? ''));
+    $data['SMTP_FROM_NAME'] = trim((string)($data['SMTP_FROM_NAME'] ?? ''));
+    $data['SMTP_FALLBACK_TO_MAIL'] = !empty($data['SMTP_FALLBACK_TO_MAIL']) ? 1 : 0;
+    $data['UPDATED_AT'] = gmdate('c');
+
+    $php = "<?php\nreturn " . var_export($data, true) . ";\n";
+
+    try {
+        $suffix = bin2hex(random_bytes(4));
+    } catch (Throwable $e) {
+        $suffix = dechex(mt_rand());
+    }
+
+    $tmp = $path . '.tmp-' . $suffix;
+    if (@file_put_contents($tmp, $php, LOCK_EX) === false) {
+        return false;
+    }
+    @chmod($tmp, 0644);
+
+    if (!@rename($tmp, $path)) {
+        @unlink($tmp);
+        return false;
+    }
+
+    @chmod($path, 0644);
+    return true;
+}
+
+function nm_build_mail_headers($from = ''): string
+{
+    $headers = array(
+        'Content-Type: text/plain; charset=UTF-8',
+    );
+
+    $from = trim((string)$from);
+    if ($from !== '') {
+        $headers[] = 'From: ' . $from;
+    }
+
+    return implode("\r\n", $headers);
+}
+
+function nm_send_mail_php_mail($to, $subject, $body, $from = '', &$errorMessage = null): bool
+{
+    $to = trim((string)$to);
+    $subject = (string)$subject;
+    $body = (string)$body;
+    $from = trim((string)$from);
+
+    if ($to === '') {
+        $errorMessage = 'Empty recipient.';
+        return false;
+    }
+
+    $headers = nm_build_mail_headers($from);
+    $ok = @mail($to, $subject, $body, $headers);
+
+    if (!$ok) {
+        $errorMessage = 'mail() failed.';
+        return false;
+    }
+
+    return true;
+}
+
+function nm_encode_mail_header_utf8(string $value): string
+{
+    if ($value === '') {
+        return '';
+    }
+    return '=?UTF-8?B?' . base64_encode($value) . '?=';
+}
+
+function nm_smtp_normalize_eol(string $text): string
+{
+    return preg_replace("/\r\n|\r|\n/", "\r\n", $text) ?? $text;
+}
+
+function nm_smtp_read_response($socket, ?int &$code = null): string
+{
+    $response = '';
+    $code = null;
+
+    while (!feof($socket)) {
+        $line = fgets($socket, 515);
+        if ($line === false) {
+            break;
+        }
+        $response .= $line;
+
+        if (preg_match('/^(\d{3})([ \-])/', $line, $m)) {
+            $code = (int)$m[1];
+            if ($m[2] === ' ') {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    return $response;
+}
+
+function nm_smtp_expect($socket, array $expectedCodes, &$errorMessage, string $context = ''): bool
+{
+    $code = null;
+    $response = nm_smtp_read_response($socket, $code);
+
+    if ($code !== null && in_array($code, $expectedCodes, true)) {
+        return true;
+    }
+
+    $context = trim($context);
+    $prefix = $context !== '' ? ($context . ': ') : '';
+    $errorMessage = $prefix . trim($response) . ($response === '' ? 'No SMTP response.' : '');
+    return false;
+}
+
+function nm_smtp_write_line($socket, string $line): bool
+{
+    $written = @fwrite($socket, $line . "\r\n");
+    return $written !== false;
+}
+
+function nm_smtp_command($socket, string $command, array $expectedCodes, &$errorMessage, string $context = ''): bool
+{
+    if (!nm_smtp_write_line($socket, $command)) {
+        $errorMessage = ($context !== '' ? $context . ': ' : '') . 'Failed to write SMTP command.';
+        return false;
+    }
+    return nm_smtp_expect($socket, $expectedCodes, $errorMessage, $context);
+}
+
+function nm_smtp_data_body(string $headers, string $body): string
+{
+    $headers = nm_smtp_normalize_eol($headers);
+    $body = nm_smtp_normalize_eol($body);
+
+    $lines = explode("\r\n", $body);
+    foreach ($lines as &$line) {
+        if (isset($line[0]) && $line[0] === '.') {
+            $line = '.' . $line;
+        }
+    }
+    unset($line);
+
+    return $headers . "\r\n\r\n" . implode("\r\n", $lines) . "\r\n.";
+}
+
+function nm_send_mail_smtp($to, $subject, $body, $from = '', ?array $settings = null, &$errorMessage = null): bool
+{
+    $to = trim((string)$to);
+    $subject = (string)$subject;
+    $body = (string)$body;
+    $fallbackFrom = trim((string)$from);
+    $settings = is_array($settings) ? $settings : nm_load_mail_config();
+
+    if ($to === '') {
+        $errorMessage = 'Empty recipient.';
+        return false;
+    }
+
+    $host = trim((string)($settings['SMTP_HOST'] ?? ''));
+    $port = (int)($settings['SMTP_PORT'] ?? 0);
+    $encryption = strtolower(trim((string)($settings['SMTP_ENCRYPTION'] ?? '')));
+    $useAuth = !empty($settings['SMTP_AUTH']);
+    $username = trim((string)($settings['SMTP_USERNAME'] ?? ''));
+    $password = (string)($settings['SMTP_PASSWORD'] ?? '');
+    $smtpFrom = trim((string)($settings['SMTP_FROM'] ?? ''));
+    $fromName = trim((string)($settings['SMTP_FROM_NAME'] ?? ''));
+
+    if ($host === '' || $port <= 0) {
+        $errorMessage = 'SMTP host/port is not configured.';
+        return false;
+    }
+
+    $effectiveFrom = $smtpFrom !== '' ? $smtpFrom : $fallbackFrom;
+    if ($effectiveFrom === '') {
+        $effectiveFrom = $username;
+    }
+    if ($effectiveFrom === '') {
+        $errorMessage = 'SMTP from address is empty.';
+        return false;
+    }
+
+    $remoteHost = $host;
+    if ($encryption === 'ssl') {
+        $remoteHost = 'ssl://' . $host;
+    }
+
+    $errno = 0;
+    $errstr = '';
+    $socket = @stream_socket_client($remoteHost . ':' . $port, $errno, $errstr, 20, STREAM_CLIENT_CONNECT);
+    if (!is_resource($socket)) {
+        $errorMessage = 'SMTP connect failed: ' . $errstr;
+        return false;
+    }
+
+    @stream_set_timeout($socket, 20);
+
+    try {
+        if (!nm_smtp_expect($socket, array(220), $errorMessage, 'SMTP connect')) {
+            return false;
+        }
+
+        $ehloHost = trim((string)($_SERVER['SERVER_NAME'] ?? 'localhost'));
+        if ($ehloHost === '') {
+            $ehloHost = 'localhost';
+        }
+
+        if (!nm_smtp_command($socket, 'EHLO ' . $ehloHost, array(250), $errorMessage, 'EHLO')) {
+            return false;
+        }
+
+        if ($encryption === 'tls') {
+            if (!nm_smtp_command($socket, 'STARTTLS', array(220), $errorMessage, 'STARTTLS')) {
+                return false;
+            }
+
+            $cryptoOk = @stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+            if ($cryptoOk !== true) {
+                $errorMessage = 'Failed to enable STARTTLS.';
+                return false;
+            }
+
+            if (!nm_smtp_command($socket, 'EHLO ' . $ehloHost, array(250), $errorMessage, 'EHLO after STARTTLS')) {
+                return false;
+            }
+        }
+
+        if ($useAuth) {
+            if (!nm_smtp_command($socket, 'AUTH LOGIN', array(334), $errorMessage, 'AUTH LOGIN')) {
+                return false;
+            }
+            if (!nm_smtp_command($socket, base64_encode($username), array(334), $errorMessage, 'SMTP username')) {
+                return false;
+            }
+            if (!nm_smtp_command($socket, base64_encode($password), array(235), $errorMessage, 'SMTP password')) {
+                return false;
+            }
+        }
+
+        if (!nm_smtp_command($socket, 'MAIL FROM:<' . $effectiveFrom . '>', array(250), $errorMessage, 'MAIL FROM')) {
+            return false;
+        }
+
+        if (!nm_smtp_command($socket, 'RCPT TO:<' . $to . '>', array(250, 251), $errorMessage, 'RCPT TO')) {
+            return false;
+        }
+
+        if (!nm_smtp_command($socket, 'DATA', array(354), $errorMessage, 'DATA')) {
+            return false;
+        }
+
+        $fromHeader = $effectiveFrom;
+        if ($fromName !== '') {
+            $fromHeader = nm_encode_mail_header_utf8($fromName) . ' <' . $effectiveFrom . '>';
+        }
+
+        $headers = array(
+            'Date: ' . date('r'),
+            'From: ' . $fromHeader,
+            'To: ' . $to,
+            'Subject: ' . nm_encode_mail_header_utf8($subject),
+            'MIME-Version: 1.0',
+            'Content-Type: text/plain; charset=UTF-8',
+            'Content-Transfer-Encoding: 8bit',
+        );
+
+        $dataBody = nm_smtp_data_body(implode("\r\n", $headers), $body);
+        if (@fwrite($socket, $dataBody . "\r\n") === false) {
+            $errorMessage = 'Failed to write SMTP DATA.';
+            return false;
+        }
+
+        if (!nm_smtp_expect($socket, array(250), $errorMessage, 'SMTP DATA end')) {
+            return false;
+        }
+
+        nm_smtp_write_line($socket, 'QUIT');
+        return true;
+    } finally {
+        if (is_resource($socket)) {
+            @fclose($socket);
+        }
+    }
+}
+
+function nm_send_mail_common($to, $subject, $body, $from = '', &$errorMessage = null): bool
+{
+    $settings = nm_load_mail_config();
+
+    $useSmtp = (
+        !empty($settings['SMTP_ENABLED'])
+        && strtolower((string)($settings['MAIL_TRANSPORT'] ?? 'mail')) === 'smtp'
+    );
+
+    if ($useSmtp) {
+        $ok = nm_send_mail_smtp($to, $subject, $body, $from, $settings, $errorMessage);
+        if ($ok) {
+            return true;
+        }
+
+        if (empty($settings['SMTP_FALLBACK_TO_MAIL'])) {
+            return false;
+        }
+    }
+
+    return nm_send_mail_php_mail($to, $subject, $body, $from, $errorMessage);
+}
+
 function nm_data_json_path(?string $dirUser = null): string
 {
     $dirUser = nm_resolve_effective_dir_user($dirUser);
@@ -536,12 +946,21 @@ function nm_auth_write_config(string $username, string $passwordHash, ?string $d
         }
     }
 
-    $data = "<?php\nreturn " . var_export([
-        'USERNAME' => $username,
-        'DIR_USER' => $dirUser,
-        'PASSWORD_HASH' => $passwordHash,
-        'UPDATED_AT' => gmdate('c'),
-    ], true) . ";\n";
+    $existing = array();
+    if (is_file($p)) {
+        $loaded = require $p;
+        if (is_array($loaded)) {
+            $existing = $loaded;
+        }
+    }
+
+    $merged = $existing;
+    $merged['USERNAME'] = $username;
+    $merged['DIR_USER'] = $dirUser;
+    $merged['PASSWORD_HASH'] = $passwordHash;
+    $merged['UPDATED_AT'] = gmdate('c');
+
+    $data = "<?php\nreturn " . var_export($merged, true) . ";\n";
 
     try {
         $suffix = bin2hex(random_bytes(4));
