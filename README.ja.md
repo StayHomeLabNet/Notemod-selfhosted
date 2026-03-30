@@ -1,4 +1,4 @@
-# Notemod-selfhosted v1.4.4
+# Notemod-selfhosted v1.4.5
 
 これは **[Notemod（本家）](https://github.com/orayemre/Notemod)**（MIT License）をベースに、**共用サーバーでも動く自己ホスト型メモ基盤**として拡張したフォークです。  
 DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/data.json`** を使います。
@@ -12,7 +12,7 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 
 ---
 
-## この版で特に重要なポイント
+## この更新で特に重要なポイント
 
 - **ユーザーごとの設定ファイル**
   - `config/<DIR_USER>/config.php`
@@ -42,93 +42,55 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 - **バックアップ命名**
   - 平文: `data.json.bak-YYYYMMDD-HHMMSS`
   - 暗号化: `data.enc.json.bak-YYYYMMDD-HHMMSS`
+- **同期保存前バックアップ設定**
+  - `SYNC_PRE_SAVE_BACKUP_ENABLED`
+  - `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
+  - Web UI の sync save 前バックアップと、その直前の古いバックアップ整理を制御可能
 
 ---
 
-## v1.4.4 の主な追加・改善
+## v1.4.5 の主な追加・改善
 
-### 1. 認証用メールアドレス保存に対応
-- `setup_auth.php` で **メールアドレスを必須入力** に変更
-- 認証情報は `config/<DIR_USER>/auth.php` に配列形式で保存
-- `EMAIL` を追加保存
-- 既存 `auth.php` に `EMAIL` が無い場合でも、ログインを維持したまま後から追加設定可能
-- `setup_auth.php` は
-  - 初回セットアップ時は未ログインで利用可能
-  - 認証設定済み後はログイン済みユーザーのみ変更可能
+### 1. Web UI の同期保存前バックアップを設定化
+- `config/<DIR_USER>/config.php` に **`SYNC_PRE_SAVE_BACKUP_ENABLED`** を追加
+- Web UI の sync save 時に作成される **保存直前バックアップ** の有効 / 無効を切り替え可能
+- 未設定時は従来互換のため **有効扱い**
+- `bak_settings.php` から ON / OFF を変更可能
 
-### 2. パスワードリセット機能を追加
-- `login.php` に **「パスワードを忘れた場合」** リンクを追加
-- `forgot_password.php` を追加
-  - 入力は **ユーザー名またはメールアドレス**
-  - 結果文言は常に同一
-- `reset_password.php` を追加
-  - `reset_password.php?username=...&token=...` 形式に対応
-  - 成功時は `login.php?reset=success` へ戻る
-- トークン保存先:
-  - `config/<DIR_USER>/password_reset.json`
-- トークン仕様:
-  - `token_hash`
-  - `created_at`
-  - `expires_at`
-  - `used`
-- 有効期限は **30分**
-- 新規発行で旧トークンは失効
-- リセット時も **10文字以上** のパスワード制約を適用
+### 2. 同期保存前バックアップ直前の自動整理に対応
+- `config/<DIR_USER>/config.php` に **`SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`** を追加
+- `SYNC_PRE_SAVE_BACKUP_ENABLED=true` かつ `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED=true` の場合、
+  **同期保存前バックアップを作成する直前に** 既存バックアップの自動整理を実行
+- 整理ロジックは `bak_settings.php` の **「最新から n個のバックアップを残す『削除』」** と同じ動作
+- 残す件数は `config/<DIR_USER>/config.api.php` の **`CLEANUP_BACKUP_KEEP`** を使用
 
-### 3. `log_settings.php` から認証用メールアドレスを反映可能に
-- 通知用メール欄の横に **「認証用メールを反映」** ボタンを追加
-- `auth.php` の `EMAIL` を通知用メール欄へセット可能
-- `EMAIL` 未設定時は未設定メッセージを表示
+### 3. `bak_settings.php` に同期保存前バックアップ設定 UI を追加
+- Backups セクションに **「同期保存前バックアップを有効（SYNC_PRE_SAVE_BACKUP_ENABLED）」** を追加
+- その下に、少しインデントした子項目として
+  **「同期保存前に古いバックアップを整理する（SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED）」** を追加
+- 従来の `CLEANUP_BACKUP_ENABLED` / `CLEANUP_BACKUP_KEEP` と役割を分けて設定可能
 
-### 4. メール送信処理を共通化
-- `auth_common.php` にメール送信共通処理を実装
-- 既存の初回IP通知と、パスワードリセットメールが同じ送信基盤を利用
-- `logger.php` / `forgot_password.php` から直接 `mail()` を呼ばず、共通関数経由で送信する構成へ整理
-- `IP_ALERT_FROM` との互換性を維持
+### 4. `notemod_sync.php` の保存フローを改善
+- 差分ありで実保存が必要な場合、次の順序で処理
+  1. `SYNC_PRE_SAVE_BACKUP_ENABLED` を確認
+  2. 必要なら `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED` に従って古いバックアップ整理
+  3. 同期保存前バックアップを作成
+  4. 新しい `data.json` を保存
+- これにより、sync save 前バックアップを利用しつつバックアップ増加を抑制可能
 
-### 5. `config/mail.php` による全ユーザー共通メール設定を追加
-- SMTP を含むメール設定を **全ユーザー共通** で管理
-- 保存先は `config/mail.php`
-- 主なキー:
-  - `MAIL_TRANSPORT`
-  - `SMTP_ENABLED`
-  - `SMTP_HOST`
-  - `SMTP_PORT`
-  - `SMTP_ENCRYPTION`
-  - `SMTP_AUTH`
-  - `SMTP_USERNAME`
-  - `SMTP_PASSWORD`
-  - `SMTP_FROM`
-  - `SMTP_FROM_NAME`
-  - `SMTP_FALLBACK_TO_MAIL`
+### 5. `setup_auth.php` / サンプル設定を更新
+- 新規生成される `config.php` に
+  - `SYNC_PRE_SAVE_BACKUP_ENABLED`
+  - `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
+  を含めるよう更新
+- `config.sample.php` / `config.sample.ja.php` にも新設定を追加
 
-### 6. SMTP 送信に対応
-- `MAIL_TRANSPORT=smtp` かつ `SMTP_ENABLED=1` のとき SMTP 送信
-- SMTP 無効時は従来どおり `mail()` を使用
-- SMTP 失敗時に `mail()` へフォールバックするかを設定可能
-- **PHPMailer なしの自前実装**
-- 対応範囲:
-  - 平文SMTP
-  - STARTTLS
-  - SSL/TLS
-  - AUTH LOGIN
-- `SMTP_FROM` が空のときは `IP_ALERT_FROM` を流用可能
-
-### 7. `log_settings.php` に SMTP 設定 UI とテスト送信を追加
-- SMTP設定を `log_settings.php` から編集可能
-- 項目数が多いため、SMTP 設定欄は **通常非表示**
-- クリックで開く開閉式 UI を採用
-- 開いたときに他の設定より目立つように強調表示
-- SMTP テスト送信機能を追加
-- SMTP パスワード欄は安全化
-  - 既存パスワードを画面に再表示しない
-  - 空欄保存時は現在値を保持
-
-### 8. `account.php` からのパスワード変更でも `EMAIL` を保持
-- `auth_common.php` の認証設定保存処理を改善
-- `account.php` でパスワード変更しても、`auth.php` の `EMAIL` が消えないように修正
-
-### 9. v1.4.3 までの API 拡張と安定化内容も継続
+### 6. v1.4.4 までの機能も継続
+- 認証用メールアドレス保存
+- パスワードリセット
+- 共通メール送信基盤
+- `config/mail.php` による全ユーザー共通メール設定
+- SMTP 設定 UI / テスト送信
 - `append_api.php`
 - `search_api.php`
 - `journal_api.php`
@@ -190,10 +152,11 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 ### 2. 初回アクセス
 `setup_auth.php` / `index.php` へアクセスし、初回セットアップを行います。
 
-v1.4.4 では `setup_auth.php` で次を設定します。
+v1.4.5 では `setup_auth.php` で次を設定します。
 - 初期ユーザー
 - パスワード
 - **認証用メールアドレス**
+- 必要に応じて同期保存前バックアップ関連の初期設定
 
 必要に応じて自動生成される主なファイル:
 
@@ -233,6 +196,8 @@ v1.4.4 では `setup_auth.php` で次を設定します。
 - `SESSION_COOKIE_LIFETIME`
 - `DATA_ENCRYPTION_ENABLED`
 - `DATA_ENCRYPTION_KEY`
+- `SYNC_PRE_SAVE_BACKUP_ENABLED`
+- `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
 
 ### API設定
 `config/<DIR_USER>/config.api.php`
@@ -275,6 +240,30 @@ v1.4.4 では `setup_auth.php` で次を設定します。
 - `SMTP_FROM_NAME`
 - `SMTP_FALLBACK_TO_MAIL`
 - `UPDATED_AT`
+
+---
+
+## バックアップ
+
+### 手動バックアップ
+- `bak_settings.php` から **今すぐバックアップ** を実行可能
+- `api/cleanup_api.php?action=backup_now` でも実行可能
+
+### cleanup 用バックアップ
+- `CLEANUP_BACKUP_ENABLED` が有効な場合、cleanup 系の危険操作前にバックアップを作成
+- `CLEANUP_BACKUP_KEEP` により、残すバックアップ数を制御可能
+
+### Web UI 同期保存前バックアップ
+- `SYNC_PRE_SAVE_BACKUP_ENABLED` が有効な場合、Web UI の sync save で実保存直前バックアップを作成
+- `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED` も有効な場合、その直前に **古いバックアップ整理** を実行
+- 古いバックアップ整理の件数判定には `CLEANUP_BACKUP_KEEP` を使用
+- 整理ロジックは `bak_settings.php` の **「最新から n個のバックアップを残す『削除』」** と同じ
+
+### バックアップ削除の基準
+- バックアップ一覧を **新しい順（ファイル更新時刻順）** に並べる
+- 先頭から `n` 件を残し、それ以外を削除
+- `n=0` の場合は全削除
+- 平文バックアップと暗号化バックアップをまとめて判定
 
 ---
 
@@ -369,6 +358,15 @@ Basic認証が使えない場合は、`setup_auth.php` と `login.php` / `logout
 - **SMTP 設定（開閉式）**
 - **SMTP テスト送信**
 
+`bak_settings.php` で扱えるもの:
+
+- **同期保存前バックアップを有効（SYNC_PRE_SAVE_BACKUP_ENABLED）**
+- **同期保存前に古いバックアップを整理する（SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED）**
+- **Enable backup（CLEANUP_BACKUP_ENABLED）**
+- **Keep latest n backups / n=0 deletes all（CLEANUP_BACKUP_KEEP）**
+- 今すぐバックアップ
+- バックアップ復元
+
 説明文:
 > ブラウザ側の保持期間です。サーバー側設定によっては、それより早くログインが切れる場合があります
 
@@ -386,6 +384,14 @@ Basic認証が使えない場合は、`setup_auth.php` と `login.php` / `logout
 
 - APIや cleanup は、**必ず `config/<DIR_USER>/config.api.php`** を参照する前提です
 - 旧仕様の `/config/config.api.php` 前提には戻さないでください
+- `config.php` の
+  - `SYNC_PRE_SAVE_BACKUP_ENABLED`
+  - `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
+  は Web UI の sync save 前バックアップ制御用です
+- `config.api.php` の
+  - `CLEANUP_BACKUP_ENABLED`
+  - `CLEANUP_BACKUP_KEEP`
+  は cleanup 系バックアップと keep 数制御用です
 - `config/mail.php` は全ユーザー共通設定です
 - SMTP を使う場合は、送信元アドレスと SPF / DKIM / SMTP 認証の整合を確認してください
 - 壊れた旧形式の `data.json` を扱う場合でも、現行コードでは可能な範囲で正規化してから保存する想定です

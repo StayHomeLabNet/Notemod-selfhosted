@@ -1,29 +1,29 @@
-# Notemod-selfhosted v1.4.4
+# Notemod-selfhosted v1.4.5
 
-This is a fork based on **[Notemod (original)](https://github.com/orayemre/Notemod)** (MIT License), extended as a **self-hosted memo platform that can run even on shared hosting**.  
-No database is required, and it uses **`notemod-data/<DIR_USER>/data.json`** as the single data source.
+This is a fork based on **[Notemod (upstream)](https://github.com/orayemre/Notemod)** (MIT License), extended as a **self-hosted memo platform that can also run on shared hosting**.  
+It does not require a database, and uses **`notemod-data/<DIR_USER>/data.json`** as its single data source.
 
-It was developed to **smoothly exchange text, images, and files between a Windows PC and an iPhone** without relying on external services. It can also serve as an alternative to note services such as simplenote.com.  
+It is developed to **facilitate the exchange of text, images, and files between a Windows PC and an iPhone** without depending on external services. It can also serve as an alternative to note services such as simplenote.com.  
 
-Tested shared hosting providers: Xserver, Sakura Internet, XREA, InfinityFree  
-Tested PHP: 8.3.21 (**PHP 8.1 or later is required**)
+Shared hosting services confirmed to work: Xserver, Sakura Internet, XREA, InfinityFree  
+Tested PHP version: 8.3.21 (**PHP 8.1 or later is required**)
 
 > **Single data source:** `notemod-data/<DIR_USER>/data.json`
 
 ---
 
-## Particularly important points in this version
+## Particularly important points in this update
 
 - **Per-user configuration files**
   - `config/<DIR_USER>/config.php`
   - `config/<DIR_USER>/config.api.php`
   - `config/<DIR_USER>/auth.php`
-- **Shared mail settings for all users**
+- **Mail settings shared by all users**
   - `config/mail.php`
 - **Main data**
   - `notemod-data/<DIR_USER>/data.json`
 - **Authentication email address**
-  - Required in `setup_auth.php`
+  - Required input in `setup_auth.php`
   - Saved to `EMAIL` in `auth.php`
 - **Password reset**
   - `forgot_password.php`
@@ -33,108 +33,69 @@ Tested PHP: 8.3.21 (**PHP 8.1 or later is required**)
   - `DATA_ENCRYPTION_ENABLED`
   - `DATA_ENCRYPTION_KEY`
   - `data.json` can be encrypted with **AES-256-CBC + HMAC**
-- **Session lifetime**
+- **Session retention period**
   - `SESSION_COOKIE_LIFETIME`
   - Can be changed from `log_settings.php`
 - **Mail sending**
   - Supports both `mail()` and SMTP
-  - Centrally managed by the shared sending infrastructure in `auth_common.php`
+  - Centrally managed by the common mail-sending foundation in `auth_common.php`
 - **Backup naming**
   - Plaintext: `data.json.bak-YYYYMMDD-HHMMSS`
   - Encrypted: `data.enc.json.bak-YYYYMMDD-HHMMSS`
+- **Pre-sync-save backup settings**
+  - `SYNC_PRE_SAVE_BACKUP_ENABLED`
+  - `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
+  - Can control the Web UI pre-sync-save backup and the pruning of old backups immediately before it
 
 ---
 
-## Main additions and improvements in v1.4.4
+## Main additions and improvements in v1.4.5
 
-### 1. Added support for saving an authentication email address
-- Changed `setup_auth.php` so that an **email address is required**
-- Authentication information is saved in array format to `config/<DIR_USER>/auth.php`
-- Added saving of `EMAIL`
-- Even if an existing `auth.php` does not have `EMAIL`, it can be added later while keeping login available
-- `setup_auth.php` now behaves as follows:
-  - Available without login during initial setup
-  - Can only be changed by a logged-in user after authentication settings have been created
+### 1. Made the Web UI pre-sync-save backup configurable
+- Added **`SYNC_PRE_SAVE_BACKUP_ENABLED`** to `config/<DIR_USER>/config.php`
+- You can now enable / disable the **backup created immediately before saving** during Web UI sync save
+- If unset, it is treated as **enabled** for backward compatibility
+- Can be changed ON / OFF from `bak_settings.php`
 
-### 2. Added password reset functionality
-- Added a **"Forgot your password?"** link to `login.php`
-- Added `forgot_password.php`
-  - Input is **username or email address**
-  - Result message is always the same
-- Added `reset_password.php`
-  - Supports `reset_password.php?username=...&token=...`
-  - On success, returns to `login.php?reset=success`
-- Token save location:
-  - `config/<DIR_USER>/password_reset.json`
-- Token structure:
-  - `token_hash`
-  - `created_at`
-  - `expires_at`
-  - `used`
-- Expiration time is **30 minutes**
-- Issuing a new token invalidates the previous token
-- The **10-character minimum** password requirement is also applied during reset
+### 2. Added automatic pruning immediately before the pre-sync-save backup
+- Added **`SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`** to `config/<DIR_USER>/config.php`
+- When `SYNC_PRE_SAVE_BACKUP_ENABLED=true` and `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED=true`,
+  automatic pruning of existing backups is executed **immediately before creating the pre-sync-save backup**
+- The pruning logic works the same way as **“Delete” under “Keep latest n backups”** in `bak_settings.php`
+- The number of backups to keep uses **`CLEANUP_BACKUP_KEEP`** in `config/<DIR_USER>/config.api.php`
 
-### 3. Can now apply the authentication email address from `log_settings.php`
-- Added an **"Use auth email"** button next to the notification email field
-- Can set the `EMAIL` from `auth.php` into the notification email field
-- Displays a message when `EMAIL` is not set
+### 3. Added pre-sync-save backup settings UI to `bak_settings.php`
+- Added **“Enable pre-sync-save backup (SYNC_PRE_SAVE_BACKUP_ENABLED)”** to the Backups section
+- Under it, as a slightly indented child item, added
+  **“Prune old backups before pre-sync-save backup (SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED)”**
+- These can now be configured separately from the existing `CLEANUP_BACKUP_ENABLED` / `CLEANUP_BACKUP_KEEP`
 
-### 4. Unified mail sending processing
-- Implemented shared mail sending logic in `auth_common.php`
-- Existing first-IP notification emails and password reset emails now use the same sending infrastructure
-- Reorganized the structure so that `logger.php` / `forgot_password.php` do not call `mail()` directly, but send through a shared function
-- Maintains compatibility with `IP_ALERT_FROM`
+### 4. Improved the save flow in `notemod_sync.php`
+- When there is a difference and an actual save is required, processing now runs in the following order:
+  1. Check `SYNC_PRE_SAVE_BACKUP_ENABLED`
+  2. If necessary, prune old backups according to `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
+  3. Create the pre-sync-save backup
+  4. Save the new `data.json`
+- This makes it possible to use the pre-sync-save backup while also suppressing backup growth
 
-### 5. Added shared mail settings for all users via `config/mail.php`
-- Mail settings including SMTP are managed **shared across all users**
-- Save location is `config/mail.php`
-- Main keys:
-  - `MAIL_TRANSPORT`
-  - `SMTP_ENABLED`
-  - `SMTP_HOST`
-  - `SMTP_PORT`
-  - `SMTP_ENCRYPTION`
-  - `SMTP_AUTH`
-  - `SMTP_USERNAME`
-  - `SMTP_PASSWORD`
-  - `SMTP_FROM`
-  - `SMTP_FROM_NAME`
-  - `SMTP_FALLBACK_TO_MAIL`
+### 5. Updated `setup_auth.php` / sample config files
+- Updated newly generated `config.php` to include:
+  - `SYNC_PRE_SAVE_BACKUP_ENABLED`
+  - `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
+- Added the new settings to `config.sample.php` / `config.sample.ja.php` as well
 
-### 6. Added SMTP sending support
-- Uses SMTP when `MAIL_TRANSPORT=smtp` and `SMTP_ENABLED=1`
-- Uses `mail()` as before when SMTP is disabled
-- Can be configured whether to fall back to `mail()` when SMTP fails
-- **Custom implementation without PHPMailer**
-- Supported range:
-  - Plain SMTP
-  - STARTTLS
-  - SSL/TLS
-  - AUTH LOGIN
-- When `SMTP_FROM` is empty, `IP_ALERT_FROM` can be reused
-
-### 7. Added SMTP settings UI and test sending to `log_settings.php`
-- SMTP settings can now be edited from `log_settings.php`
-- Because there are many items, the SMTP settings section is **hidden by default**
-- Uses a collapsible UI that opens on click
-- When opened, it is visually emphasized so it stands out more than the other settings
-- Added SMTP test sending functionality
-- SMTP password field has been hardened
-  - Existing password is not redisplayed on the screen
-  - Saving a blank value keeps the current value
-
-### 8. Preserve `EMAIL` even when changing the password from `account.php`
-- Improved the authentication settings save process in `auth_common.php`
-- Fixed the issue so that `EMAIL` in `auth.php` is not lost even when changing the password in `account.php`
-
-### 9. Continued the API expansion and stability improvements up to v1.4.3
+### 6. Features up to v1.4.4 are also continued
+- Saving authentication email addresses
+- Password reset
+- Common mail sending foundation
+- Shared mail settings for all users via `config/mail.php`
+- SMTP settings UI / test sending
 - `append_api.php`
 - `search_api.php`
 - `journal_api.php`
 - **Snapshot normalization** before sync save
 - `.txt` / `.json` import support
-- Measures against broken stringified `categories` / `notes`
+- Countermeasures against stringification corruption of `categories` / `notes`
 - `SESSION_COOKIE_LIFETIME` support
 - Strengthened XSS countermeasures in `index.php`
 - Optional encrypted saving of `data.json`
@@ -185,15 +146,16 @@ Tested PHP: 8.3.21 (**PHP 8.1 or later is required**)
 ## Initial setup
 
 ### 1. Upload to the server
-Upload the full repository to the public folder.
+Upload the entire repository to your public folder.
 
 ### 2. First access
 Access `setup_auth.php` / `index.php` and perform the initial setup.
 
-In v1.4.4, `setup_auth.php` is used to configure the following:
+In v1.4.5, `setup_auth.php` configures the following:
 - Initial user
 - Password
 - **Authentication email address**
+- Initial settings related to pre-sync-save backups, if needed
 
 Main files automatically generated as needed:
 
@@ -211,7 +173,7 @@ Main files automatically generated as needed:
 
 ## Configuration files
 
-### General settings
+### Common settings
 `config/<DIR_USER>/config.php`
 
 Main keys:
@@ -233,6 +195,8 @@ Main keys:
 - `SESSION_COOKIE_LIFETIME`
 - `DATA_ENCRYPTION_ENABLED`
 - `DATA_ENCRYPTION_KEY`
+- `SYNC_PRE_SAVE_BACKUP_ENABLED`
+- `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
 
 ### API settings
 `config/<DIR_USER>/config.api.php`
@@ -278,21 +242,45 @@ Main keys:
 
 ---
 
+## Backups
+
+### Manual backup
+- You can run **Back up now** from `bak_settings.php`
+- You can also run it via `api/cleanup_api.php?action=backup_now`
+
+### Backup for cleanup
+- If `CLEANUP_BACKUP_ENABLED` is enabled, a backup is created before dangerous cleanup operations
+- The number of backups to keep can be controlled with `CLEANUP_BACKUP_KEEP`
+
+### Web UI pre-sync-save backup
+- If `SYNC_PRE_SAVE_BACKUP_ENABLED` is enabled, a backup is created immediately before the actual save in Web UI sync save
+- If `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED` is also enabled, **old backup pruning** is executed immediately before that
+- `CLEANUP_BACKUP_KEEP` is used for the count judgment of old backup pruning
+- The pruning logic is the same as **“Delete” under “Keep latest n backups”** in `bak_settings.php`
+
+### Criteria for deleting backups
+- The backup list is sorted in **newest-first order (file modification time order)**
+- The first `n` items are kept, and the rest are deleted
+- If `n=0`, all backups are deleted
+- Plaintext backups and encrypted backups are judged together
+
+---
+
 ## Security
 
-### Basic Authentication is strongly recommended
-If possible, set up Basic Authentication for `api/`.
+### Basic authentication is strongly recommended
+If possible, set up Basic authentication for `api/`.
 
 ### Web UI authentication
-If Basic Authentication cannot be used, a certain level of security can be ensured by operating with Web UI authentication using `setup_auth.php` and `login.php` / `logout.php`.
+If Basic authentication cannot be used, you can secure a certain level of security by operating with Web UI authentication using `setup_auth.php` and `login.php` / `logout.php`.
 
 ### `data.json` encryption
-- When `DATA_ENCRYPTION_ENABLED` is `true`, `data.json` is saved in encrypted form
-- Export is always **plain JSON**
+- When `DATA_ENCRYPTION_ENABLED` is `true`, `data.json` is saved encrypted
+- Export is always **fixed to plaintext JSON**
 - If you lose the encryption key, it cannot be decrypted
 
 ### SMTP password
-- `SMTP_PASSWORD` in `config/mail.php` is stored in plain text
+- `SMTP_PASSWORD` in `config/mail.php` is stored in plaintext
 - Operate on the assumption that `config/mail.php` is placed in a non-public location
 
 ---
@@ -303,7 +291,7 @@ If Basic Authentication cannot be used, a certain level of security can be ensur
 - Add text
 - Upload images
 - Upload files
-- Automatically create categories if needed
+- Automatically create categories when necessary
 - Update `note_latest.json`
 
 ### `api/read_api.php`
@@ -323,36 +311,36 @@ If Basic Authentication cannot be used, a certain level of security can be ensur
 - Bulk delete images / files
 
 ### `api/image_api.php`
-- Deliver images
+- Image delivery
 - Simple resize
 - Cache control
 
 ### `api/append_api.php`
 - Append to the end of an existing note
-- Specify target by `category + note` or `target_note_id`
-- Insert date / time / datetime / category name / note name
+- Specify the target by `category + note` or `target_note_id`
+- Insert date / time / date and time / category name / note name
 - `prefix` / `suffix`
 - `dry_run`
-- `text/plain` when `pretty` is omitted
+- Returns `text/plain` when `pretty` is omitted
 
 ### `api/search_api.php`
-- Search category names / note titles / note content
+- Search category names / note titles / body text
 - `type`
 - `q`
 - `match`
 - `limit`
 - `snippet`
-- Filter by `category`
+- `category` filter
 - Get `note_id`
 
 ### `api/journal_api.php`
 - Date-based / monthly / weekly / fixed-note append
 - `mode=date|month|week|fixed`
 - `template=journal|log|plain|task`
-- Auto-create categories / notes
+- Automatic category / note creation
 - Insert weekday
 - `dry_run`
-- `text/plain` when `pretty` is omitted
+- Returns `text/plain` when `pretty` is omitted
 
 ---
 
@@ -363,11 +351,20 @@ Items handled in `log_settings.php`:
 - File log ON/OFF
 - Notemod Logs category log ON/OFF
 - `SESSION_COOKIE_LIFETIME`
-- Display check for `session.gc_maxlifetime`
+- Confirmation display of `session.gc_maxlifetime`
 - IP access notification settings
-- **Use auth email** button
+- **Reflect authentication email** button
 - **SMTP settings (collapsible)**
 - **SMTP test sending**
+
+Items handled in `bak_settings.php`:
+
+- **Enable pre-sync-save backup (SYNC_PRE_SAVE_BACKUP_ENABLED)**
+- **Prune old backups before pre-sync-save backup (SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED)**
+- **Enable backup (CLEANUP_BACKUP_ENABLED)**
+- **Keep latest n backups / n=0 deletes all (CLEANUP_BACKUP_KEEP)**
+- Back up now
+- Restore backup
 
 Description:
 > This is the retention period on the browser side. Depending on the server-side settings, the login may expire earlier than this.
@@ -377,16 +374,24 @@ Description:
 ## Links
 
 - [StayHomeLab YouTube ch](https://www.youtube.com/@StayHomeLab)
-- [Website](https://stayhomelab.net/notemod-selfhosted)
+- [Website](https://stayhomelab.net/notemod-selfhosted-en)
 - [ClipboardSync](https://github.com/StayHomeLabNet/ClipboardSync)
 
 ---
 
 ## Notes
 
-- API and cleanup operations are based on always referring to **`config/<DIR_USER>/config.api.php`**
-- Do not revert to the old `/config/config.api.php` assumption
+- APIs and cleanup are based on the assumption that they **always refer to `config/<DIR_USER>/config.api.php`**
+- Do not revert to the old specification that assumed `/config/config.api.php`
+- In `config.php`,
+  - `SYNC_PRE_SAVE_BACKUP_ENABLED`
+  - `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
+  are for controlling the Web UI pre-sync-save backup
+- In `config.api.php`,
+  - `CLEANUP_BACKUP_ENABLED`
+  - `CLEANUP_BACKUP_KEEP`
+  are for cleanup-related backups and keep-count control
 - `config/mail.php` is a shared setting for all users
-- When using SMTP, check the consistency of the sender address, SPF / DKIM, and SMTP authentication
-- Even when handling broken old-style `data.json`, the current code is designed to normalize it as much as possible before saving
-- `append_api.php` / `search_api.php` / `journal_api.php` are designed to return **human-readable `text/plain`** equivalent to `pretty=2` when omitted
+- If you use SMTP, check the consistency of the sender address, SPF / DKIM, and SMTP authentication
+- Even when handling a broken old-format `data.json`, the current code assumes it will normalize it as much as possible before saving
+- `append_api.php` / `search_api.php` / `journal_api.php` are designed to return **human-readable text/plain** equivalent to `pretty=2` when omitted
