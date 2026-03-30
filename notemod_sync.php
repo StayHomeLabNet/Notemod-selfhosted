@@ -55,6 +55,88 @@ function nm_sync_inject_common_config_from_data_file(string $dataFile): array
 // --------------------
 // Safer write helper (keep response format/flow unchanged)
 // --------------------
+
+function nm_sync_load_api_config_from_data_file(string $dataFile): array
+{
+    $cfgApi = array();
+
+    $dataDir = realpath(dirname($dataFile));
+    if ($dataDir === false) {
+        $dataDir = dirname($dataFile);
+    }
+
+    $dirUser = basename($dataDir);
+    $dirUser = normalize_username((string)$dirUser);
+
+    if ($dirUser !== '') {
+        $configApiPath = nm_api_config_path($dirUser);
+        if (is_file($configApiPath)) {
+            $tmp = require $configApiPath;
+            if (is_array($tmp)) {
+                $cfgApi = $tmp;
+            }
+        }
+    }
+
+    return is_array($cfgApi) ? $cfgApi : array();
+}
+
+function nm_sync_backup_files(string $dataFile): array
+{
+    $dir = dirname($dataFile);
+    if (!is_dir($dir)) {
+        return array();
+    }
+
+    $items = @scandir($dir);
+    if (!is_array($items)) {
+        return array();
+    }
+
+    $list = array();
+    foreach ($items as $name) {
+        if ($name === '.' || $name === '..') continue;
+        if (!nm_is_supported_backup_filename($name)) continue;
+
+        $path = $dir . DIRECTORY_SEPARATOR . $name;
+        if (!is_file($path)) continue;
+
+        $mtime = @filemtime($path);
+        $list[] = array(
+            'path' => $path,
+            'mtime' => is_int($mtime) ? $mtime : 0,
+        );
+    }
+
+    usort($list, function ($a, $b) {
+        return (int)$b['mtime'] <=> (int)$a['mtime'];
+    });
+
+    return $list;
+}
+
+function nm_sync_delete_old_backups(string $dataFile, int $keep): array
+{
+    $keep = max(0, $keep);
+    $list = nm_sync_backup_files($dataFile);
+    $targets = ($keep === 0) ? $list : array_slice($list, $keep);
+
+    $deleted = 0;
+    $failed = array();
+
+    foreach ($targets as $item) {
+        $path = (string)($item['path'] ?? '');
+        if ($path === '' || !is_file($path)) continue;
+        if (@unlink($path)) {
+            $deleted++;
+        } else {
+            $failed[] = $path;
+        }
+    }
+
+    return array($deleted, $failed);
+}
+
 function nm_sync_atomic_write_json(string $path, string $payload): bool
 {
     $dir = dirname($path);
@@ -496,14 +578,39 @@ if ($action === 'save') {
             ];
         }
 
-        list($backupOk, $backupPath, $backupReason) = nm_sync_create_pre_save_backup($dataFile);
-        if (!$backupOk) {
-            return [
-                'ok' => false,
-                'code' => 500,
-                'message' => 'Failed to create backup before save',
-                'detail' => $backupReason,
-            ];
+        $commonCfg = is_array($GLOBALS['cfg'] ?? null) ? $GLOBALS['cfg'] : array();
+        $syncPreSaveBackupEnabled = (bool)($commonCfg['SYNC_PRE_SAVE_BACKUP_ENABLED'] ?? true);
+        $syncPreSavePruneEnabled = (bool)($commonCfg['SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED'] ?? false);
+
+        if ($syncPreSaveBackupEnabled && $syncPreSavePruneEnabled) {
+            $cfgApi = nm_sync_load_api_config_from_data_file($dataFile);
+            $keep = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? 20);
+            if ($keep < 0) {
+                $keep = 0;
+            }
+
+            list($prunedCount, $pruneFailed) = nm_sync_delete_old_backups($dataFile, $keep);
+            if (!empty($pruneFailed)) {
+                return [
+                    'ok' => false,
+                    'code' => 500,
+                    'message' => 'Failed to prune old backups before save',
+                    'detail' => $pruneFailed,
+                ];
+            }
+        }
+
+        $backupPath = null;
+        if ($syncPreSaveBackupEnabled) {
+            list($backupOk, $backupPath, $backupReason) = nm_sync_create_pre_save_backup($dataFile);
+            if (!$backupOk) {
+                return [
+                    'ok' => false,
+                    'code' => 500,
+                    'message' => 'Failed to create backup before save',
+                    'detail' => $backupReason,
+                ];
+            }
         }
 
         $saveOk = nm_save_data_file($dataFile, $decodedPayload);

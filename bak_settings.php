@@ -5,6 +5,7 @@ require_once __DIR__ . '/data_crypto.php';
 
 /*
  * bak_settings.php
+ * - config/<USER_NAME>/config.php の SYNC_PRE_SAVE_BACKUP_ENABLED をUIで編集（チェックボックス）
  * - config/<USER_NAME>/config.api.php の CLEANUP_BACKUP_ENABLED をUIで編集（チェックボックス）
  * - バックアップファイル数 / 最新バックアップ作成日時を表示
  * - 「n個残す」を指定して、最新からn個を残し残りを削除（n=0で全削除）
@@ -42,6 +43,12 @@ $t = [
     'logged_as' => 'ログイン中:',
     'storage_dir_user' => '保存ディレクトリ:',
     'back' => '戻る',
+    'go_account' => 'アカウント設定へ',
+    'go_setup_auth' => '認証設定へ',
+    'go_log_settings' => 'ログ設定へ',
+    'go_clipboard_sync' => 'クリップボード同期へ',
+    'go_media_files' => 'メディア＆ファイルへ',
+
     'logout' => 'ログアウト',
     'lang_label' => '言語',
     'theme_label' => 'テーマ',
@@ -56,6 +63,8 @@ $t = [
     'nothing_to_delete' => '削除対象のバックアップがありません',
 
     'section_backup' => 'バックアップ',
+    'sync_pre_save_backup_enabled' => '同期保存前バックアップを有効（SYNC_PRE_SAVE_BACKUP_ENABLED）',
+    'sync_pre_save_backup_prune_enabled' => '同期保存前に古いバックアップを整理する（SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED）',
     'backup_enabled' => 'バックアップを有効（CLEANUP_BACKUP_ENABLED）',
     'backup_count' => '現在のバックアップ数',
     'backup_latest' => '最新バックアップ',
@@ -86,6 +95,12 @@ $t = [
     'logged_as' => 'Logged in as:',
     'storage_dir_user' => 'Storage directory user:',
     'back' => 'Back',
+    'go_account' => 'Go to Account',
+    'go_setup_auth' => 'Go to Auth settings',
+    'go_log_settings' => 'Go to Log settings',
+    'go_clipboard_sync' => 'Go to Clipboard sync',
+    'go_media_files' => 'Go to Media & Files',
+
     'logout' => 'Logout',
     'lang_label' => 'Language',
     'theme_label' => 'Theme',
@@ -100,6 +115,8 @@ $t = [
     'nothing_to_delete' => 'No backup files to delete',
 
     'section_backup' => 'Backups',
+    'sync_pre_save_backup_enabled' => 'Enable pre-save backup for sync (SYNC_PRE_SAVE_BACKUP_ENABLED)',
+    'sync_pre_save_backup_prune_enabled' => 'Prune old backups before sync pre-save backup (SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED)',
     'backup_enabled' => 'Enable backup (CLEANUP_BACKUP_ENABLED)',
     'backup_count' => 'Current backup count',
     'backup_latest' => 'Latest backup',
@@ -145,18 +162,18 @@ function nm_read_php_config_array(string $path): array {
 }
 
 /**
- * config/<USER_NAME>/config.api.php を指定キーだけ更新/追記
+ * config/<USER_NAME>/config.php / config.api.php を指定キーだけ更新/追記
  */
-function nm_update_config_api_values_preserve(string $configApiPath, array $updates): bool
+function nm_update_config_values_preserve(string $configPath, array $updates): bool
 {
-    $dir = dirname($configApiPath);
+    $dir = dirname($configPath);
     if (!is_dir($dir)) {
         if (!@mkdir($dir, 0755, true)) return false;
     }
 
     $cfg = [];
-    if (file_exists($configApiPath)) {
-        $cfg = nm_read_php_config_array($configApiPath);
+    if (file_exists($configPath)) {
+        $cfg = nm_read_php_config_array($configPath);
         if (!is_array($cfg)) {
             return false;
         }
@@ -173,24 +190,24 @@ function nm_update_config_api_values_preserve(string $configApiPath, array $upda
         }
     }
 
-    if (!$changed && file_exists($configApiPath)) {
+    if (!$changed && file_exists($configPath)) {
         return true;
     }
 
     $php = "<?php\nreturn " . var_export($cfg, true) . ";\n";
-    $tmp = $configApiPath . '.tmp';
+    $tmp = $configPath . '.tmp';
 
     $ok = @file_put_contents($tmp, $php, LOCK_EX);
     if ($ok === false) return false;
 
     @chmod($tmp, 0644);
-    if (!@rename($tmp, $configApiPath)) {
+    if (!@rename($tmp, $configPath)) {
         @unlink($tmp);
         return false;
     }
 
-    @chmod($configApiPath, 0644);
-    nm_invalidate_php_cache($configApiPath);
+    @chmod($configPath, 0644);
+    nm_invalidate_php_cache($configPath);
     return true;
 }
 
@@ -359,6 +376,11 @@ $logoutUrl = nm_ui_url('/logout.php');
 
 $base = nm_auth_base_url();
 $backUrl = rtrim($base, '/') . '/';
+$accountUrl = nm_ui_url('/account.php');
+$setupauthUrl = nm_ui_url('/setup_auth.php');
+$logsettingsUrl = nm_ui_url('/log_settings.php');
+$clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
+$mediafilesUrl = nm_ui_url('/media_files.php');
 
 // --------------------
 // Load config/<USER_NAME>/config.php (array style)
@@ -401,6 +423,18 @@ try {
 
 // Defaults
 $dataJson = (string)($cfgApi['DATA_JSON'] ?? nm_data_json_path($currentDirUser !== '' ? $currentDirUser : null));
+$cfg = [];
+try {
+    $cfg = nm_read_php_config_array($configPath);
+} catch (Throwable $e) {
+    $cfg = [];
+    if ($err === '') {
+        $err = $t[$lang]['read_failed'];
+    }
+}
+
+$prefSyncPreSaveEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_ENABLED'] ?? true);
+$prefSyncPreSavePruneEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED'] ?? false);
 $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? true);
 $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? 20);
 
@@ -411,16 +445,22 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && $err === '') {
     $mode = (string)($_POST['mode'] ?? '');
 
     if ($mode === 'save' || $mode === 'delete') {
+        $newSyncPreSaveEnabled = nm_bool_from_post('SYNC_PRE_SAVE_BACKUP_ENABLED');
+        $newSyncPreSavePruneEnabled = nm_bool_from_post('SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED');
         $newEnabled = nm_bool_from_post('CLEANUP_BACKUP_ENABLED');
         $newKeep    = nm_int_from_post('CLEANUP_BACKUP_KEEP', $prefKeep);
         if ($newKeep < 0) $newKeep = 0;
 
-        $updates = [
+        $okConfig = nm_update_config_values_preserve($configPath, [
+            'SYNC_PRE_SAVE_BACKUP_ENABLED' => $newSyncPreSaveEnabled,
+            'SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED' => $newSyncPreSavePruneEnabled,
+        ]);
+        $okConfigApi = nm_update_config_values_preserve($configApiPath, [
             'CLEANUP_BACKUP_ENABLED' => $newEnabled,
             'CLEANUP_BACKUP_KEEP'    => $newKeep,
-        ];
+        ]);
 
-        if (!nm_update_config_api_values_preserve($configApiPath, $updates)) {
+        if (!$okConfig || !$okConfigApi) {
             $err = $t[$lang]['save_failed'];
         } else {
             $msg = $t[$lang]['saved'];
@@ -440,7 +480,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && $err === '') {
                 }
             }
 
+            $cfg = nm_read_php_config_array($configPath);
             $cfgApi = nm_read_php_config_array($configApiPath);
+            $prefSyncPreSaveEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_ENABLED'] ?? $newSyncPreSaveEnabled);
+            $prefSyncPreSavePruneEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED'] ?? $newSyncPreSavePruneEnabled);
             $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? $newEnabled);
             $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? $newKeep);
             $dataJson    = (string)($cfgApi['DATA_JSON'] ?? $dataJson);
@@ -495,7 +538,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && $err === '') {
             }
         }
 
+        $cfg = nm_read_php_config_array($configPath);
         $cfgApi = nm_read_php_config_array($configApiPath);
+        $prefSyncPreSaveEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_ENABLED'] ?? $prefSyncPreSaveEnabled);
+        $prefSyncPreSavePruneEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED'] ?? $prefSyncPreSavePruneEnabled);
         $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? $prefEnabled);
         $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? $prefKeep);
         $dataJson    = (string)($cfgApi['DATA_JSON'] ?? $dataJson);
@@ -565,7 +611,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
       padding:18px;
     }
 
-    .wrap{ width:min(990px, 100%); display:grid; gap:14px; }
+    .wrap{ width:min(1010px, 100%); display:grid; gap:14px; }
     .card{
       background:var(--card);
       border:1px solid var(--line);
@@ -741,6 +787,10 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
       font-size:12px;
       color:var(--muted);
     }
+    .check-child{
+      margin-left: 28px;
+      margin-top: 8px;
+    }
 
     .pill-mini{
       display:inline-flex;
@@ -826,6 +876,20 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
             <input type="hidden" name="mode" value="save">
 
             <label class="check">
+              <input type="checkbox" name="SYNC_PRE_SAVE_BACKUP_ENABLED" value="1" <?= $prefSyncPreSaveEnabled ? 'checked' : '' ?>>
+              <div class="check-main">
+                <div class="check-title"><?=htmlspecialchars($t[$lang]['sync_pre_save_backup_enabled'], ENT_QUOTES, 'UTF-8')?></div>
+              </div>
+            </label>
+
+            <label class="check check-child">
+              <input type="checkbox" name="SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED" value="1" <?= $prefSyncPreSavePruneEnabled ? 'checked' : '' ?>>
+              <div class="check-main">
+                <div class="check-title"><?=htmlspecialchars($t[$lang]['sync_pre_save_backup_prune_enabled'], ENT_QUOTES, 'UTF-8')?></div>
+              </div>
+            </label>
+
+            <label class="check">
               <input type="checkbox" name="CLEANUP_BACKUP_ENABLED" value="1" <?= $prefEnabled ? 'checked' : '' ?>>
               <div class="check-main">
                 <div class="check-title"><?=htmlspecialchars($t[$lang]['backup_enabled'], ENT_QUOTES, 'UTF-8')?></div>
@@ -861,6 +925,8 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
 
           <form method="post" style="margin-top:10px;">
             <input type="hidden" name="mode" value="delete">
+            <input type="hidden" name="SYNC_PRE_SAVE_BACKUP_ENABLED" value="<?= $prefSyncPreSaveEnabled ? '1' : '0' ?>">
+            <input type="hidden" name="SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED" value="<?= $prefSyncPreSavePruneEnabled ? '1' : '0' ?>">
             <input type="hidden" name="CLEANUP_BACKUP_ENABLED" value="<?= $prefEnabled ? '1' : '0' ?>">
             <input type="hidden" name="CLEANUP_BACKUP_KEEP" value="<?=htmlspecialchars((string)$prefKeep, ENT_QUOTES, 'UTF-8')?>">
 
@@ -920,15 +986,23 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
               }
               const delKeep = deleteForm ? deleteForm.querySelector('input[name="CLEANUP_BACKUP_KEEP"]') : null;
               const delEnabled = deleteForm ? deleteForm.querySelector('input[name="CLEANUP_BACKUP_ENABLED"]') : null;
+              const delSyncPreSave = deleteForm ? deleteForm.querySelector('input[name="SYNC_PRE_SAVE_BACKUP_ENABLED"]') : null;
+              const delSyncPreSavePrune = deleteForm ? deleteForm.querySelector('input[name="SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED"]') : null;
 
               const enabledCheckbox = document.querySelector('input[name="CLEANUP_BACKUP_ENABLED"][type="checkbox"]');
+              const syncPreSaveCheckbox = document.querySelector('input[name="SYNC_PRE_SAVE_BACKUP_ENABLED"][type="checkbox"]');
+              const syncPreSavePruneCheckbox = document.querySelector('input[name="SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED"][type="checkbox"]');
 
               function sync(){
                 if (delKeep && keepInput) delKeep.value = keepInput.value;
                 if (delEnabled && enabledCheckbox) delEnabled.value = enabledCheckbox.checked ? '1' : '0';
+                if (delSyncPreSave && syncPreSaveCheckbox) delSyncPreSave.value = syncPreSaveCheckbox.checked ? '1' : '0';
+                if (delSyncPreSavePrune && syncPreSavePruneCheckbox) delSyncPreSavePrune.value = syncPreSavePruneCheckbox.checked ? '1' : '0';
               }
               if (keepInput) keepInput.addEventListener('input', sync);
               if (enabledCheckbox) enabledCheckbox.addEventListener('change', sync);
+              if (syncPreSaveCheckbox) syncPreSaveCheckbox.addEventListener('change', sync);
+              if (syncPreSavePruneCheckbox) syncPreSavePruneCheckbox.addEventListener('change', sync);
               sync();
             })();
           </script>
@@ -936,6 +1010,11 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
           <div class="row-links">
             <a class="btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
             <a class="btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="btn" href="<?=htmlspecialchars($accountUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_account'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="btn" href="<?=htmlspecialchars($setupauthUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_setup_auth'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="btn" href="<?=htmlspecialchars($logsettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_log_settings'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="btn" href="<?=htmlspecialchars($clipboardsyncUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_clipboard_sync'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="btn" href="<?=htmlspecialchars($mediafilesUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_media_files'], ENT_QUOTES, 'UTF-8')?></a>
           </div>
 
         </div>

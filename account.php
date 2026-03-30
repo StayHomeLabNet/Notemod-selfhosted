@@ -16,6 +16,12 @@ $t = [
     'logged_as' => 'ログイン中:',
     'storage_dir_user' => '保存ディレクトリユーザー:',
     'back' => '戻る',
+    'go_setup_auth' => '認証設定へ',
+    'go_log_settings' => 'ログ設定へ',
+    'go_bak_settings' => 'バックアップ設定へ',
+    'go_clipboard_sync' => 'クリップボード同期へ',
+    'go_media_files' => 'メディア＆ファイルへ',
+
     'logout' => 'ログアウト',
     'updated' => '更新しました',
     'bad_current' => '現在のパスワードが違います',
@@ -49,6 +55,12 @@ $t = [
     'storage_dir_user' => 'Storage directory user:',
     'back' => 'Back',
     'logout' => 'Logout',
+    'go_setup_auth' => 'Go to Auth settings',
+    'go_log_settings' => 'Go to Log settings',
+    'go_bak_settings' => 'Go to Backup settings',
+    'go_clipboard_sync' => 'Go to Clipboard sync',
+    'go_media_files' => 'Go to Media & Files',
+
     'updated' => 'Updated',
     'bad_current' => 'Current password is incorrect',
     'save_failed' => 'Failed to save settings (permission?)',
@@ -177,6 +189,11 @@ $u = nm_ui_toggle_urls('/account.php', $lang, $theme);
 // Links
 $logoutUrl = nm_ui_url('/logout.php');
 $backUrl   = rtrim((string)$base, '/') . '/';
+$setupauthUrl = nm_ui_url('/setup_auth.php');
+$logsettingsUrl = nm_ui_url('/log_settings.php');
+$baksettingsUrl = nm_ui_url('/bak_settings.php');
+$clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
+$mediafilesUrl = nm_ui_url('/media_files.php');
 ?>
 <!doctype html>
 <html lang="<?=htmlspecialchars($lang, ENT_QUOTES, 'UTF-8')?>" data-theme="<?=htmlspecialchars($theme, ENT_QUOTES, 'UTF-8')?>">
@@ -476,6 +493,11 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
     <div class="row-links">
       <a class="header-btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
       <a class="header-btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="header-btn" href="<?=htmlspecialchars($setupauthUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_setup_auth'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="header-btn" href="<?=htmlspecialchars($logsettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_log_settings'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="header-btn" href="<?=htmlspecialchars($baksettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_bak_settings'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="header-btn" href="<?=htmlspecialchars($clipboardsyncUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_clipboard_sync'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="header-btn" href="<?=htmlspecialchars($mediafilesUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_media_files'], ENT_QUOTES, 'UTF-8')?></a>
     </div>
     
   </div>

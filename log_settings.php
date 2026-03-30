@@ -167,6 +167,11 @@ $t = [
     'ip_alert_ignore_bots' => 'IP_ALERT_IGNORE_BOTS（ボットっぽいUAを無視）',
 
     'go_back' => '戻る',
+    'go_account' => 'アカウント設定へ',
+    'go_setup_auth' => '認証設定へ',
+    'go_bak_settings' => 'バックアップ設定へ',
+    'go_clipboard_sync' => 'クリップボード同期へ',
+    'go_media_files' => 'メディア＆ファイルへ',
   ],
   'en' => [
     'title' => 'Log / Session Settings',
@@ -239,6 +244,11 @@ $t = [
     'ip_alert_ignore_bots' => 'IP_ALERT_IGNORE_BOTS (ignore bot-like user agents)',
 
     'go_back' => 'Back',
+    'go_account' => 'Go to Account',
+    'go_setup_auth' => 'Go to Auth settings',
+    'go_bak_settings' => 'Go to Backup settings',
+    'go_clipboard_sync' => 'Go to Clipboard sync',
+    'go_media_files' => 'Go to Media & Files',
   ],
 ];
 
@@ -598,6 +608,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 $u = nm_ui_toggle_urls('/log_settings.php', $lang, $theme);
 $backUrl = nm_ui_url('/');
 $logoutUrl = nm_ui_url('/logout.php');
+$accountUrl = nm_ui_url('/account.php');
+$setupauthUrl = nm_ui_url('/setup_auth.php');
+$baksettingsUrl = nm_ui_url('/bak_settings.php');
+$clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
+$mediafilesUrl = nm_ui_url('/media_files.php');
 ?>
 <!doctype html>
 <html lang="<?=htmlspecialchars($lang, ENT_QUOTES, 'UTF-8')?>" data-theme="<?=htmlspecialchars($theme, ENT_QUOTES, 'UTF-8')?>">
@@ -1120,6 +1135,11 @@ $logoutUrl = nm_ui_url('/logout.php');
         <div class="row-links">
           <a class="nav-btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
           <a class="nav-btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="nav-btn" href="<?=htmlspecialchars($accountUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_account'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="nav-btn" href="<?=htmlspecialchars($setupauthUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_setup_auth'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="nav-btn" href="<?=htmlspecialchars($baksettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_bak_settings'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="nav-btn" href="<?=htmlspecialchars($clipboardsyncUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_clipboard_sync'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="nav-btn" href="<?=htmlspecialchars($mediafilesUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_media_files'], ENT_QUOTES, 'UTF-8')?></a>
         </div>
 
       </div>

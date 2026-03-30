@@ -21,6 +21,12 @@ return [
     // Notemod の Logs カテゴリに記録（月別ノート: access-YYYY-MM）
     'LOGGER_NOTEMOD_ENABLED' => true,
 
+    // Web UI の同期保存前に自動バックアップを作成
+    'SYNC_PRE_SAVE_BACKUP_ENABLED' => true,
+
+    // Web UI の同期保存前バックアップの直前に、古いバックアップを自動整理
+    'SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED' => false,
+
     // （任意）Notemod の初期スナップショットをカスタマイズ
     // （JSON文字列として保存する必要があります）
     // 'INITIAL_SNAPSHOT' => '{"categories":null,"hasSelectedLanguage":null,"notes":null,"selectedLanguage":null}',

@@ -72,6 +72,7 @@ $t = [
     'go_log_settings' => 'ログ設定へ',
     'go_bak_settings' => 'バックアップ設定へ',
     'go_clipboard_sync' => 'クリップボード同期へ',
+    'go_media_files' => 'メディア＆ファイルへ',
 
     'lang_label' => '言語',
     'theme_label' => 'テーマ',
@@ -139,6 +140,7 @@ $t = [
     'go_log_settings' => 'Go to Log settings',
     'go_bak_settings' => 'Go to Backup settings',
     'go_clipboard_sync' => 'Go to Clipboard sync',
+    'go_media_files' => 'Go to Media & Files',
 
     'lang_label' => 'Language',
     'theme_label' => 'Theme',
@@ -417,6 +419,8 @@ function nm_ensure_secret_in_config(string $configPath, string $dirUser, bool &$
             'DEBUG' => false,
             'LOGGER_FILE_ENABLED' => true,
             'LOGGER_NOTEMOD_ENABLED' => false,
+            'SYNC_PRE_SAVE_BACKUP_ENABLED' => true,
+            'SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED' => false,
             'DATA_ENCRYPTION_ENABLED' => false,
             'DATA_ENCRYPTION_KEY' => nm_generate_encryption_key(32),
             'SESSION_COOKIE_LIFETIME' => 0,
@@ -438,7 +442,17 @@ function nm_ensure_secret_in_config(string $configPath, string $dirUser, bool &$
         $cfg['IP_ALERT_IGNORE_IPS'] = array();
     }
 
+    if (!array_key_exists('SYNC_PRE_SAVE_BACKUP_ENABLED', $cfg)) {
+        $cfg['SYNC_PRE_SAVE_BACKUP_ENABLED'] = true;
+    }
+    if (!array_key_exists('SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED', $cfg)) {
+        $cfg['SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED'] = false;
+    }
+
     if (isset($cfg['SECRET']) && is_string($cfg['SECRET']) && trim($cfg['SECRET']) !== '') {
+        if (!nm_save_php_config_array($configPath, $cfg)) {
+            return false;
+        }
         return true;
     }
 
@@ -855,6 +869,7 @@ $accountUrl = nm_ui_url('/account.php');
 $logsettingsUrl = nm_ui_url('/log_settings.php');
 $baksettingsUrl = nm_ui_url('/bak_settings.php');
 $clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
+$mediafilesUrl = nm_ui_url('/media_files.php');
 
 // Secret status (when not posted)
 if ($secretInfo === '') {
@@ -1226,6 +1241,7 @@ if ($encKeyInfo === '') {
           <a class="topbtn" href="<?=htmlspecialchars($logsettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_log_settings'], ENT_QUOTES, 'UTF-8')?></a>
           <a class="topbtn" href="<?=htmlspecialchars($baksettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_bak_settings'], ENT_QUOTES, 'UTF-8')?></a>
           <a class="topbtn" href="<?=htmlspecialchars($clipboardsyncUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_clipboard_sync'], ENT_QUOTES, 'UTF-8')?></a>
+          <a class="topbtn" href="<?=htmlspecialchars($mediafilesUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_media_files'], ENT_QUOTES, 'UTF-8')?></a>
         </div>
       </div>
     </div>

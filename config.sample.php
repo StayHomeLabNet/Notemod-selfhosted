@@ -21,6 +21,12 @@ return [
     // Notemod Logs category (monthly note: access-YYYY-MM)
     'LOGGER_NOTEMOD_ENABLED' => true,
 
+    // Enable/disable automatic backup before Web UI sync save
+    'SYNC_PRE_SAVE_BACKUP_ENABLED' => true,
+
+    // Automatically prune old backups immediately before Web UI sync pre-save backup
+    'SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED' => false,
+
     // Optional: customize Notemod initial snapshot
     // (Must be stored as a JSON string)
     // 'INITIAL_SNAPSHOT' => '{"categories":null,"hasSelectedLanguage":null,"notes":null,"selectedLanguage":null}',
