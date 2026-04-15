@@ -117,6 +117,33 @@ function nm_api_locked_save_notemod($fp, array $data): bool
 // - file_index.json は「現存ファイルの一覧」を表示用に持つ
 //   ※ upload時は差分更新。purge後は cleanup_api.php 側で再生成する想定
 // =====================
+function nm_load_index_json(string $indexPath, string $itemsKey): array
+{
+    if (!is_file($indexPath)) return [];
+    $raw = @file_get_contents($indexPath);
+    $tmp = is_string($raw) ? json_decode($raw, true) : null;
+    if (!is_array($tmp) || !isset($tmp[$itemsKey]) || !is_array($tmp[$itemsKey])) {
+        return [];
+    }
+    return $tmp[$itemsKey];
+}
+
+function nm_find_existing_lock(array $rows, string $filename): bool
+{
+    foreach ($rows as $row) {
+        if (!is_array($row)) continue;
+        if ((string)($row['filename'] ?? '') !== $filename) continue;
+        return !empty($row['lock']);
+    }
+    return false;
+}
+
+// =====================
+// file_index.json 更新（現状インデックス）
+// - file.json は追記専用ログのまま
+// - file_index.json は「現存ファイルの一覧」を表示用に持つ
+//   ※ upload時は差分更新。purge後は cleanup_api.php 側で再生成する想定
+// =====================
 function nm_update_file_index(string $userDir, array $latestMeta, string $originalName): bool
 {
     $indexPath = rtrim($userDir, '/\\') . '/file_index.json';
@@ -124,10 +151,14 @@ function nm_update_file_index(string $userDir, array $latestMeta, string $origin
 
     $nowUnix = time();
     $nowIso  = gmdate('c');
+    $filename = (string)($latestMeta['filename'] ?? '');
+    if ($filename === '') return false;
 
-    // 追加/更新するエントリ（表示に必要な項目をまとめる）
+    $existingRows = nm_load_index_json($indexPath, 'files');
+    $existingLock = nm_find_existing_lock($existingRows, $filename);
+
     $entry = [
-        'filename' => (string)($latestMeta['filename'] ?? ''),
+        'filename' => $filename,
         'original_name' => $originalName,
         'ext' => (string)($latestMeta['ext'] ?? ''),
         'mime' => (string)($latestMeta['mime'] ?? ''),
@@ -135,31 +166,18 @@ function nm_update_file_index(string $userDir, array $latestMeta, string $origin
         'sha256' => (string)($latestMeta['sha256'] ?? ''),
         'created_at' => (string)($latestMeta['created_at'] ?? $nowIso),
         'created_at_unix' => (int)($latestMeta['created_at_unix'] ?? $nowUnix),
-        // あるなら file_id も入れる（無くてもOK）
         'file_id' => $latestMeta['file_id'] ?? null,
+        'lock' => $existingLock,
     ];
 
-    if ($entry['filename'] === '') return false;
-
-    // 既存 index を読む（壊れていたら新規作成）
     $index = [
         'v' => 1,
         'generated_at' => $nowIso,
         'generated_at_unix' => $nowUnix,
         'count' => 0,
-        'files' => [],
+        'files' => $existingRows,
     ];
 
-    if (is_file($indexPath)) {
-        $raw = @file_get_contents($indexPath);
-        $tmp = is_string($raw) ? json_decode($raw, true) : null;
-        if (is_array($tmp) && isset($tmp['files']) && is_array($tmp['files'])) {
-            // v が無い/違っても files が配列なら読み込む（安全側）
-            $index['files'] = $tmp['files'];
-        }
-    }
-
-    // filename で差分更新（既存があれば置換、無ければ追加）
     $newFiles = [];
     $replaced = false;
     foreach ($index['files'] as $row) {
@@ -169,6 +187,11 @@ function nm_update_file_index(string $userDir, array $latestMeta, string $origin
             $newFiles[] = $entry;
             $replaced = true;
         } else {
+            if (!array_key_exists('lock', $row)) {
+                $row['lock'] = false;
+            } else {
+                $row['lock'] = !empty($row['lock']);
+            }
             $newFiles[] = $row;
         }
     }
@@ -176,7 +199,6 @@ function nm_update_file_index(string $userDir, array $latestMeta, string $origin
         $newFiles[] = $entry;
     }
 
-    // created_at_unix 降順でソート（最新を先頭に）
     usort($newFiles, function ($a, $b) {
         $au = (int)($a['created_at_unix'] ?? 0);
         $bu = (int)($b['created_at_unix'] ?? 0);
@@ -192,7 +214,85 @@ function nm_update_file_index(string $userDir, array $latestMeta, string $origin
     $json = json_encode($index, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     if ($json === false) return false;
 
-    // atomic write
+    if (@file_put_contents($tmpPath, $json, LOCK_EX) === false) return false;
+    @chmod($tmpPath, 0644);
+    if (!@rename($tmpPath, $indexPath)) {
+        @unlink($tmpPath);
+        return false;
+    }
+    @chmod($indexPath, 0644);
+    return true;
+}
+
+function nm_update_image_index(string $userDir, array $latestMeta): bool
+{
+    $indexPath = rtrim($userDir, '/\\') . '/image_index.json';
+    $tmpPath   = $indexPath . '.tmp';
+
+    $nowUnix = time();
+    $nowIso  = gmdate('c');
+    $filename = (string)($latestMeta['filename'] ?? '');
+    if ($filename === '') return false;
+
+    $existingRows = nm_load_index_json($indexPath, 'images');
+    $existingLock = nm_find_existing_lock($existingRows, $filename);
+
+    $entry = [
+        'filename' => $filename,
+        'ext' => (string)($latestMeta['ext'] ?? ''),
+        'mime' => (string)($latestMeta['mime'] ?? ''),
+        'size' => (int)($latestMeta['size'] ?? 0),
+        'sha256' => (string)($latestMeta['sha256'] ?? ''),
+        'created_at' => (string)($latestMeta['created_at'] ?? $nowIso),
+        'created_at_unix' => (int)($latestMeta['created_at_unix'] ?? $nowUnix),
+        'image_id' => $latestMeta['image_id'] ?? null,
+        'lock' => $existingLock,
+    ];
+
+    $index = [
+        'v' => 1,
+        'generated_at' => $nowIso,
+        'generated_at_unix' => $nowUnix,
+        'count' => 0,
+        'images' => $existingRows,
+    ];
+
+    $newRows = [];
+    $replaced = false;
+    foreach ($index['images'] as $row) {
+        if (!is_array($row)) continue;
+        $fn = (string)($row['filename'] ?? '');
+        if ($fn === $entry['filename']) {
+            $newRows[] = $entry;
+            $replaced = true;
+        } else {
+            if (!array_key_exists('lock', $row)) {
+                $row['lock'] = false;
+            } else {
+                $row['lock'] = !empty($row['lock']);
+            }
+            $newRows[] = $row;
+        }
+    }
+    if (!$replaced) {
+        $newRows[] = $entry;
+    }
+
+    usort($newRows, function ($a, $b) {
+        $au = (int)($a['created_at_unix'] ?? 0);
+        $bu = (int)($b['created_at_unix'] ?? 0);
+        if ($au === $bu) return 0;
+        return ($bu <=> $au);
+    });
+
+    $index['generated_at'] = $nowIso;
+    $index['generated_at_unix'] = $nowUnix;
+    $index['images'] = $newRows;
+    $index['count'] = count($newRows);
+
+    $json = json_encode($index, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    if ($json === false) return false;
+
     if (@file_put_contents($tmpPath, $json, LOCK_EX) === false) return false;
     @chmod($tmpPath, 0644);
     if (!@rename($tmpPath, $indexPath)) {
@@ -548,8 +648,13 @@ if ($type === 'image') {
         @unlink($tmpLatest);
     }
 
+$indexOk = nm_update_image_index($userDir, $latest);
+
 if (function_exists('logMessage')) {
         logMessage('[api.php] image uploaded user=' . $username . ' file=' . $filename . ' size=' . $size . ' mime=' . $mime);
+        if (!$indexOk) {
+            logMessage('[api.php] WARN: failed to update image_index.json user=' . $username);
+        }
     }
 
     respond_json([

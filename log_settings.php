@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
 nm_auth_require_login();
+nm_send_security_headers_html();
 
 /*
  * log_settings.php
@@ -62,8 +63,6 @@ if ($isLoggedIn) {
 }
 
 // Auth email for reflect button
-// auth_common.php の nm_auth_load($dirUser) は
-// config/<DIR_USER>/auth.php を読む実装
 $authEmail = '';
 if ($currentDirUser !== '' && function_exists('nm_auth_load')) {
     try {
@@ -82,7 +81,7 @@ $mailPref = array(
     'SMTP_ENABLED' => !empty($mailCfg['SMTP_ENABLED']),
     'SMTP_HOST' => (string)($mailCfg['SMTP_HOST'] ?? ''),
     'SMTP_PORT' => (int)($mailCfg['SMTP_PORT'] ?? 587),
-    'SMTP_ENCRYPTION' => (string)($mailCfg['SMTP_ENCRYPTION'] ?? 'tls'),
+    'SMTP_ENCRYPTION' => (string)($mailCfg['SMTP_ENCRYPTION'] ?? 'ssl'),
     'SMTP_AUTH' => !empty($mailCfg['SMTP_AUTH']),
     'SMTP_USERNAME' => (string)($mailCfg['SMTP_USERNAME'] ?? ''),
     'SMTP_PASSWORD' => (string)($mailCfg['SMTP_PASSWORD'] ?? ''),
@@ -109,6 +108,7 @@ $t = [
     'err_read'  => 'config/<DIR_USER>/config.php の読み込みに失敗しました',
     'err_broken'=> 'config/<DIR_USER>/config.php が壊れた可能性があります（配列として読み込めません）',
     'err_login' => 'Login required.',
+    'csrf_invalid' => 'CSRFトークンが無効です。ページを再読み込みしてからもう一度お試しください。',
 
     'lang_label'  => '言語',
     'theme_label' => 'テーマ',
@@ -149,7 +149,7 @@ $t = [
     'smtp_auth' => 'SMTP認証を使う',
     'smtp_username' => 'SMTP_USERNAME',
     'smtp_password' => 'SMTP_PASSWORD',
-    'smtp_from' => 'SMTP_FROM（空欄なら IP_ALERT_FROM を使用）',
+    'smtp_from' => 'SMTP_FROM（空欄なら SMTP_USERNAME を使用）',
     'smtp_from_name' => 'SMTP_FROM_NAME（任意）',
     'smtp_fallback' => 'SMTP失敗時に mail() へフォールバック',
     'smtp_test_to' => 'テスト送信先メールアドレス',
@@ -186,6 +186,7 @@ $t = [
     'err_read'  => 'Failed to read config/<DIR_USER>/config.php',
     'err_broken'=> 'config/<DIR_USER>/config.php may be broken (cannot be loaded as array).',
     'err_login' => 'Login required.',
+    'csrf_invalid' => 'Invalid CSRF token. Please reload the page and try again.',
 
     'lang_label'  => 'Language',
     'theme_label' => 'Theme',
@@ -226,7 +227,7 @@ $t = [
     'smtp_auth' => 'Use SMTP authentication',
     'smtp_username' => 'SMTP_USERNAME',
     'smtp_password' => 'SMTP_PASSWORD',
-    'smtp_from' => 'SMTP_FROM (leave blank to use IP_ALERT_FROM)',
+    'smtp_from' => 'SMTP_FROM (leave blank to use SMTP_USERNAME)',
     'smtp_from_name' => 'SMTP_FROM_NAME (optional)',
     'smtp_fallback' => 'Fallback to mail() if SMTP fails',
     'smtp_test_to' => 'Test recipient email',
@@ -321,7 +322,6 @@ function ls_session_seconds_to_label(int $seconds, string $lang): string {
     }
     return $days . ' day' . ($days === 1 ? '' : 's');
 }
-
 
 /**
  * config/config.php を「既存のコメント/他設定を保持」しつつ更新する
@@ -421,6 +421,8 @@ function ls_write_config_with_validation(string $configDir, string $configPath, 
 // --------------------
 $msg = '';
 $err = '';
+$auditEvent = '';
+$auditContext = [];
 
 $cfg = [];
 try {
@@ -469,14 +471,24 @@ $serverGcMaxLifetime = function_exists('nm_server_session_gc_maxlifetime')
 // --------------------
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
+    try {
+        nm_csrf_validate_or_die();
+    } catch (Throwable $e) {
+        $err = $t[$lang]['csrf_invalid'];
+    }
+
     $action = (string)($_POST['_action'] ?? 'save_config');
     if (in_array($action, array('save_mail', 'smtp_test'), true)) {
         $smtpDetailsOpen = true;
     }
 
-    // (2) 未ログイン POST をサーバ側で弾く（DevTools対策）
-    if (!$canEdit) {
+    if ($err !== '') {
+        // keep current state, just show error
+    } elseif (!$canEdit) {
+        // (2) 未ログイン POST をサーバ側で弾く（DevTools対策）
         $err = $t[$lang]['err_login'];
+        $auditEvent = 'log_settings_update_failed';
+        $auditContext = ['username' => $loggedUser, 'dir_user' => $currentDirUser, 'reason' => 'not_logged_in', 'action' => $action];
     } elseif ($action === 'save_mail' || $action === 'smtp_test') {
         $mailUpdates = array(
             'MAIL_TRANSPORT' => ls_str_from_post('MAIL_TRANSPORT', (string)$mailPref['MAIL_TRANSPORT']),
@@ -498,6 +510,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
         if (!function_exists('nm_save_mail_config') || !nm_save_mail_config($mailUpdates)) {
             $err = $t[$lang]['smtp_save_failed'];
+            $auditEvent = 'smtp_settings_save_failed';
+            $auditContext = ['username' => $loggedUser, 'dir_user' => $currentDirUser, 'reason' => 'save_failed'];
         } else {
             $mailCfg = function_exists('nm_load_mail_config') ? nm_load_mail_config() : $mailUpdates;
             $mailPref = array(
@@ -505,7 +519,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 'SMTP_ENABLED' => !empty($mailCfg['SMTP_ENABLED']),
                 'SMTP_HOST' => (string)($mailCfg['SMTP_HOST'] ?? ''),
                 'SMTP_PORT' => (int)($mailCfg['SMTP_PORT'] ?? 587),
-                'SMTP_ENCRYPTION' => (string)($mailCfg['SMTP_ENCRYPTION'] ?? 'tls'),
+                'SMTP_ENCRYPTION' => (string)($mailCfg['SMTP_ENCRYPTION'] ?? 'ssl'),
                 'SMTP_AUTH' => !empty($mailCfg['SMTP_AUTH']),
                 'SMTP_USERNAME' => (string)($mailCfg['SMTP_USERNAME'] ?? ''),
                 'SMTP_PASSWORD' => (string)($mailCfg['SMTP_PASSWORD'] ?? ''),
@@ -514,16 +528,20 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 'SMTP_FALLBACK_TO_MAIL' => !empty($mailCfg['SMTP_FALLBACK_TO_MAIL']),
             );
             $msg = $t[$lang]['smtp_saved'];
+            $auditEvent = 'smtp_settings_saved';
+            $auditContext = ['username' => $loggedUser, 'dir_user' => $currentDirUser, 'transport' => (string)$mailPref['MAIL_TRANSPORT'], 'smtp_enabled' => !empty($mailPref['SMTP_ENABLED'])];
 
             if ($action === 'smtp_test') {
                 $testTo = trim((string)($_POST['SMTP_TEST_TO'] ?? ''));
                 if ($testTo === '' || !filter_var($testTo, FILTER_VALIDATE_EMAIL)) {
                     $err = $t[$lang]['smtp_test_invalid_to'];
                     $msg = '';
+                    $auditEvent = 'smtp_test_failed';
+                    $auditContext = ['username' => $loggedUser, 'dir_user' => $currentDirUser, 'reason' => 'invalid_recipient'];
                 } else {
                     $fromForSend = trim((string)($mailPref['SMTP_FROM'] ?? ''));
                     if ($fromForSend === '') {
-                        $fromForSend = trim((string)($pref['IP_ALERT_FROM'] ?? ''));
+                        $fromForSend = trim((string)($mailPref['SMTP_USERNAME'] ?? ''));
                     }
                     $mailErr = null;
                     $ok = function_exists('nm_send_mail_common')
@@ -531,8 +549,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                         : false;
                     if ($ok) {
                         $msg = $t[$lang]['smtp_test_ok'];
+                        $auditEvent = 'smtp_test_sent';
+                        $auditContext = ['username' => $loggedUser, 'dir_user' => $currentDirUser, 'to_masked' => function_exists('nm_mask_email_for_audit') ? nm_mask_email_for_audit($testTo) : ''];
                     } else {
                         $err = $t[$lang]['smtp_test_ng'];
+                        $auditEvent = 'smtp_test_failed';
+                        $auditContext = ['username' => $loggedUser, 'dir_user' => $currentDirUser, 'to_masked' => function_exists('nm_mask_email_for_audit') ? nm_mask_email_for_audit($testTo) : '', 'reason' => 'send_failed'];
                         if (is_string($mailErr) && $mailErr !== '') {
                             @error_log('[Notemod SMTP Test] ' . $mailErr);
                         }
@@ -575,8 +597,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         $saveErrKey = '';
         if (!ls_write_config_with_validation($configDir, $configPath, $updates, $saveErrKey)) {
             $err = ($saveErrKey === 'broken') ? $t[$lang]['err_broken'] : $t[$lang]['err_write'];
+            $auditEvent = 'log_settings_update_failed';
+            $auditContext = ['username' => $loggedUser, 'dir_user' => $currentDirUser, 'reason' => $saveErrKey === 'broken' ? 'broken_config' : 'write_failed'];
         } else {
             $msg = $t[$lang]['ok'];
+            $auditEvent = 'log_settings_saved';
+            $auditContext = ['username' => $loggedUser, 'dir_user' => $currentDirUser, 'timezone' => $timezone, 'session_cookie_lifetime' => $sessionCookieLifetime, 'ip_alert_enabled' => !empty($updates['IP_ALERT_ENABLED'])];
 
             $cfg = ls_read_php_config_array($configPath);
 
@@ -600,6 +626,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $pref['LOGGER_NOTEMOD_MAX_LINES'] = (int)($cfg['LOGGER_NOTEMOD_MAX_LINES'] ?? $updates['LOGGER_NOTEMOD_MAX_LINES']);
         }
     }
+}
+
+if ($auditEvent !== '' && function_exists('nm_write_auth_event')) {
+    nm_write_auth_event($auditEvent, $auditContext);
 }
 
 // --------------------
@@ -736,6 +766,26 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
     input:focus, textarea:focus, select:focus{
       border-color: color-mix(in srgb, var(--accent) 70%, transparent);
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
+    }
+    select{
+      appearance:auto;
+      -webkit-appearance:menulist;
+      -moz-appearance:menulist;
+    }
+    select option,
+    select optgroup{
+      background-color: color-mix(in srgb, var(--bg1) 92%, #000 8%);
+      color: var(--text);
+    }
+    html[data-theme="light"] select option,
+    html[data-theme="light"] select optgroup{
+      background-color: #ffffff;
+      color: var(--text);
+    }
+    html[data-theme="dark"] select option,
+    html[data-theme="dark"] select optgroup{
+      background-color: #0b1222;
+      color: var(--text);
     }
     input[disabled], textarea[disabled], select[disabled]{ opacity:.75; cursor:not-allowed; }
     .btn{
@@ -888,7 +938,6 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
     }
   </style>
   <script>
-  // Notemod main language -> custom pages (JA only, otherwise EN)
   (function(){
     try{
       var p = new URLSearchParams(window.location.search);
@@ -949,6 +998,8 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
         <?php endif; ?>
 
         <form method="post">
+          <?= nm_csrf_input_html() ?>
+
           <div class="box">
             <h3><?=htmlspecialchars($t[$lang]['section_general'], ENT_QUOTES, 'UTF-8')?></h3>
 
@@ -957,7 +1008,6 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
                    value="<?=htmlspecialchars($pref['TIMEZONE'], ENT_QUOTES, 'UTF-8')?>"
                    <?= $canEdit ? '' : 'disabled' ?>>
           </div>
-
 
           <div class="box">
             <h3><?=htmlspecialchars($t[$lang]['section_session'], ENT_QUOTES, 'UTF-8')?></h3>
@@ -1056,6 +1106,9 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
               <span><?=htmlspecialchars($t[$lang]['ip_alert_ignore_bots'], ENT_QUOTES, 'UTF-8')?></span>
             </label>
 
+            <button class="btn" type="submit" name="_action" value="save_config" <?= $canEdit ? '' : 'disabled' ?>><?=htmlspecialchars($t[$lang]['btn'], ENT_QUOTES, 'UTF-8')?></button>
+          </div>
+
             <details class="smtp-panel" <?= $smtpDetailsOpen ? 'open' : '' ?>>
               <summary><?=htmlspecialchars($t[$lang]['show_smtp'], ENT_QUOTES, 'UTF-8')?></summary>
               <div class="smtp-inner">
@@ -1109,7 +1162,7 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
                     <span><?=htmlspecialchars($t[$lang]['smtp_fallback'], ENT_QUOTES, 'UTF-8')?></span>
                   </label>
 
-                  <div class="smtp-accent-note"><?= htmlspecialchars($lang === 'ja' ? 'SMTP_FROM が空欄の場合は、通常の通知設定にある IP_ALERT_FROM が送信元に使われます。' : 'If SMTP_FROM is blank, the sender falls back to IP_ALERT_FROM from the normal notification settings.', ENT_QUOTES, 'UTF-8') ?></div>
+                  <div class="smtp-accent-note"><?= htmlspecialchars($lang === 'ja' ? 'SMTP_FROM が空欄の場合は、SMTP_USERNAME を送信元として使用します。' : 'If SMTP_FROM is blank, SMTP_USERNAME is used as the sender address.', ENT_QUOTES, 'UTF-8') ?></div>
 
                   <div class="field-inline" style="margin-top:12px;">
                     <button class="btn mini-btn" type="submit" name="_action" value="save_mail" <?= $canEdit ? '' : 'disabled' ?>><?=htmlspecialchars($t[$lang]['btn'], ENT_QUOTES, 'UTF-8')?></button>
@@ -1128,8 +1181,6 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
               </div>
             </details>
 
-            <button class="btn" type="submit" name="_action" value="save_config" <?= $canEdit ? '' : 'disabled' ?>><?=htmlspecialchars($t[$lang]['btn'], ENT_QUOTES, 'UTF-8')?></button>
-          </div>
         </form>
 
         <div class="row-links">
@@ -1159,20 +1210,6 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
     try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
     try { input.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
     input.focus();
-  });
-})();
-</script>
-<script>
-(function(){
-  var btn = document.getElementById('use_auth_email_btn');
-  var input = document.getElementById('ip_alert_to_input');
-  if (!btn || !input) return;
-  btn.addEventListener('click', function(){
-    var authEmail = btn.getAttribute('data-auth-email') || '';
-    if (!authEmail) return;
-    input.value = authEmail;
-    try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch(e) {}
-    try { input.focus(); } catch(e) {}
   });
 })();
 </script>

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/auth_common.php';
 nm_auth_require_login();
+nm_send_security_headers_json();
 
 // notemod_sync.php
 header('Content-Type: application/json; charset=utf-8');
@@ -164,7 +165,6 @@ function nm_sync_atomic_write_json(string $path, string $payload): bool
     return true;
 }
 
-
 function nm_sync_lock_path(string $dataFile): string
 {
     return $dataFile . '.lock';
@@ -207,79 +207,8 @@ function nm_log(string $path, string $event, array $ctx = []): void {
 }
 
 // --------------------
-// ディレクトリ保護：.htaccess が無ければ作成（内容を指定できる版）
-// - createDir=true なら dir が無い場合も作る
-// - createDir=false なら dir が存在する場合だけ書く（config向け）
-// - content は .htaccess の内容
-// --------------------
-function nm_ensure_htaccess_content(
-    string $dir,
-    bool $createDir,
-    string $content,
-    bool $debug,
-    string $logFile
-): void
-{
-    if (!is_dir($dir)) {
-        if (!$createDir) {
-            if ($debug) nm_log($logFile, 'htaccess_skip_dir_missing', ['dir' => $dir]);
-            return;
-        }
-        if (!@mkdir($dir, 0755, true)) {
-            if ($debug) nm_log($logFile, 'mkdir_failed', ['dir' => $dir, 'err' => error_get_last()]);
-            throw new RuntimeException('Failed to create dir: ' . $dir);
-        }
-    }
-
-    $htaccess = rtrim($dir, "/\\") . DIRECTORY_SEPARATOR . '.htaccess';
-
-    if (file_exists($htaccess)) return;
-
-    $tmp = $htaccess . '.tmp-' . bin2hex(random_bytes(4));
-    $ok = @file_put_contents($tmp, $content, LOCK_EX);
-    if ($ok === false) {
-        if ($debug) nm_log($logFile, 'htaccess_write_failed', ['tmp' => $tmp, 'err' => error_get_last()]);
-        @unlink($tmp);
-        return;
-    }
-
-    @chmod($tmp, 0644);
-
-    if (!@rename($tmp, $htaccess)) {
-        if ($debug) nm_log($logFile, 'htaccess_rename_failed', ['tmp' => $tmp, 'dst' => $htaccess, 'err' => error_get_last()]);
-        @unlink($tmp);
-        return;
-    }
-
-    if ($debug) nm_log($logFile, 'htaccess_created', ['path' => $htaccess]);
-}
-
-function nm_default_deny_htaccess(): string
-{
-    return <<<HT
-<IfModule mod_authz_core.c>
-  Require all denied
-</IfModule>
-<IfModule !mod_authz_core.c>
-  Order allow,deny
-  Deny from all
-</IfModule>
-
-HT;
-}
-
-function nm_api_allow_htaccess(): string
-{
-    return <<<HT
-Require all granted
-
-HT;
-}
-
-// --------------------
 // 同期ガード
 // --------------------
-
 
 function nm_sync_normalize_snapshot(array $data): array
 {
@@ -383,7 +312,10 @@ $apiDir = __DIR__ . '/api';
 // config フォルダー保護
 $DEBUG_BOOT = false;
 try {
-    nm_ensure_htaccess_content($configDir, false, nm_default_deny_htaccess(), $DEBUG_BOOT, $logFile);
+    $ok = nm_write_htaccess_content($configDir, nm_default_deny_htaccess_content(), false, false);
+    if (!$ok && $DEBUG_BOOT) {
+        nm_log($logFile, 'htaccess_skip_or_failed', ['dir' => $configDir]);
+    }
 } catch (Throwable $e) {
 }
 
@@ -441,19 +373,22 @@ if (!is_dir($baseDir)) {
 }
 
 try {
-    nm_ensure_htaccess_content($logDir, true, nm_default_deny_htaccess(), $DEBUG, $logFile);
+    $ok = nm_write_htaccess_content($logDir, nm_default_deny_htaccess_content(), false, true);
+    if (!$ok && $DEBUG) nm_log($logFile, 'logs_htaccess_failed', ['dir' => $logDir]);
 } catch (Throwable $e) {
     if ($DEBUG) nm_log($logFile, 'logs_htaccess_exception', ['msg' => $e->getMessage()]);
 }
 
 try {
-    nm_ensure_htaccess_content($baseDir, true, nm_default_deny_htaccess(), $DEBUG, $logFile);
+    $ok = nm_write_htaccess_content($baseDir, nm_default_deny_htaccess_content(), false, true);
+    if (!$ok && $DEBUG) nm_log($logFile, 'data_htaccess_failed', ['dir' => $baseDir]);
 } catch (Throwable $e) {
     if ($DEBUG) nm_log($logFile, 'htaccess_exception', ['msg' => $e->getMessage()]);
 }
 
 try {
-    nm_ensure_htaccess_content($apiDir, true, nm_api_allow_htaccess(), $DEBUG, $logFile);
+    $ok = nm_write_htaccess_content($apiDir, nm_default_api_htaccess_content(), false, true);
+    if (!$ok && $DEBUG) nm_log($logFile, 'api_htaccess_failed', ['dir' => $apiDir]);
 } catch (Throwable $e) {
     if ($DEBUG) nm_log($logFile, 'api_htaccess_exception', ['msg' => $e->getMessage()]);
 }

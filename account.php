@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
 
 nm_auth_require_login();
+nm_send_security_headers_html();
 header('Content-Type: text/html; charset=utf-8');
 
 // UI bootstrap
@@ -48,6 +49,7 @@ $t = [
     'dark' => 'Dark',
     'light' => 'Light',
     'new_username_empty' => '新しいユーザー名を入力してください',
+    'csrf_invalid' => 'CSRFトークンが無効です。ページを再読み込みしてからもう一度お試しください。',
   ],
   'en' => [
     'title' => 'Account',
@@ -86,17 +88,18 @@ $t = [
     'dark' => 'Dark',
     'light' => 'Light',
     'new_username_empty' => 'Please enter a new username',
+    'csrf_invalid' => 'Invalid CSRF token. Please reload the page and try again.',
   ],
 ];
 
 $cfg = nm_auth_load();
 $msg = '';
 $err = '';
+$auditEvent = '';
+$auditContext = [];
 
 $loginUser = (string)(nm_get_current_user() ?: ($cfg['USERNAME'] ?? ''));
 $currentDirUser = (string)(nm_get_current_dir_user() ?: ($cfg['DIR_USER'] ?? normalize_username($loginUser)));
-
-
 
 function nm_force_logout_after_account_change(): void
 {
@@ -120,53 +123,92 @@ if ($currentDirUser === '') {
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
-    $mode = (string)($_POST['mode'] ?? '');
-    $currentPass = (string)($_POST['current_password'] ?? '');
+    try {
+        nm_csrf_validate_or_die();
+    } catch (Throwable $e) {
+        $err = $t[$lang]['csrf_invalid'];
+    }
 
-    if (!password_verify($currentPass, (string)($cfg['PASSWORD_HASH'] ?? ''))) {
-        $err = $t[$lang]['bad_current'];
-    } else {
-        $newUser = (string)($cfg['USERNAME'] ?? '');
-        $newHash = (string)($cfg['PASSWORD_HASH'] ?? '');
+    if ($err === '') {
+        $mode = (string)($_POST['mode'] ?? '');
+        $currentPass = (string)($_POST['current_password'] ?? '');
 
-        if ($mode === 'change_username') {
-            $uu = trim((string)($_POST['new_username'] ?? ''));
-            if ($uu === '') {
-                $err = $t[$lang]['new_username_empty'];
-            } else {
-                $newUser = $uu; // USERNAME only. DIR_USER remains unchanged.
-            }
-
-        } elseif ($mode === 'change_password') {
-            $p1 = (string)($_POST['new_password'] ?? '');
-            $p2 = (string)($_POST['new_password2'] ?? '');
-
-            if ($p1 !== $p2) {
-                $err = $t[$lang]['pw_mismatch'];
-            } elseif (strlen($p1) < 10) {
-                $err = $t[$lang]['pw_short'];
-            } else {
-                $h = password_hash($p1, PASSWORD_DEFAULT);
-                if (!$h) {
-                    $err = $t[$lang]['pw_hash_fail'];
-                } else {
-                    $newHash = $h;
-                }
-            }
-
+        if (!password_verify($currentPass, (string)($cfg['PASSWORD_HASH'] ?? ''))) {
+            $err = $t[$lang]['bad_current'];
+            $auditEvent = 'account_update_failed';
+            $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'bad_current_password'];
         } else {
-            $err = $t[$lang]['unknown'];
-        }
+            $newUser = (string)($cfg['USERNAME'] ?? '');
+            $newHash = (string)($cfg['PASSWORD_HASH'] ?? '');
 
-        if ($err === '') {
-            if (!nm_auth_write_config($newUser, $newHash, $currentDirUser)) {
-                $err = $t[$lang]['save_failed'];
+            if ($mode === 'change_username') {
+                $uu = trim((string)($_POST['new_username'] ?? ''));
+                if ($uu === '') {
+                    $err = $t[$lang]['new_username_empty'];
+                    $auditEvent = 'account_update_failed';
+                    $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'new_username_empty'];
+                } else {
+                    $newUser = $uu; // USERNAME only. DIR_USER remains unchanged.
+                }
+
+            } elseif ($mode === 'change_password') {
+                $p1 = (string)($_POST['new_password'] ?? '');
+                $p2 = (string)($_POST['new_password2'] ?? '');
+
+                if ($p1 !== $p2) {
+                    $err = $t[$lang]['pw_mismatch'];
+                    $auditEvent = 'account_update_failed';
+                    $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'password_mismatch'];
+                } elseif (strlen($p1) < 10) {
+                    $err = $t[$lang]['pw_short'];
+                    $auditEvent = 'account_update_failed';
+                    $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'password_too_short'];
+                } else {
+                    $h = password_hash($p1, PASSWORD_DEFAULT);
+                    if (!$h) {
+                        $err = $t[$lang]['pw_hash_fail'];
+                        $auditEvent = 'account_update_failed';
+                        $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'password_hash_failed'];
+                    } else {
+                        $newHash = $h;
+                    }
+                }
+
             } else {
-                $_SESSION['nm_user'] = $newUser;
-                $_SESSION['nm_dir_user'] = $currentDirUser;
-                $cfg = nm_auth_load();
-                $loginUser = (string)($cfg['USERNAME'] ?? $newUser);
-                nm_force_logout_after_account_change();
+                $err = $t[$lang]['unknown'];
+                $auditEvent = 'account_update_failed';
+                $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'unknown_mode', 'mode' => $mode];
+            }
+
+            if ($err === '') {
+                if (!nm_auth_write_config($newUser, $newHash, $currentDirUser)) {
+                    $err = $t[$lang]['save_failed'];
+                    $auditEvent = 'account_update_failed';
+                    $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'save_failed', 'mode' => $mode];
+                } else {
+                    if ($mode === 'change_username') {
+                        $auditEvent = 'account_username_changed';
+                        $auditContext = [
+                            'username_from' => $loginUser,
+                            'username_to' => $newUser,
+                            'dir_user' => $currentDirUser,
+                        ];
+                    } else {
+                        $auditEvent = 'account_password_changed';
+                        $auditContext = [
+                            'username' => $loginUser,
+                            'dir_user' => $currentDirUser,
+                        ];
+                    }
+                    if (function_exists('nm_write_auth_event')) {
+                        nm_write_auth_event($auditEvent, $auditContext);
+                    }
+                    $_SESSION['nm_user'] = $newUser;
+                    $_SESSION['nm_dir_user'] = $currentDirUser;
+                    $cfg = nm_auth_load();
+                    $loginUser = (string)($cfg['USERNAME'] ?? $newUser);
+                    nm_force_logout_after_account_change();
+                }
             }
         }
     }
@@ -389,7 +431,6 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
     .row-links a{ font-size:13px; color:var(--accent); }
   </style>
   <script>
-  // Notemod main language -> custom pages (JA only, otherwise EN)
   (function(){
     try{
       var p = new URLSearchParams(window.location.search);
@@ -404,12 +445,11 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
   })();
   </script>
 
-
-<script>
-window.NM_BASE_PATH = <?= json_encode(function_exists('nm_base_path') ? nm_base_path() : '', JSON_UNESCAPED_SLASHES) ?>;
-window.NM_CURRENT_DIR_USER = <?= json_encode($currentDirUser ?? '', JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
-window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
-</script>
+  <script>
+  window.NM_BASE_PATH = <?= json_encode(function_exists('nm_base_path') ? nm_base_path() : '', JSON_UNESCAPED_SLASHES) ?>;
+  window.NM_CURRENT_DIR_USER = <?= json_encode($currentDirUser ?? '', JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+  window.NM_CURRENT_USER = <?= json_encode($user ?? '', JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+  </script>
 </head>
 <body>
   <div class="wrap">
@@ -444,6 +484,7 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
           <div class="box">
             <h3><?=htmlspecialchars($t[$lang]['change_username'], ENT_QUOTES, 'UTF-8')?></h3>
             <form method="post">
+              <?= nm_csrf_input_html() ?>
               <input type="hidden" name="mode" value="change_username">
               <label><?=htmlspecialchars($t[$lang]['new_username'], ENT_QUOTES, 'UTF-8')?></label>
               <input name="new_username" required value="<?=htmlspecialchars($user, ENT_QUOTES, 'UTF-8')?>">
@@ -457,6 +498,7 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
           <div class="box">
             <h3><?=htmlspecialchars($t[$lang]['change_password'], ENT_QUOTES, 'UTF-8')?></h3>
             <form method="post">
+              <?= nm_csrf_input_html() ?>
               <input type="hidden" name="mode" value="change_password">
               <label><?=htmlspecialchars($t[$lang]['new_password'], ENT_QUOTES, 'UTF-8')?></label>
               <input name="new_password" type="password" required>
@@ -493,11 +535,11 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
     <div class="row-links">
       <a class="header-btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
       <a class="header-btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="header-btn" href="<?=htmlspecialchars($setupauthUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_setup_auth'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="header-btn" href="<?=htmlspecialchars($logsettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_log_settings'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="header-btn" href="<?=htmlspecialchars($baksettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_bak_settings'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="header-btn" href="<?=htmlspecialchars($clipboardsyncUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_clipboard_sync'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="header-btn" href="<?=htmlspecialchars($mediafilesUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_media_files'], ENT_QUOTES, 'UTF-8')?></a>
+      <a class="header-btn" href="<?=htmlspecialchars($setupauthUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_setup_auth'], ENT_QUOTES, 'UTF-8')?></a>
+      <a class="header-btn" href="<?=htmlspecialchars($logsettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_log_settings'], ENT_QUOTES, 'UTF-8')?></a>
+      <a class="header-btn" href="<?=htmlspecialchars($baksettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_bak_settings'], ENT_QUOTES, 'UTF-8')?></a>
+      <a class="header-btn" href="<?=htmlspecialchars($clipboardsyncUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_clipboard_sync'], ENT_QUOTES, 'UTF-8')?></a>
+      <a class="header-btn" href="<?=htmlspecialchars($mediafilesUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_media_files'], ENT_QUOTES, 'UTF-8')?></a>
     </div>
     
   </div>

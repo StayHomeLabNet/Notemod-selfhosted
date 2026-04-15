@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 // ログイン必須
 require_once __DIR__ . '/auth_common.php';
+nm_send_security_headers_html();
 nm_auth_require_login();
 
 // ロガー呼び出し
@@ -66,6 +67,12 @@ $logSettingsUrl = function_exists('nm_url') ? nm_url('log_settings.php') : './lo
 $bakSettingsUrl = function_exists('nm_url') ? nm_url('bak_settings.php') : './bak_settings.php';
 $clipboardSyncUrl = function_exists('nm_url') ? nm_url('clipboard_sync.php') : './clipboard_sync.php';
 $mediaFilesUrl = function_exists('nm_url') ? nm_url('media_files.php') : './media_files.php';
+
+$nmClearSyncWarningOnce = false;
+if (session_status() === PHP_SESSION_ACTIVE && !empty($_SESSION['nm_clear_sync_warning_once'])) {
+    $nmClearSyncWarningOnce = true;
+    unset($_SESSION['nm_clear_sync_warning_once']);
+}
 ?>
 <?php
 $nmDirUser = function_exists('nm_get_current_dir_user') ? (string)nm_get_current_dir_user() : '';
@@ -94,6 +101,7 @@ if (!file_exists($nmConfigPath)) {
 }
 ?>
 <script>window.NM_BASE_PATH = <?= json_encode(function_exists('nm_base_path') ? nm_base_path() : '', JSON_UNESCAPED_SLASHES) ?>;</script>
+<script>window.NM_CLEAR_SYNC_WARNING_ON_LOAD = <?= $nmClearSyncWarningOnce ? 'true' : 'false' ?>;</script>
 
 
 
@@ -655,9 +663,29 @@ button.tab{padding: 6px 8px;width: 100%;}
 }
 
 
+
+/* Sync/session safety banner */
+.sync-warning-banner{
+  display:none;
+  position:sticky;
+  top:0;
+  z-index:9999;
+  margin:0;
+  padding:10px 14px;
+  font-size:14px;
+  line-height:1.5;
+  color:#fff;
+  background:#a31621;
+  box-shadow:0 2px 8px rgba(0,0,0,.18);
+}
+.sync-warning-banner.show{display:block;}
+.sync-warning-banner strong{font-weight:700;}
+
 </style>
 </head>
 <body>
+
+<div id="sync-warning-banner" class="sync-warning-banner" role="alert" aria-live="assertive"></div>
 
 <script>
 // ローカルストレージのクリア
@@ -666,25 +694,135 @@ function clearNotemodKeysOnly() {
     try { localStorage.removeItem(key) } catch {}
   }
 }
+
+const NM_SESSION_EXPIRED_KEY = 'nmSessionExpired';
+const NM_UNSYNCED_LOCAL_KEY = 'nmUnsyncedLocalChanges';
+const NM_LOCAL_CHANGES_AFTER_AUTH_FAILURE_KEY = 'nmLocalChangesAfterAuthFailure';
+const NM_LAST_SYNC_ERROR_KEY = 'nmLastSyncError';
+
+function setSessionExpiredFlag(value) {
+  try {
+    if (value) sessionStorage.setItem(NM_SESSION_EXPIRED_KEY, '1');
+    else sessionStorage.removeItem(NM_SESSION_EXPIRED_KEY);
+  } catch {}
+}
+
+function isSessionExpiredFlagSet() {
+  try { return sessionStorage.getItem(NM_SESSION_EXPIRED_KEY) === '1'; } catch { return false; }
+}
+
+function setUnsyncedLocalChangesFlag(value) {
+  try {
+    if (value) localStorage.setItem(NM_UNSYNCED_LOCAL_KEY, '1');
+    else localStorage.removeItem(NM_UNSYNCED_LOCAL_KEY);
+  } catch {}
+}
+
+function hasUnsyncedLocalChanges() {
+  try { return localStorage.getItem(NM_UNSYNCED_LOCAL_KEY) === '1'; } catch { return false; }
+}
+
+function setLocalChangesAfterAuthFailureFlag(value) {
+  try {
+    if (value) sessionStorage.setItem(NM_LOCAL_CHANGES_AFTER_AUTH_FAILURE_KEY, '1');
+    else sessionStorage.removeItem(NM_LOCAL_CHANGES_AFTER_AUTH_FAILURE_KEY);
+  } catch {}
+}
+
+function hasLocalChangesAfterAuthFailure() {
+  try { return sessionStorage.getItem(NM_LOCAL_CHANGES_AFTER_AUTH_FAILURE_KEY) === '1'; } catch { return false; }
+}
+
+function setLastSyncError(message) {
+  try {
+    if (message) sessionStorage.setItem(NM_LAST_SYNC_ERROR_KEY, String(message));
+    else sessionStorage.removeItem(NM_LAST_SYNC_ERROR_KEY);
+  } catch {}
+}
+
+function getLastSyncError() {
+  try { return sessionStorage.getItem(NM_LAST_SYNC_ERROR_KEY) || ''; } catch { return ''; }
+}
+
+function showSyncWarning(message) {
+  const el = document.getElementById('sync-warning-banner');
+  if (!el) return;
+  el.textContent = message;
+  el.classList.add('show');
+}
+
+function clearSyncWarning() {
+  const el = document.getElementById('sync-warning-banner');
+  if (!el) return;
+  el.textContent = '';
+  el.classList.remove('show');
+}
+
+function consumeServerRequestedSyncWarningReset() {
+  try {
+    if (!window.NM_CLEAR_SYNC_WARNING_ON_LOAD) return;
+    setSessionExpiredFlag(false);
+    setUnsyncedLocalChangesFlag(false);
+    setLocalChangesAfterAuthFailureFlag(false);
+    setLastSyncError('');
+    sessionStorage.removeItem('autoLoadDone');
+    sessionStorage.removeItem('autoLoadInProgress');
+    sessionStorage.removeItem('reloadedAfterSync');
+  } catch (e) {}
+}
+
+function updateSyncWarningBanner() {
+  if (isSessionExpiredFlagSet()) {
+    const msg = getLastSyncError() || 'Your login session has expired. Automatic sync is paused. Please log in again before loading from the server. Keep this tab open until you decide how to handle local changes.';
+    showSyncWarning(msg);
+    return;
+  }
+  if (hasLocalChangesAfterAuthFailure()) {
+    showSyncWarning('Local changes were made after sync stopped due to session expiry. Reloading or loading from the server can overwrite them. Save/export carefully after re-login.');
+    return;
+  }
+  clearSyncWarning();
+}
+
+function markSessionExpired(status) {
+  setSessionExpiredFlag(true);
+  setUnsyncedLocalChangesFlag(true);
+  setLastSyncError('Your login session has expired (HTTP ' + status + '). Automatic sync is paused. Please log in again before loading from the server. Keep this tab open if you need to preserve local changes.');
+  updateSyncWarningBanner();
+}
+
+function clearSyncDangerFlags() {
+  setSessionExpiredFlag(false);
+  setUnsyncedLocalChangesFlag(false);
+  setLocalChangesAfterAuthFailureFlag(false);
+  setLastSyncError('');
+  updateSyncWarningBanner();
+}
+
 // 同期マネージャー（ロジックの集約）
 const SyncManager = {
     isSaving: false,
     async save() {
         if (this.isSaving) return;
         this.isSaving = true;
+        setUnsyncedLocalChangesFlag(true);
+        updateSyncWarningBanner();
         try {
             const saveFn = (typeof syncSaveToServerBackground === 'function') 
                 ? syncSaveToServerBackground 
                 : (typeof syncSaveToServer === 'function' ? syncSaveToServer : null);
-            
+
             if (saveFn) {
-                await saveFn();
-                console.log("Sync Success");
+                const ok = await saveFn();
+                if (ok) {
+                  console.log("Sync Success");
+                }
             }
         } catch (e) {
             console.error('Sync Error:', e);
         } finally {
             this.isSaving = false;
+            updateSyncWarningBanner();
         }
     },
     async load(forceClear = false) {
@@ -693,6 +831,16 @@ const SyncManager = {
             for (const key of NOTEMOD_KEYS) {
                 try { backup[key] = localStorage.getItem(key); } catch {}
             }
+        }
+        if (isSessionExpiredFlagSet()) {
+            alert(getLastSyncError() || 'Your login session has expired. Please log in again before loading from the server.');
+            updateSyncWarningBanner();
+            return false;
+        }
+        if (hasLocalChangesAfterAuthFailure()) {
+            alert('Local changes were made after sync stopped due to session expiry. Loading from the server is blocked to avoid overwriting local data. Please re-login and decide how to preserve local changes first.');
+            updateSyncWarningBanner();
+            return false;
         }
         if (typeof syncLoadFromServer === 'function') {
             const ok = await syncLoadFromServer();
@@ -711,6 +859,12 @@ const SyncManager = {
 };
 
 window.addEventListener('DOMContentLoaded', function () {
+    consumeServerRequestedSyncWarningReset();
+    if (!isSessionExpiredFlagSet() && !hasLocalChangesAfterAuthFailure()) {
+      setUnsyncedLocalChangesFlag(false);
+    }
+    updateSyncWarningBanner();
+
     // 確実にキャプチャするために document でイベントを待ち受ける
     document.addEventListener('click', function (event) {
         const target = event.target;
@@ -724,13 +878,15 @@ window.addEventListener('DOMContentLoaded', function () {
         }
 
         // 2. ADDボタン & 保存ボタン & 削除ボタンの判定
-        // target自体が消える可能性を考慮し、判定を「ID一致」または「closest」の両面待ちにする
         const isAddBtn = target.id === 'confirmDelete' || target.closest('#confirmDelete');
         const isSaveBtn = target.closest('#save-note-button, #saveTasksButton, .delete-task-button, .delete-confirm');
 
         if (isAddBtn || isSaveBtn) {
-            // Note: ADDボタンは処理後にDOMから消えることが多いため、
-            // わずかに遅延（setTimeout）させて確実に裏側で同期を走らせる
+            setUnsyncedLocalChangesFlag(true);
+            if (isSessionExpiredFlagSet()) {
+              setLocalChangesAfterAuthFailureFlag(true);
+            }
+            updateSyncWarningBanner();
             setTimeout(() => SyncManager.save(), 50);
         }
     }, { capture: true, passive: false });
@@ -787,6 +943,9 @@ async function syncLoadFromServer({ quiet = false } = {}) {
     })
 
     if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        markSessionExpired(res.status);
+      }
       if (!quiet) alert('Failed to load: HTTP ' + res.status)
       return false
     }
@@ -808,6 +967,7 @@ async function syncLoadFromServer({ quiet = false } = {}) {
       return false
     }
 
+    clearSyncDangerFlags();
     sessionStorage.setItem('reloadedAfterSync', '1')
     location.reload()
     return true
@@ -826,6 +986,12 @@ async function autoLoadOnce() {
     return
   }
 
+  // セッション失効や「失効後のローカル変更」が見えている場合は自動読み込みしない
+  if (isSessionExpiredFlagSet() || hasLocalChangesAfterAuthFailure()) {
+    updateSyncWarningBanner();
+    return;
+  }
+
   // 成功済みならもうやらない
   if (sessionStorage.getItem('autoLoadDone') === '1') return
 
@@ -834,7 +1000,7 @@ async function autoLoadOnce() {
   sessionStorage.setItem('autoLoadInProgress', '1')
 
   try {
-    const ok = await syncLoadFromServer({ quiet: true })  // ← 成功したらtrue返す版
+    const ok = await syncLoadFromServer({ quiet: true })
     if (ok) sessionStorage.setItem('autoLoadDone', '1')
   } finally {
     sessionStorage.removeItem('autoLoadInProgress')
@@ -913,6 +1079,8 @@ const NOTEMOD_SYNC_TOKEN = <?php echo json_encode($SECRET, JSON_UNESCAPED_SLASHE
 // サーバーへ保存
 async function syncSaveToServer() {
   const snapshot = notemodCreateSnapshot();
+  setUnsyncedLocalChangesFlag(true);
+  updateSyncWarningBanner();
 
   try {
     const res = await fetch(NOTEMOD_SYNC_URL, {
@@ -927,29 +1095,34 @@ async function syncSaveToServer() {
       })
     })
 
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        markSessionExpired(res.status);
+      }
+      alert('Failed to save the data: HTTP ' + res.status);
+      return false;
+    }
+
     const json = await res.json();
     if (json.status === 'ok') {
+      clearSyncDangerFlags();
       alert('Saved to the server');
+      return true;
     } else {
       alert('Failed to save the data: ' + (json.message || 'unknown error'));
+      return false;
     }
   } catch (e) {
     console.error(e);
     alert('Could not save due to a communication error');
+    return false;
   }
 }
 
 // ボタン連打用・自動保存用：アラートを出さない静かな保存
 async function syncSaveToServerBackground() {
   try {
-    // すでに作ってある syncSaveToServer() をそのまま使ってもいいし、
-    // 中身をコピペして alert だけ消してもOK。
-    // 一番カンタンなのは「alert を出さない版」を自分で作ること。
-
-    // --- 例：今の syncSaveToServer の中身をほぼコピペして、
-    // alert の行だけ消したものをここに書くイメージ ---
-
-    const snapshot = notemodCreateSnapshot(); // 既に使っているスナップショット関数
+    const snapshot = notemodCreateSnapshot();
 
     const res = await fetch(NOTEMOD_SYNC_URL, {
       method: 'POST',
@@ -965,17 +1138,23 @@ async function syncSaveToServerBackground() {
 
     if (!res.ok) {
       console.error('background sync failed: HTTP ' + res.status);
-      return;
+      if (res.status === 401 || res.status === 403) {
+        markSessionExpired(res.status);
+      }
+      return false;
     }
     const json = await res.json();
     if (json.status !== 'ok') {
       console.error('background sync failed:', json.message || json);
+      return false;
     }
 
-    // ★ここで alert() は出さない！
+    clearSyncDangerFlags();
+    return true;
 
   } catch (e) {
     console.error('background sync failed:', e);
+    return false;
   }
 }
 
@@ -1009,7 +1188,7 @@ async function syncSaveToServerBackground() {
 
 <button id="import">Yükle</button>
 <button id="export">Kaydet</button>
-<button id="sync">Load from Server</button>
+<button id="sync">Load from Server</button><!-- guarded when unsynced local changes or expired session are detected -->
 <button id="languege">Dil</button>
 <button id="tema">Tema</button>
 </div>

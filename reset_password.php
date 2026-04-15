@@ -6,6 +6,9 @@ if (is_file($authCommon)) {
     require_once $authCommon;
 }
 
+nm_send_security_headers_html();
+header('Content-Type: text/html; charset=utf-8');
+
 if (!function_exists('nm_rp_h')) {
     function nm_rp_h($v): string {
         return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
@@ -82,12 +85,6 @@ if (!function_exists('nm_rp_auth_path')) {
     }
 }
 
-if (!function_exists('nm_rp_password_reset_path')) {
-    function nm_rp_password_reset_path(string $dirUser): string {
-        return __DIR__ . '/config/' . $dirUser . '/password_reset.json';
-    }
-}
-
 if (!function_exists('nm_rp_load_auth_file')) {
     function nm_rp_load_auth_file(string $path): ?array {
         if (!is_file($path) || !is_readable($path)) {
@@ -102,79 +99,38 @@ if (!function_exists('nm_rp_save_auth_file')) {
     function nm_rp_save_auth_file(string $dirUser, array $auth): bool {
         $path = nm_rp_auth_path($dirUser);
         $dir = dirname($path);
-        if (!is_dir($dir) && !@mkdir($dir, 0777, true) && !is_dir($dir)) {
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
             return false;
         }
         $export = var_export($auth, true);
         $php = "<?php\nreturn " . $export . ";\n";
-        return @file_put_contents($path, $php, LOCK_EX) !== false;
-    }
-}
-
-if (!function_exists('nm_rp_load_password_reset')) {
-    function nm_rp_load_password_reset(string $dirUser): ?array {
-        $path = nm_rp_password_reset_path($dirUser);
-        if (!is_file($path) || !is_readable($path)) {
-            return null;
-        }
-        $json = @file_get_contents($path);
-        if (!is_string($json) || $json === '') {
-            return null;
-        }
-        $data = json_decode($json, true);
-        return is_array($data) ? $data : null;
-    }
-}
-
-if (!function_exists('nm_rp_save_password_reset')) {
-    function nm_rp_save_password_reset(string $dirUser, array $data): bool {
-        $path = nm_rp_password_reset_path($dirUser);
-        $dir = dirname($path);
-        if (!is_dir($dir) && !@mkdir($dir, 0777, true) && !is_dir($dir)) {
+        $tmp = $path . '.tmp-' . bin2hex(random_bytes(4));
+        if (@file_put_contents($tmp, $php, LOCK_EX) === false) {
+            @unlink($tmp);
             return false;
         }
-        $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        if ($json === false) {
+        @chmod($tmp, 0644);
+        if (!@rename($tmp, $path)) {
+            @unlink($tmp);
             return false;
         }
-        return @file_put_contents($path, $json, LOCK_EX) !== false;
+        @chmod($path, 0644);
+        return true;
     }
 }
 
-if (!function_exists('nm_rp_find_user_by_username_param')) {
-    function nm_rp_find_user_by_username_param(string $input): ?array {
+if (!function_exists('nm_rp_find_user_by_user_param')) {
+    function nm_rp_find_user_by_user_param(string $input): ?array {
         $input = trim($input);
         if ($input === '') {
             return null;
         }
 
-        if (function_exists('nm_find_user_by_username')) {
-            $cfg = nm_find_user_by_username($input);
-            if (is_array($cfg) && !empty($cfg)) {
-                $dirUser = nm_rp_normalize_username((string)($cfg['DIR_USER'] ?? $input));
-                if ($dirUser !== '' && nm_rp_is_valid_username($dirUser)) {
-                    return [
-                        'dir_user' => $dirUser,
-                        'auth' => $cfg,
-                    ];
-                }
-            }
-        }
-
-        $configRoot = __DIR__ . '/config';
-        if (!is_dir($configRoot)) {
-            return null;
-        }
-
-        $normalizedInput = nm_rp_normalize_username($input);
-        foreach (glob($configRoot . '/*/auth.php') ?: [] as $path) {
+        $dirUser = nm_rp_normalize_username($input);
+        if ($dirUser !== '') {
+            $path = nm_rp_auth_path($dirUser);
             $auth = nm_rp_load_auth_file($path);
-            if (!is_array($auth)) {
-                continue;
-            }
-            $username = trim((string)($auth['USERNAME'] ?? ''));
-            $dirUser = nm_rp_normalize_username((string)($auth['DIR_USER'] ?? basename(dirname($path))));
-            if (($username !== '' && $username === $input) || ($dirUser !== '' && $dirUser === $normalizedInput)) {
+            if (is_array($auth)) {
                 return [
                     'dir_user' => $dirUser,
                     'auth' => $auth,
@@ -182,16 +138,17 @@ if (!function_exists('nm_rp_find_user_by_username_param')) {
             }
         }
 
-        return null;
-    }
-}
-
-if (!function_exists('nm_rp_verify_reset_token')) {
-    function nm_rp_verify_reset_token(string $plainToken, string $storedHash): bool {
-        if ($plainToken === '' || $storedHash === '') {
-            return false;
+        if (function_exists('nm_find_user_by_username')) {
+            $cfg = nm_find_user_by_username($input);
+            if (is_array($cfg) && !empty($cfg['DIR_USER'])) {
+                return [
+                    'dir_user' => nm_rp_normalize_username((string)$cfg['DIR_USER']),
+                    'auth' => $cfg,
+                ];
+            }
         }
-        return password_verify($plainToken, $storedHash);
+
+        return null;
     }
 }
 
@@ -205,15 +162,30 @@ if (!function_exists('nm_rp_log')) {
     }
 }
 
+if (!function_exists('nm_rp_request_ip')) {
+    function nm_rp_request_ip(): string {
+        return function_exists('nm_request_ip') ? nm_request_ip() : (string)($_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN');
+    }
+}
+
+if (!function_exists('nm_rp_retry_message')) {
+    function nm_rp_retry_message(int $retryAfter, string $lang): string {
+        if ($lang === 'ja') {
+            return '試行回数が多すぎます。' . max(1, $retryAfter) . '秒後にもう一度お試しください。';
+        }
+        return 'Too many attempts. Please try again in ' . max(1, $retryAfter) . ' seconds.';
+    }
+}
+
 header('Content-Type: text/html; charset=utf-8');
 
 $lang = nm_rp_lang();
 $theme = nm_rp_theme();
-$usernameParam = trim((string)($_GET['username'] ?? $_POST['username'] ?? ''));
+$userParam = trim((string)($_GET['user'] ?? $_POST['user'] ?? $_GET['username'] ?? $_POST['username'] ?? ''));
 $tokenParam = trim((string)($_GET['token'] ?? $_POST['token'] ?? ''));
 $extraParams = [];
-if ($usernameParam !== '') {
-    $extraParams['username'] = $usernameParam;
+if ($userParam !== '') {
+    $extraParams['user'] = $userParam;
 }
 if ($tokenParam !== '') {
     $extraParams['token'] = $tokenParam;
@@ -244,6 +216,7 @@ $t = [
         'min_length' => 'パスワードは10文字以上で入力してください。',
         'save_failed' => 'パスワードの保存に失敗しました。',
         'note' => 'このリンクは30分間有効です。リンクが無効または期限切れの場合は、再度パスワードリセットを申請してください。',
+        'csrf_invalid' => 'CSRFトークンが無効です。ページを再読み込みしてからもう一度お試しください。',
     ],
     'en' => [
         'title' => 'Notemod-selfhosted Password Reset',
@@ -267,6 +240,7 @@ $t = [
         'min_length' => 'Password must be at least 10 characters long.',
         'save_failed' => 'Failed to save the new password.',
         'note' => 'This link is valid for 30 minutes. If the link is invalid or expired, please request a new password reset.',
+        'csrf_invalid' => 'Invalid CSRF token. Please reload the page and try again.',
     ],
 ];
 
@@ -274,30 +248,36 @@ $errorMessage = '';
 $statusType = '';
 $validLink = false;
 $matchedUser = null;
-$resetData = null;
+$auth = null;
 
 try {
-    $matchedUser = nm_rp_find_user_by_username_param($usernameParam);
+    $matchedUser = nm_rp_find_user_by_user_param($userParam);
     if (!is_array($matchedUser) || empty($matchedUser['auth']) || empty($matchedUser['dir_user'])) {
         $errorMessage = $t[$lang]['invalid'];
     } else {
         $dirUser = (string)$matchedUser['dir_user'];
-        $resetData = nm_rp_load_password_reset($dirUser);
-        if (!is_array($resetData)) {
-            $errorMessage = $t[$lang]['invalid'];
-        } elseif (!empty($resetData['used'])) {
-            $errorMessage = $t[$lang]['used'];
+        $auth = (array)$matchedUser['auth'];
+
+        $expiresAt = (int)($auth['PASSWORD_RESET_TOKEN_EXPIRES_AT'] ?? 0);
+        if ($expiresAt <= 0) {
+            $expiresStr = (string)($auth['PASSWORD_RESET_TOKEN_EXPIRES_AT'] ?? '');
+            $parsed = strtotime($expiresStr);
+            $expiresAt = $parsed !== false ? $parsed : 0;
+        }
+
+        if ($expiresAt <= 0 || $expiresAt < time()) {
+            $errorMessage = $t[$lang]['expired'];
         } else {
-            $expiresAt = strtotime((string)($resetData['expires_at'] ?? ''));
-            if ($expiresAt === false || $expiresAt < time()) {
-                $errorMessage = $t[$lang]['expired'];
+            $storedHash = trim((string)($auth['PASSWORD_RESET_TOKEN_HASH'] ?? ''));
+            $storedPlain = trim((string)($auth['PASSWORD_RESET_TOKEN'] ?? ''));
+
+            $hashOk = ($storedHash !== '' && hash_equals($storedHash, hash('sha256', $tokenParam)));
+            $plainOk = ($storedHash === '' && $storedPlain !== '' && hash_equals($storedPlain, $tokenParam));
+
+            if (!$hashOk && !$plainOk) {
+                $errorMessage = $t[$lang]['invalid'];
             } else {
-                $storedHash = (string)($resetData['token_hash'] ?? '');
-                if (!nm_rp_verify_reset_token($tokenParam, $storedHash)) {
-                    $errorMessage = $t[$lang]['invalid'];
-                } else {
-                    $validLink = true;
-                }
+                $validLink = true;
             }
         }
     }
@@ -307,50 +287,120 @@ try {
 }
 
 if ($validLink && (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST')) {
-    $newPassword = (string)($_POST['password'] ?? '');
-    $confirmPassword = (string)($_POST['password_confirm'] ?? '');
+    try {
+        nm_csrf_validate_or_die();
+    } catch (Throwable $e) {
+        $errorMessage = $t[$lang]['csrf_invalid'];
+        $statusType = 'err';
+    }
 
-    if ($newPassword === '') {
-        $errorMessage = $t[$lang]['required'];
-        $statusType = 'err';
-    } elseif (function_exists('mb_strlen') ? (mb_strlen($newPassword, 'UTF-8') < 10) : (strlen($newPassword) < 10)) {
-        $errorMessage = $t[$lang]['min_length'];
-        $statusType = 'err';
-    } elseif ($newPassword !== $confirmPassword) {
-        $errorMessage = $t[$lang]['mismatch'];
-        $statusType = 'err';
-    } else {
-        try {
-            $auth = (array)$matchedUser['auth'];
-            $dirUser = (string)$matchedUser['dir_user'];
-            $auth['PASSWORD_HASH'] = password_hash($newPassword, PASSWORD_DEFAULT);
-            $auth['UPDATED_AT'] = gmdate('c');
-            if (empty($auth['DIR_USER'])) {
-                $auth['DIR_USER'] = $dirUser;
+    if ($errorMessage === '') {
+        $ip = nm_rp_request_ip();
+        $bucketIp = 'reset_password:ip:' . $ip;
+        $bucketUser = 'reset_password:user:' . $ip . ':' . $dirUser;
+
+        $limitIp = nm_rate_limit_check($bucketIp, 10, 1800);
+        if (!$limitIp['allowed']) {
+            nm_write_auth_event('password_reset_rate_limited', [
+                'dir_user' => $dirUser,
+                'username' => (string)($auth['USERNAME'] ?? ''),
+                'reason' => 'ip_limit',
+                'retry_after' => (int)$limitIp['retry_after'],
+            ]);
+            $errorMessage = nm_rp_retry_message((int)$limitIp['retry_after'], $lang);
+            $statusType = 'err';
+        }
+
+        if ($errorMessage === '') {
+            $limitUser = nm_rate_limit_check($bucketUser, 5, 1800);
+            if (!$limitUser['allowed']) {
+                nm_write_auth_event('password_reset_rate_limited', [
+                    'dir_user' => $dirUser,
+                    'username' => (string)($auth['USERNAME'] ?? ''),
+                    'reason' => 'user_limit',
+                    'retry_after' => (int)$limitUser['retry_after'],
+                ]);
+                $errorMessage = nm_rp_retry_message((int)$limitUser['retry_after'], $lang);
+                $statusType = 'err';
             }
-            if (!nm_rp_save_auth_file($dirUser, $auth)) {
-                $errorMessage = $t[$lang]['save_failed'];
+        }
+
+        if ($errorMessage === '') {
+            $newPassword = (string)($_POST['password'] ?? '');
+            $confirmPassword = (string)($_POST['password_confirm'] ?? '');
+
+            if ($newPassword === '') {
+                nm_rate_limit_record_failure($bucketIp, 1800);
+                nm_rate_limit_record_failure($bucketUser, 1800);
+                nm_write_auth_event('password_reset_failed', [
+                    'dir_user' => $dirUser,
+                    'username' => (string)($auth['USERNAME'] ?? ''),
+                    'reason' => 'required',
+                ]);
+                $errorMessage = $t[$lang]['required'];
+                $statusType = 'err';
+            } elseif (function_exists('mb_strlen') ? (mb_strlen($newPassword, 'UTF-8') < 10) : (strlen($newPassword) < 10)) {
+                nm_rate_limit_record_failure($bucketIp, 1800);
+                nm_rate_limit_record_failure($bucketUser, 1800);
+                nm_write_auth_event('password_reset_failed', [
+                    'dir_user' => $dirUser,
+                    'username' => (string)($auth['USERNAME'] ?? ''),
+                    'reason' => 'min_length',
+                ]);
+                $errorMessage = $t[$lang]['min_length'];
+                $statusType = 'err';
+            } elseif ($newPassword !== $confirmPassword) {
+                nm_rate_limit_record_failure($bucketIp, 1800);
+                nm_rate_limit_record_failure($bucketUser, 1800);
+                nm_write_auth_event('password_reset_failed', [
+                    'dir_user' => $dirUser,
+                    'username' => (string)($auth['USERNAME'] ?? ''),
+                    'reason' => 'mismatch',
+                ]);
+                $errorMessage = $t[$lang]['mismatch'];
                 $statusType = 'err';
             } else {
-                $resetData['used'] = true;
-                if (!$resetData) {
-                    $resetData = [];
+                try {
+                    $auth['PASSWORD_HASH'] = password_hash($newPassword, PASSWORD_DEFAULT);
+                    $auth['UPDATED_AT'] = gmdate('c');
+                    if (empty($auth['DIR_USER'])) {
+                        $auth['DIR_USER'] = $dirUser;
+                    }
+
+                    $auth['PASSWORD_RESET_TOKEN'] = '';
+                    $auth['PASSWORD_RESET_TOKEN_HASH'] = '';
+                    $auth['PASSWORD_RESET_TOKEN_EXPIRES_AT'] = 0;
+
+                    if (!nm_rp_save_auth_file($dirUser, $auth)) {
+                        nm_rate_limit_record_failure($bucketIp, 1800);
+                        nm_rate_limit_record_failure($bucketUser, 1800);
+                        nm_write_auth_event('password_reset_failed', [
+                            'dir_user' => $dirUser,
+                            'username' => (string)($auth['USERNAME'] ?? ''),
+                            'reason' => 'save_failed',
+                        ]);
+                        $errorMessage = $t[$lang]['save_failed'];
+                        $statusType = 'err';
+                    } else {
+                        nm_rate_limit_clear($bucketIp);
+                        nm_rate_limit_clear($bucketUser);
+
+                        nm_write_auth_event('password_reset_completed', [
+                            'dir_user' => $dirUser,
+                            'username' => (string)($auth['USERNAME'] ?? ''),
+                        ]);
+
+                        header('Location: ' . nm_rp_url('/login.php?reset=success'));
+                        exit;
+                    }
+                } catch (Throwable $e) {
+                    nm_rp_log('reset exception: ' . $e->getMessage());
+                    nm_rate_limit_record_failure($bucketIp, 1800);
+                    nm_rate_limit_record_failure($bucketUser, 1800);
+                    $errorMessage = $t[$lang]['save_failed'];
+                    $statusType = 'err';
                 }
-                $resetData['used'] = true;
-                if (!isset($resetData['created_at'])) {
-                    $resetData['created_at'] = gmdate('c');
-                }
-                if (!isset($resetData['expires_at'])) {
-                    $resetData['expires_at'] = gmdate('c');
-                }
-                nm_rp_save_password_reset($dirUser, $resetData);
-                header('Location: ' . nm_rp_url('/login.php?reset=success'));
-                exit;
             }
-        } catch (Throwable $e) {
-            nm_rp_log('reset exception: ' . $e->getMessage());
-            $errorMessage = $t[$lang]['save_failed'];
-            $statusType = 'err';
         }
     }
 }
@@ -366,8 +416,8 @@ if ($errorMessage !== '' && $statusType === '') {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title><?=nm_rp_h($t[$lang]['title'])?></title>
   <style>
-    html[data-theme="dark"]{--bg0:#070b14;--bg1:#0b1222;--card:rgba(15,23,42,.78);--card2:rgba(2,6,23,.22);--line:rgba(148,163,184,.20);--text:#e5e7eb;--muted:#a3b0c2;--accent:#a2c1f4;--danger:#fb7185;--success:#34d399;--shadow:0 18px 50px rgba(0,0,0,.55);}    
-    html[data-theme="light"]{--bg0:#f6f8fc;--bg1:#eef2ff;--card:rgba(255,255,255,.82);--card2:rgba(255,255,255,.70);--line:rgba(15,23,42,.12);--text:#0b1222;--muted:#4b5563;--accent:#2563eb;--danger:#e11d48;--success:#059669;--shadow:0 18px 50px rgba(15,23,42,.14);}    
+    html[data-theme="dark"]{--bg0:#070b14;--bg1:#0b1222;--card:rgba(15,23,42,.78);--card2:rgba(2,6,23,.22);--line:rgba(148,163,184,.20);--text:#e5e7eb;--muted:#a3b0c2;--accent:#a2c1f4;--danger:#fb7185;--success:#34d399;--shadow:0 18px 50px rgba(0,0,0,.55);}
+    html[data-theme="light"]{--bg0:#f6f8fc;--bg1:#eef2ff;--card:rgba(255,255,255,.82);--card2:rgba(255,255,255,.70);--line:rgba(15,23,42,.12);--text:#0b1222;--muted:#4b5563;--accent:#2563eb;--danger:#e11d48;--success:#059669;--shadow:0 18px 50px rgba(15,23,42,.14);}
     :root{--r:18px}*{box-sizing:border-box}
     body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;color:var(--text);background:radial-gradient(900px 600px at 20% 10%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),radial-gradient(800px 600px at 80% 30%, rgba(16,185,129,.10), transparent 55%),linear-gradient(180deg,var(--bg0),var(--bg1));padding:18px}
     .wrap{width:min(760px,100%)}
@@ -431,7 +481,8 @@ if ($errorMessage !== '' && $statusType === '') {
           <div class="note"><?=nm_rp_h($t[$lang]['note'])?></div>
           <?php if ($errorMessage !== ''): ?><div class="err"><?=nm_rp_h($errorMessage)?></div><?php endif; ?>
           <form method="post" autocomplete="off">
-            <input type="hidden" name="username" value="<?=nm_rp_h($usernameParam)?>">
+            <?= nm_csrf_input_html() ?>
+            <input type="hidden" name="user" value="<?=nm_rp_h($userParam)?>">
             <input type="hidden" name="token" value="<?=nm_rp_h($tokenParam)?>">
             <input type="hidden" name="lang" value="<?=nm_rp_h($lang)?>">
             <input type="hidden" name="theme" value="<?=nm_rp_h($theme)?>">

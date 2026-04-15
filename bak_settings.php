@@ -18,6 +18,7 @@ require_once __DIR__ . '/data_crypto.php';
  */
 
 nm_auth_require_login();
+nm_send_security_headers_html();
 header('Content-Type: text/html; charset=utf-8');
 
 // ★ 共通化：lang/theme の確定（GET→SESSION反映含む）
@@ -30,9 +31,9 @@ $theme = $ui['theme'];
 // --------------------
 $loginUser      = (string)nm_get_current_user();
 $currentDirUser = (string)nm_get_current_dir_user();
-$configDir      = dirname((string)nm_api_config_path($currentDirUser !== '' ? $currentDirUser : null));
-$configApiPath  = (string)nm_api_config_path($currentDirUser !== '' ? $currentDirUser : null);
-$configPath     = (string)nm_config_path($currentDirUser !== '' ? $currentDirUser : null);
+$configDir      = dirname((string)(function_exists('nm_api_config_path') ? nm_api_config_path($currentDirUser !== '' ? $currentDirUser : null) : ''));
+$configApiPath  = (string)(function_exists('nm_api_config_path') ? nm_api_config_path($currentDirUser !== '' ? $currentDirUser : null) : '');
+$configPath     = (string)(function_exists('nm_config_path') ? nm_config_path($currentDirUser !== '' ? $currentDirUser : null) : '');
 
 // --------------------
 // i18n (JP/EN)
@@ -61,6 +62,7 @@ $t = [
     'deleted' => '削除しました',
     'delete_failed' => '削除に失敗したファイルがあります',
     'nothing_to_delete' => '削除対象のバックアップがありません',
+    'csrf_invalid' => 'CSRFトークンが無効です。ページを再読み込みしてからもう一度お試しください。',
 
     'section_backup' => 'バックアップ',
     'sync_pre_save_backup_enabled' => '同期保存前バックアップを有効（SYNC_PRE_SAVE_BACKUP_ENABLED）',
@@ -113,6 +115,7 @@ $t = [
     'deleted' => 'Deleted',
     'delete_failed' => 'Some files could not be deleted',
     'nothing_to_delete' => 'No backup files to delete',
+    'csrf_invalid' => 'Invalid CSRF token. Please reload the page and try again.',
 
     'section_backup' => 'Backups',
     'sync_pre_save_backup_enabled' => 'Enable pre-save backup for sync (SYNC_PRE_SAVE_BACKUP_ENABLED)',
@@ -147,16 +150,16 @@ $t = [
 // --------------------
 // Helpers
 // --------------------
-function nm_invalidate_php_cache(string $path): void {
+function nm_invalidate_php_cache_local_bak(string $path): void {
     clearstatcache(true, $path);
     if (function_exists('opcache_invalidate')) {
         @opcache_invalidate($path, true);
     }
 }
 
-function nm_read_php_config_array(string $path): array {
+function nm_read_php_config_array_local_bak(string $path): array {
     if (!file_exists($path)) return [];
-    nm_invalidate_php_cache($path);
+    nm_invalidate_php_cache_local_bak($path);
     $arr = @require $path;
     return is_array($arr) ? $arr : [];
 }
@@ -173,7 +176,7 @@ function nm_update_config_values_preserve(string $configPath, array $updates): b
 
     $cfg = [];
     if (file_exists($configPath)) {
-        $cfg = nm_read_php_config_array($configPath);
+        $cfg = nm_read_php_config_array_local_bak($configPath);
         if (!is_array($cfg)) {
             return false;
         }
@@ -207,18 +210,18 @@ function nm_update_config_values_preserve(string $configPath, array $updates): b
     }
 
     @chmod($configPath, 0644);
-    nm_invalidate_php_cache($configPath);
+    nm_invalidate_php_cache_local_bak($configPath);
     return true;
 }
 
-function nm_int_from_post(string $key, int $default = 0): int {
+function nm_int_from_post_bak(string $key, int $default = 0): int {
     $v = trim((string)($_POST[$key] ?? ''));
     if ($v === '') return $default;
     if (!preg_match('/^-?\d+$/', $v)) return $default;
     return (int)$v;
 }
 
-function nm_bool_from_post(string $key): bool {
+function nm_bool_from_post_bak(string $key): bool {
     return isset($_POST[$key]) && $_POST[$key] === '1';
 }
 
@@ -351,11 +354,19 @@ function nm_backup_current_datajson(string $dataJsonPath, string &$backupPath, s
     $isEncrypted = nm_detect_current_data_encrypted($dataJsonPath);
     $backupPath = nm_get_backup_file_path($dataJsonPath, $isEncrypted, $ts);
 
-    if (file_exists($backupPath)) {
-        $backupPath .= '-' . bin2hex(random_bytes(2));
+    try {
+        if (file_exists($backupPath)) {
+            $backupPath .= '-' . bin2hex(random_bytes(2));
+        }
+
+        $tmp = $backupPath . '.tmp-' . bin2hex(random_bytes(4));
+    } catch (Throwable $e) {
+        if (file_exists($backupPath)) {
+            $backupPath .= '-' . dechex(mt_rand());
+        }
+        $tmp = $backupPath . '.tmp-' . dechex(mt_rand());
     }
 
-    $tmp = $backupPath . '.tmp-' . bin2hex(random_bytes(4));
     if (!@copy($dataJsonPath, $tmp)) { @unlink($tmp); return false; }
     @chmod($tmp, 0644);
     if (!@rename($tmp, $backupPath)) { @unlink($tmp); return false; }
@@ -388,7 +399,7 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
 $cfg = [];
 if (is_file($configPath)) {
     try {
-        $cfg = nm_read_php_config_array($configPath);
+        $cfg = nm_read_php_config_array_local_bak($configPath);
     } catch (Throwable $e) {
         $cfg = [];
     }
@@ -412,10 +423,12 @@ try {
 // --------------------
 $msg = '';
 $err = '';
+$auditEvent = '';
+$auditContext = [];
 
 $cfgApi = [];
 try {
-    $cfgApi = nm_read_php_config_array($configApiPath);
+    $cfgApi = nm_read_php_config_array_local_bak($configApiPath);
 } catch (Throwable $e) {
     $cfgApi = [];
     $err = $t[$lang]['read_failed'];
@@ -425,7 +438,7 @@ try {
 $dataJson = (string)($cfgApi['DATA_JSON'] ?? nm_data_json_path($currentDirUser !== '' ? $currentDirUser : null));
 $cfg = [];
 try {
-    $cfg = nm_read_php_config_array($configPath);
+    $cfg = nm_read_php_config_array_local_bak($configPath);
 } catch (Throwable $e) {
     $cfg = [];
     if ($err === '') {
@@ -442,110 +455,142 @@ $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? 20);
 // Handle POST
 // --------------------
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && $err === '') {
-    $mode = (string)($_POST['mode'] ?? '');
+    try {
+        nm_csrf_validate_or_die();
+    } catch (Throwable $e) {
+        $err = $t[$lang]['csrf_invalid'];
+    }
 
-    if ($mode === 'save' || $mode === 'delete') {
-        $newSyncPreSaveEnabled = nm_bool_from_post('SYNC_PRE_SAVE_BACKUP_ENABLED');
-        $newSyncPreSavePruneEnabled = nm_bool_from_post('SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED');
-        $newEnabled = nm_bool_from_post('CLEANUP_BACKUP_ENABLED');
-        $newKeep    = nm_int_from_post('CLEANUP_BACKUP_KEEP', $prefKeep);
-        if ($newKeep < 0) $newKeep = 0;
+    if ($err === '') {
+        $mode = (string)($_POST['mode'] ?? '');
 
-        $okConfig = nm_update_config_values_preserve($configPath, [
-            'SYNC_PRE_SAVE_BACKUP_ENABLED' => $newSyncPreSaveEnabled,
-            'SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED' => $newSyncPreSavePruneEnabled,
-        ]);
-        $okConfigApi = nm_update_config_values_preserve($configApiPath, [
-            'CLEANUP_BACKUP_ENABLED' => $newEnabled,
-            'CLEANUP_BACKUP_KEEP'    => $newKeep,
-        ]);
+        if ($mode === 'save' || $mode === 'delete') {
+            $newSyncPreSaveEnabled = nm_bool_from_post_bak('SYNC_PRE_SAVE_BACKUP_ENABLED');
+            $newSyncPreSavePruneEnabled = nm_bool_from_post_bak('SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED');
+            $newEnabled = nm_bool_from_post_bak('CLEANUP_BACKUP_ENABLED');
+            $newKeep    = nm_int_from_post_bak('CLEANUP_BACKUP_KEEP', $prefKeep);
+            if ($newKeep < 0) $newKeep = 0;
 
-        if (!$okConfig || !$okConfigApi) {
-            $err = $t[$lang]['save_failed'];
-        } else {
-            $msg = $t[$lang]['saved'];
+            $okConfig = nm_update_config_values_preserve($configPath, [
+                'SYNC_PRE_SAVE_BACKUP_ENABLED' => $newSyncPreSaveEnabled,
+                'SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED' => $newSyncPreSavePruneEnabled,
+            ]);
+            $okConfigApi = nm_update_config_values_preserve($configApiPath, [
+                'CLEANUP_BACKUP_ENABLED' => $newEnabled,
+                'CLEANUP_BACKUP_KEEP'    => $newKeep,
+            ]);
 
-            if ($mode === 'delete') {
-                $deletedCount = 0;
-                $failed = [];
-                nm_delete_old_backups($dataJson, $newKeep, $deletedCount, $failed);
+            if (!$okConfig || !$okConfigApi) {
+                $err = $t[$lang]['save_failed'];
+                $auditEvent = 'backup_settings_update_failed';
+                $auditContext = ['username' => $user, 'dir_user' => $dirUser, 'mode' => $mode, 'reason' => 'save_failed'];
+            } else {
+                $msg = $t[$lang]['saved'];
+                $auditEvent = 'backup_settings_saved';
+                $auditContext = ['username' => $user, 'dir_user' => $dirUser, 'sync_pre_save_backup_enabled' => $newSyncPreSaveEnabled, 'sync_pre_save_backup_prune_enabled' => $newSyncPreSavePruneEnabled, 'cleanup_backup_enabled' => $newEnabled, 'cleanup_backup_keep' => $newKeep];
 
-                if ($deletedCount === 0 && empty($failed)) {
-                    $msg = $t[$lang]['nothing_to_delete'];
+                if ($mode === 'delete') {
+                    $deletedCount = 0;
+                    $failed = [];
+                    nm_delete_old_backups($dataJson, $newKeep, $deletedCount, $failed);
+
+                    if ($deletedCount === 0 && empty($failed)) {
+                        $msg = $t[$lang]['nothing_to_delete'];
+                        $auditEvent = 'backups_deleted';
+                        $auditContext = ['username' => $user, 'dir_user' => $dirUser, 'keep' => $newKeep, 'deleted_count' => 0, 'failed_count' => 0];
+                    } else {
+                        $msg = $t[$lang]['deleted'] . ': ' . $deletedCount;
+                        $auditEvent = 'backups_deleted';
+                        $auditContext = ['username' => $user, 'dir_user' => $dirUser, 'keep' => $newKeep, 'deleted_count' => $deletedCount, 'failed_count' => count($failed)];
+                        if (!empty($failed)) {
+                            $err = $t[$lang]['delete_failed'] . "\n" . implode("\n", $failed);
+                        }
+                    }
+                }
+
+                $cfg = nm_read_php_config_array_local_bak($configPath);
+                $cfgApi = nm_read_php_config_array_local_bak($configApiPath);
+                $prefSyncPreSaveEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_ENABLED'] ?? $newSyncPreSaveEnabled);
+                $prefSyncPreSavePruneEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED'] ?? $newSyncPreSavePruneEnabled);
+                $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? $newEnabled);
+                $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? $newKeep);
+                $dataJson    = (string)($cfgApi['DATA_JSON'] ?? $dataJson);
+            }
+        }
+
+        if ($mode === 'backup_now' && $err === '') {
+            $manualBackupPath = '';
+            $ok = nm_with_data_lock($dataJson, function() use ($dataJson, &$manualBackupPath, $tzName) {
+                return nm_backup_current_datajson($dataJson, $manualBackupPath, $tzName);
+            });
+
+            if ($ok) {
+                $msg = $t[$lang]['backup_now_done'] . ': ' . basename($manualBackupPath);
+                $auditEvent = 'backup_created_manual';
+                $auditContext = ['username' => $user, 'dir_user' => $dirUser, 'backup_file' => basename($manualBackupPath)];
+            } else {
+                $err = $t[$lang]['backup_now_failed'];
+                $auditEvent = 'backup_created_manual_failed';
+                $auditContext = ['username' => $user, 'dir_user' => $dirUser];
+            }
+        }
+
+        if ($mode === 'restore' && $err === '') {
+            $restoreName = trim((string)($_POST['restore_file'] ?? ''));
+            if ($restoreName === '') {
+                $err = $t[$lang]['restore_select_required'];
+                $auditEvent = 'backup_restore_failed';
+                $auditContext = ['username' => $user, 'dir_user' => $dirUser, 'reason' => 'restore_file_missing'];
+            } else {
+                $list = nm_backup_files($dataJson);
+                $map = [];
+                foreach ($list as $item) {
+                    $map[basename((string)$item['path'])] = (string)$item['path'];
+                }
+
+                $src = $map[$restoreName] ?? '';
+                if ($src === '' || !is_file($src)) {
+                    $err = $t[$lang]['restore_failed'];
+                        $auditEvent = 'backup_restore_failed';
+                        $auditContext = ['username' => $user, 'dir_user' => $dirUser, 'reason' => 'restore_operation_failed', 'restore_file' => $restoreName];
+                    $auditEvent = 'backup_restore_failed';
+                    $auditContext = ['username' => $user, 'dir_user' => $dirUser, 'reason' => 'invalid_backup_selection', 'restore_file' => $restoreName];
                 } else {
-                    $msg = $t[$lang]['deleted'] . ': ' . $deletedCount;
-                    if (!empty($failed)) {
-                        $err = $t[$lang]['delete_failed'] . "\n" . implode("\n", $failed);
+                    $preBackupPath = '';
+                    $restoreOk = nm_with_data_lock($dataJson, function() use ($dataJson, $src, &$preBackupPath, $tzName) {
+                        if (!nm_backup_current_datajson($dataJson, $preBackupPath, $tzName)) {
+                            return false;
+                        }
+                        [$ok, $reason] = nm_restore_backup_to_mode($src, $dataJson, nm_data_encryption_enabled());
+                        return $ok;
+                    });
+
+                    if (!$restoreOk) {
+                        $err = $t[$lang]['restore_failed'];
+                    } else {
+                        $msg = $t[$lang]['restore_done'];
+                        $auditEvent = 'backup_restore_completed';
+                        $auditContext = ['username' => $user, 'dir_user' => $dirUser, 'restore_file' => $restoreName, 'pre_backup_file' => $preBackupPath !== '' ? basename($preBackupPath) : ''];
+                        if ($preBackupPath !== '') {
+                            $msg .= " (" . $t[$lang]['restore_backup_created'] . ": " . basename($preBackupPath) . ")";
+                        }
                     }
                 }
             }
 
-            $cfg = nm_read_php_config_array($configPath);
-            $cfgApi = nm_read_php_config_array($configApiPath);
-            $prefSyncPreSaveEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_ENABLED'] ?? $newSyncPreSaveEnabled);
-            $prefSyncPreSavePruneEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED'] ?? $newSyncPreSavePruneEnabled);
-            $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? $newEnabled);
-            $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? $newKeep);
+            $cfg = nm_read_php_config_array_local_bak($configPath);
+            $cfgApi = nm_read_php_config_array_local_bak($configApiPath);
+            $prefSyncPreSaveEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_ENABLED'] ?? $prefSyncPreSaveEnabled);
+            $prefSyncPreSavePruneEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED'] ?? $prefSyncPreSavePruneEnabled);
+            $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? $prefEnabled);
+            $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? $prefKeep);
             $dataJson    = (string)($cfgApi['DATA_JSON'] ?? $dataJson);
         }
     }
+}
 
-    if ($mode === 'backup_now' && $err === '') {
-        $manualBackupPath = '';
-        $ok = nm_with_data_lock($dataJson, function() use ($dataJson, &$manualBackupPath, $tzName) {
-            return nm_backup_current_datajson($dataJson, $manualBackupPath, $tzName);
-        });
-
-        if ($ok) {
-            $msg = $t[$lang]['backup_now_done'] . ': ' . basename($manualBackupPath);
-        } else {
-            $err = $t[$lang]['backup_now_failed'];
-        }
-    }
-
-    if ($mode === 'restore' && $err === '') {
-        $restoreName = trim((string)($_POST['restore_file'] ?? ''));
-        if ($restoreName === '') {
-            $err = $t[$lang]['restore_select_required'];
-        } else {
-            $list = nm_backup_files($dataJson);
-            $map = [];
-            foreach ($list as $item) {
-                $map[basename((string)$item['path'])] = (string)$item['path'];
-            }
-
-            $src = $map[$restoreName] ?? '';
-            if ($src === '' || !is_file($src)) {
-                $err = $t[$lang]['restore_failed'];
-            } else {
-                $preBackupPath = '';
-                $restoreOk = nm_with_data_lock($dataJson, function() use ($dataJson, $src, &$preBackupPath, $tzName) {
-                    if (!nm_backup_current_datajson($dataJson, $preBackupPath, $tzName)) {
-                        return false;
-                    }
-                    list($ok, $reason) = nm_restore_backup_to_mode($src, $dataJson, nm_data_encryption_enabled());
-                    return $ok;
-                });
-
-                if (!$restoreOk) {
-                    $err = $t[$lang]['restore_failed'];
-                } else {
-                    $msg = $t[$lang]['restore_done'];
-                    if ($preBackupPath !== '') {
-                        $msg .= " (" . $t[$lang]['restore_backup_created'] . ": " . basename($preBackupPath) . ")";
-                    }
-                }
-            }
-        }
-
-        $cfg = nm_read_php_config_array($configPath);
-        $cfgApi = nm_read_php_config_array($configApiPath);
-        $prefSyncPreSaveEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_ENABLED'] ?? $prefSyncPreSaveEnabled);
-        $prefSyncPreSavePruneEnabled = (bool)($cfg['SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED'] ?? $prefSyncPreSavePruneEnabled);
-        $prefEnabled = (bool)($cfgApi['CLEANUP_BACKUP_ENABLED'] ?? $prefEnabled);
-        $prefKeep    = (int)($cfgApi['CLEANUP_BACKUP_KEEP'] ?? $prefKeep);
-        $dataJson    = (string)($cfgApi['DATA_JSON'] ?? $dataJson);
-    }
+if ($auditEvent !== '' && function_exists('nm_write_auth_event')) {
+    nm_write_auth_event($auditEvent, $auditContext);
 }
 
 // --------------------
@@ -576,7 +621,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
       }catch(e){}
     })();
   </script>
-<title><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></title>
+  <title><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></title>
   <style>
     html[data-theme="dark"]{
       --bg0:#070b14; --bg1:#0b1222;
@@ -873,6 +918,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
           <h3><?=htmlspecialchars($t[$lang]['section_backup'], ENT_QUOTES, 'UTF-8')?></h3>
 
           <form method="post">
+            <?= nm_csrf_input_html() ?>
             <input type="hidden" name="mode" value="save">
 
             <label class="check">
@@ -917,6 +963,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
           </form>
 
           <form method="post" class="inline-form" style="margin: 8px 0 14px 0;">
+            <?= nm_csrf_input_html() ?>
             <input type="hidden" name="mode" value="backup_now">
             <button type="submit" class="btn-primary" style="width:100%; padding:10px 12px; font-size:13px; border-radius:12px;">
               <?=htmlspecialchars($t[$lang]['backup_now'], ENT_QUOTES, 'UTF-8')?>
@@ -924,6 +971,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
           </form>
 
           <form method="post" style="margin-top:10px;">
+            <?= nm_csrf_input_html() ?>
             <input type="hidden" name="mode" value="delete">
             <input type="hidden" name="SYNC_PRE_SAVE_BACKUP_ENABLED" value="<?= $prefSyncPreSaveEnabled ? '1' : '0' ?>">
             <input type="hidden" name="SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED" value="<?= $prefSyncPreSavePruneEnabled ? '1' : '0' ?>">
@@ -941,6 +989,7 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
           <div class="notice" style="margin-top:8px;"><?=htmlspecialchars($t[$lang]['restore_help'], ENT_QUOTES, 'UTF-8')?></div>
 
           <form method="post" id="restoreForm" style="margin-top:10px;">
+            <?= nm_csrf_input_html() ?>
             <input type="hidden" name="mode" value="restore">
 
             <label><?=htmlspecialchars($t[$lang]['restore_list'], ENT_QUOTES, 'UTF-8')?></label>
@@ -1010,11 +1059,11 @@ $latestText = ($latestTs > 0) ? nm_format_ts($latestTs, $tzName) : $t[$lang]['ba
           <div class="row-links">
             <a class="btn" href="<?=htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8')?>">← <?=htmlspecialchars($t[$lang]['back'], ENT_QUOTES, 'UTF-8')?></a>
             <a class="btn red" href="<?=htmlspecialchars($logoutUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['logout'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="btn" href="<?=htmlspecialchars($accountUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_account'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="btn" href="<?=htmlspecialchars($setupauthUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_setup_auth'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="btn" href="<?=htmlspecialchars($logsettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_log_settings'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="btn" href="<?=htmlspecialchars($clipboardsyncUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_clipboard_sync'], ENT_QUOTES, 'UTF-8')?></a>
-          <a class="btn" href="<?=htmlspecialchars($mediafilesUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_media_files'], ENT_QUOTES, 'UTF-8')?></a>
+            <a class="btn" href="<?=htmlspecialchars($accountUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_account'], ENT_QUOTES, 'UTF-8')?></a>
+            <a class="btn" href="<?=htmlspecialchars($setupauthUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_setup_auth'], ENT_QUOTES, 'UTF-8')?></a>
+            <a class="btn" href="<?=htmlspecialchars($logsettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_log_settings'], ENT_QUOTES, 'UTF-8')?></a>
+            <a class="btn" href="<?=htmlspecialchars($clipboardsyncUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_clipboard_sync'], ENT_QUOTES, 'UTF-8')?></a>
+            <a class="btn" href="<?=htmlspecialchars($mediafilesUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_media_files'], ENT_QUOTES, 'UTF-8')?></a>
           </div>
 
         </div>

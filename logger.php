@@ -120,35 +120,11 @@ if (!function_exists('nm_ensure_log_dir_and_htaccess')) {
             return false;
         }
 
-        $htaccess = $dir . DIRECTORY_SEPARATOR . '.htaccess';
-        if (!file_exists($htaccess)) {
-            $content = <<<HT
-<IfModule mod_authz_core.c>
-  Require all denied
-</IfModule>
-<IfModule !mod_authz_core.c>
-  Order allow,deny
-  Deny from all
-</IfModule>
-
-HT;
-
-            $tmp = $htaccess . '.tmp-' . bin2hex(random_bytes(4));
-            $w = @file_put_contents($tmp, $content, LOCK_EX);
-            if ($w === false) {
-                $dbg('htaccess_write_failed', ['tmp' => $tmp, 'err' => error_get_last()]);
-                @unlink($tmp);
-            } else {
-                @chmod($tmp, 0644);
-                if (!@rename($tmp, $htaccess)) {
-                    $dbg('htaccess_rename_failed', ['tmp' => $tmp, 'dst' => $htaccess, 'err' => error_get_last()]);
-                    @unlink($tmp);
-                } else {
-                    $dbg('htaccess_created', ['path' => $htaccess]);
-                }
-            }
+        $htOk = nm_write_htaccess_content($dir, nm_default_deny_htaccess_content(), false, true);
+        if (!$htOk) {
+            $dbg('htaccess_write_failed_common', ['dir' => $dir]);
         } else {
-            $dbg('htaccess_exists', ['path' => $htaccess]);
+            $dbg('htaccess_ready', ['dir' => $dir]);
         }
 
         $dbg('ensure_dir_done', ['dir' => $dir, 'writable' => is_writable($dir)]);

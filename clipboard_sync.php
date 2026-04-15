@@ -2,17 +2,21 @@
 
 declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
+nm_send_security_headers_html();
 nm_auth_require_login();
 
 /*
  * clipboard_sync.php
  * - ClipboardSync（旧ClipboardSender）向けの設定情報を一覧表示
- * - ClipboardSync DLは「GitHubからダウンロード」ボタン表示（URLは表示しない）
+ * - ClipboardSync DLは「GitHubからダウンロード」ボタン表示（URLは画面に表示しない）
  * - api/read/cleanup URL はクリックでコピー
- * - EXPECTED_TOKEN / ADMIN_TOKEN もクリックでコピー
+ * - EXPECTED_TOKEN / ADMIN_TOKEN は初期表示では伏字
+ * - トークンはロック解除時だけサーバーから取得して10秒だけ表示
+ * - 10秒後に自動再ロックされ、表示中のみコピー可能
+ * - reveal_token の POST は CSRF 保護あり
  * - JP/EN + Dark/Light + ログインユーザー表示
  *
- * vNext adjustments for single-user-per-directory structure:
+ * single-user UI refreshed using the multi-user version as the reference design.
  * - config/<DIR_USER>/config.api.php を参照
  * - USERNAME と DIR_USER を分離表示
  * - ルート設置 / サブディレクトリ設置の両対応を auth_common.php 側の nm_url() に寄せる
@@ -115,6 +119,13 @@ $t = [
 
     'copied' => 'コピーしました',
     'copy_failed' => 'コピーに失敗しました（手動でコピーしてください）',
+    'locked' => 'ロック中',
+    'unlock' => 'ロック解除',
+    'relock' => '再ロック',
+    'copy' => 'コピー',
+    'token_hidden' => '伏字のままではコピーできません',
+    'token_fetch_failed' => 'トークンの取得に失敗しました',
+    'token_unlocked' => '10秒間表示します',
 
     'go_back' => '戻る',
     'go_account' => 'アカウント設定へ',
@@ -159,6 +170,13 @@ $t = [
 
     'copied' => 'Copied',
     'copy_failed' => 'Copy failed. Please copy manually.',
+    'locked' => 'Locked',
+    'unlock' => 'Unlock',
+    'relock' => 'Relock',
+    'copy' => 'Copy',
+    'token_hidden' => 'Cannot copy while locked',
+    'token_fetch_failed' => 'Failed to fetch token',
+    'token_unlocked' => 'Visible for 10 seconds',
 
     'go_back' => 'Back',
     'go_account' => 'Go to Account',
@@ -232,9 +250,9 @@ if ($adminToken === '') {
   $adminToken = $expectedToken;
 }
 
-// 表示（未ログインなら伏字）
-$displayExpected = $isLoggedIn ? $expectedToken : nm_mask_token($expectedToken);
-$displayAdmin    = $isLoggedIn ? $adminToken : nm_mask_token($adminToken);
+// 常に初期表示は伏字
+$displayExpected = nm_mask_token($expectedToken);
+$displayAdmin    = nm_mask_token($adminToken);
 
 // --------------------
 // Build API URLs (full origin + base-path aware)
@@ -267,6 +285,7 @@ $readApiUrl    = rtrim($baseAppUrl, '/') . '/api/read_api.php';
 $cleanupApiUrl = rtrim($baseAppUrl, '/') . '/api/cleanup_api.php';
 
 // UI links
+$csrfToken = function_exists('nm_csrf_token_get') ? nm_csrf_token_get() : '';
 $u = nm_ui_toggle_urls('/clipboard_sync.php', $lang, $theme);
 $backUrl = nm_ui_url('/');
 $logoutUrl = nm_ui_url('/logout.php');
@@ -275,6 +294,55 @@ $setupauthUrl = nm_ui_url('/setup_auth.php');
 $logsettingsUrl = nm_ui_url('/log_settings.php');
 $baksettingsUrl = nm_ui_url('/bak_settings.php');
 $mediafilesUrl = nm_ui_url('/media_files.php');
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'reveal_token') {
+  header('Content-Type: application/json; charset=utf-8');
+
+  try {
+    nm_csrf_validate_or_die();
+  } catch (Throwable $e) {
+    http_response_code(403);
+    echo json_encode(['status' => 'error', 'message' => 'Invalid CSRF token'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  if (!$isLoggedIn || $currentDirUser === '') {
+    http_response_code(403);
+    echo json_encode(['status' => 'error', 'message' => 'Forbidden'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  $kind = trim((string)($_POST['token_kind'] ?? ''));
+  if ($kind !== 'expected' && $kind !== 'admin') {
+    http_response_code(400);
+    echo json_encode(['status' => 'error', 'message' => 'Invalid token kind'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  $configPathNow = (string) nm_api_config_path($currentDirUser);
+  $cfgNow = is_file($configPathNow) ? nm_read_php_config_array($configPathNow) : [];
+  $expectedNow = (string)($cfgNow['EXPECTED_TOKEN'] ?? '');
+  $adminNow = (string)($cfgNow['ADMIN_TOKEN'] ?? '');
+  if ($adminNow === '') {
+    $adminNow = $expectedNow;
+  }
+
+  $value = $kind === 'admin' ? $adminNow : $expectedNow;
+  if ($value === '') {
+    http_response_code(404);
+    echo json_encode(['status' => 'error', 'message' => 'Token not set'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  echo json_encode([
+    'status' => 'ok',
+    'kind' => $kind,
+    'value' => $value,
+    'masked' => nm_mask_token($value),
+    'expires_in' => 10,
+  ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+  exit;
+}
 
 ?>
 <!doctype html>
@@ -677,16 +745,24 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
           <div class="kv" style="margin-top:10px;">
             <div class="row">
               <div class="k"><?= htmlspecialchars($t[$lang]['expected'], ENT_QUOTES, 'UTF-8') ?></div>
-              <div class="copy" data-copy="<?= htmlspecialchars($displayExpected, ENT_QUOTES, 'UTF-8') ?>">
+              <div class="copy token-display" id="tokenDisplayExpected" data-kind="expected" data-masked="<?= htmlspecialchars($displayExpected !== '' ? $displayExpected : '—', ENT_QUOTES, 'UTF-8') ?>" data-locked="1">
                 <?= htmlspecialchars($displayExpected !== '' ? $displayExpected : '—', ENT_QUOTES, 'UTF-8') ?>
-                <small>click to copy</small>
+                <small><?= htmlspecialchars($t[$lang]['locked'], ENT_QUOTES, 'UTF-8') ?></small>
+              </div>
+              <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+                <button type="button" class="topbtn token-toggle" data-kind="expected"><?= htmlspecialchars($t[$lang]['unlock'], ENT_QUOTES, 'UTF-8') ?></button>
+                <button type="button" class="topbtn token-copy" data-kind="expected"><?= htmlspecialchars($t[$lang]['copy'], ENT_QUOTES, 'UTF-8') ?></button>
               </div>
             </div>
             <div class="row">
               <div class="k"><?= htmlspecialchars($t[$lang]['admin'], ENT_QUOTES, 'UTF-8') ?></div>
-              <div class="copy" data-copy="<?= htmlspecialchars($displayAdmin, ENT_QUOTES, 'UTF-8') ?>">
+              <div class="copy token-display" id="tokenDisplayAdmin" data-kind="admin" data-masked="<?= htmlspecialchars($displayAdmin !== '' ? $displayAdmin : '—', ENT_QUOTES, 'UTF-8') ?>" data-locked="1">
                 <?= htmlspecialchars($displayAdmin !== '' ? $displayAdmin : '—', ENT_QUOTES, 'UTF-8') ?>
-                <small>click to copy</small>
+                <small><?= htmlspecialchars($t[$lang]['locked'], ENT_QUOTES, 'UTF-8') ?></small>
+              </div>
+              <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+                <button type="button" class="topbtn token-toggle" data-kind="admin"><?= htmlspecialchars($t[$lang]['unlock'], ENT_QUOTES, 'UTF-8') ?></button>
+                <button type="button" class="topbtn token-copy" data-kind="admin"><?= htmlspecialchars($t[$lang]['copy'], ENT_QUOTES, 'UTF-8') ?></button>
               </div>
             </div>
           </div>
@@ -742,13 +818,24 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
     (function(){
       const toast = document.getElementById('toast');
       let timer = null;
+      const tokenTimers = {};
+
+      const TEXT_COPIED = <?= json_encode($t[$lang]['copied'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+      const TEXT_COPY_FAILED = <?= json_encode($t[$lang]['copy_failed'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+      const TEXT_LOCKED = <?= json_encode($t[$lang]['locked'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+      const TEXT_UNLOCK = <?= json_encode($t[$lang]['unlock'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+      const TEXT_RELOCK = <?= json_encode($t[$lang]['relock'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+      const TEXT_TOKEN_HIDDEN = <?= json_encode($t[$lang]['token_hidden'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+      const TEXT_TOKEN_FETCH_FAILED = <?= json_encode($t[$lang]['token_fetch_failed'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+      const TEXT_TOKEN_UNLOCKED = <?= json_encode($t[$lang]['token_unlocked'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+      const CSRF_TOKEN = <?= json_encode($csrfToken, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 
       function showToast(msg){
         if(!toast) return;
         toast.textContent = msg;
         toast.classList.add('show');
         clearTimeout(timer);
-        timer = setTimeout(()=>toast.classList.remove('show'), 1200);
+        timer = setTimeout(()=>toast.classList.remove('show'), 1400);
       }
 
       async function copyText(text){
@@ -780,11 +867,106 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
         el.addEventListener('click', async ()=>{
           const text = el.getAttribute('data-copy') || '';
           if(!text){
-            showToast('<?= htmlspecialchars($t[$lang]['copy_failed'], ENT_QUOTES, 'UTF-8') ?>');
+            showToast(TEXT_COPY_FAILED);
             return;
           }
           const ok = await copyText(text);
-          showToast(ok ? '<?= htmlspecialchars($t[$lang]['copied'], ENT_QUOTES, 'UTF-8') ?>' : '<?= htmlspecialchars($t[$lang]['copy_failed'], ENT_QUOTES, 'UTF-8') ?>');
+          showToast(ok ? TEXT_COPIED : TEXT_COPY_FAILED);
+        });
+      });
+
+      function getTokenElements(kind){
+        return {
+          display: document.getElementById(kind === 'admin' ? 'tokenDisplayAdmin' : 'tokenDisplayExpected'),
+          toggle: document.querySelector('.token-toggle[data-kind="' + kind + '"]'),
+          copy: document.querySelector('.token-copy[data-kind="' + kind + '"]')
+        };
+      }
+
+      function lockToken(kind){
+        const els = getTokenElements(kind);
+        if (!els.display) return;
+        const masked = els.display.dataset.masked || '—';
+        els.display.dataset.locked = '1';
+        delete els.display.dataset.value;
+        els.display.innerHTML = '';
+        els.display.append(document.createTextNode(masked));
+        const small = document.createElement('small');
+        small.textContent = TEXT_LOCKED;
+        els.display.appendChild(small);
+        if (els.toggle) els.toggle.textContent = TEXT_UNLOCK;
+      }
+
+      function unlockToken(kind, value, expiresIn){
+        const els = getTokenElements(kind);
+        if (!els.display) return;
+        els.display.dataset.locked = '0';
+        els.display.dataset.value = value;
+        els.display.innerHTML = '';
+        els.display.append(document.createTextNode(value));
+        const small = document.createElement('small');
+        small.textContent = TEXT_TOKEN_UNLOCKED;
+        els.display.appendChild(small);
+        if (els.toggle) els.toggle.textContent = TEXT_RELOCK;
+
+        if (tokenTimers[kind]) {
+          clearTimeout(tokenTimers[kind]);
+        }
+        tokenTimers[kind] = setTimeout(() => lockToken(kind), Math.max(1, Number(expiresIn || 10)) * 1000);
+      }
+
+      async function revealToken(kind){
+        const fd = new FormData();
+        fd.append('action', 'reveal_token');
+        fd.append('csrf_token', CSRF_TOKEN);
+        fd.append('token_kind', kind);
+
+        const res = await fetch(location.href, { method:'POST', body: fd });
+        const txt = await res.text();
+        let json = null;
+        try { json = JSON.parse(txt); } catch (_) {}
+
+        if (!res.ok || !json || json.status !== 'ok') {
+          throw new Error((json && json.message) ? json.message : (txt || TEXT_TOKEN_FETCH_FAILED));
+        }
+        return json;
+      }
+
+      document.querySelectorAll('.token-toggle').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const kind = btn.dataset.kind || '';
+          const els = getTokenElements(kind);
+          if (!els.display) return;
+
+          if (els.display.dataset.locked === '0') {
+            lockToken(kind);
+            return;
+          }
+
+          btn.disabled = true;
+          try {
+            const json = await revealToken(kind);
+            unlockToken(kind, String(json.value || ''), Number(json.expires_in || 10));
+            showToast(TEXT_TOKEN_UNLOCKED);
+          } catch (e) {
+            showToast((e && e.message) ? e.message : TEXT_TOKEN_FETCH_FAILED);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+
+      document.querySelectorAll('.token-copy').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const kind = btn.dataset.kind || '';
+          const els = getTokenElements(kind);
+          if (!els.display) return;
+          if (els.display.dataset.locked !== '0' || !els.display.dataset.value) {
+            showToast(TEXT_TOKEN_HIDDEN);
+            return;
+          }
+          const ok = await copyText(els.display.dataset.value);
+          showToast(ok ? TEXT_COPIED : TEXT_COPY_FAILED);
         });
       });
     })();

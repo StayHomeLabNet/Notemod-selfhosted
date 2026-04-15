@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
 
+nm_send_security_headers_html();
 header('Content-Type: text/html; charset=utf-8');
 date_default_timezone_set('UTC');
 
@@ -79,12 +80,6 @@ if (!function_exists('nm_fp_normalize_email_for_compare')) {
 if (!function_exists('nm_fp_auth_path')) {
     function nm_fp_auth_path(string $dirUser): string {
         return __DIR__ . '/config/' . $dirUser . '/auth.php';
-    }
-}
-
-if (!function_exists('nm_fp_password_reset_path')) {
-    function nm_fp_password_reset_path(string $dirUser): string {
-        return __DIR__ . '/config/' . $dirUser . '/password_reset.json';
     }
 }
 
@@ -167,24 +162,36 @@ if (!function_exists('nm_fp_generate_reset_token')) {
     }
 }
 
-if (!function_exists('nm_fp_hash_reset_token')) {
-    function nm_fp_hash_reset_token(string $token): string {
-        return password_hash($token, PASSWORD_DEFAULT);
+if (!function_exists('nm_fp_log')) {
+    function nm_fp_log(string $message): void {
+        $dir = __DIR__ . '/logs';
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+        @file_put_contents($dir . '/forgot_password.log', '[' . gmdate('c') . '] ' . $message . PHP_EOL, FILE_APPEND);
     }
 }
 
-if (!function_exists('nm_fp_save_password_reset')) {
-    function nm_fp_save_password_reset(string $dirUser, array $data): bool {
-        $path = nm_fp_password_reset_path($dirUser);
-        $dir = dirname($path);
-        if (!is_dir($dir) && !@mkdir($dir, 0777, true) && !is_dir($dir)) {
-            return false;
+if (!function_exists('nm_fp_send_reset_mail')) {
+    function nm_fp_send_reset_mail(string $to, string $resetUrl, string $lang, string $from = ''): bool {
+        $subject = $lang === 'ja' ? '[Notemod] パスワード再設定' : '[Notemod] Password Reset';
+        $body = $lang === 'ja'
+            ? "Notemod のパスワード再設定が要求されました。\n\n"
+              . "以下のリンクを開いて、新しいパスワードを設定してください。\n"
+              . "このリンクの有効期限は30分です。\n\n"
+              . $resetUrl . "\n\n"
+              . "このメールに心当たりがない場合は、そのまま破棄してください。\n"
+            : "A password reset was requested for Notemod.\n\n"
+              . "Open the link below to set a new password.\n"
+              . "This link is valid for 30 minutes.\n\n"
+              . $resetUrl . "\n\n"
+              . "If you did not request this, you can ignore this email.\n";
+        $error = null;
+        $ok = nm_send_mail_common($to, $subject, $body, $from, $error);
+        if (!$ok) {
+            nm_fp_log('mail send failed to=' . $to . ' error=' . (string)$error);
         }
-        $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        if ($json === false) {
-            return false;
-        }
-        return @file_put_contents($path, $json, LOCK_EX) !== false;
+        return $ok;
     }
 }
 
@@ -198,7 +205,7 @@ if (!function_exists('nm_fp_detect_scheme')) {
 }
 
 if (!function_exists('nm_fp_build_reset_url')) {
-    function nm_fp_build_reset_url(string $username, string $token): string {
+    function nm_fp_build_reset_url(string $dirUser, string $token): string {
         $scheme = nm_fp_detect_scheme();
         $host = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
         $scriptDir = str_replace('\\', '/', dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/')));
@@ -206,132 +213,241 @@ if (!function_exists('nm_fp_build_reset_url')) {
             $scriptDir = '';
         }
         $base = rtrim($scheme . '://' . $host . $scriptDir, '/');
-        return $base . '/reset_password.php?username=' . rawurlencode($username) . '&token=' . rawurlencode($token);
+        return $base . '/reset_password.php?user=' . rawurlencode($dirUser) . '&token=' . rawurlencode($token);
     }
 }
 
-if (!function_exists('nm_fp_log')) {
-    function nm_fp_log(string $message): void {
-        $dir = __DIR__ . '/logs';
-        if (!is_dir($dir)) {
-            @mkdir($dir, 0777, true);
-        }
-        @file_put_contents($dir . '/forgot_password.log', '[' . gmdate('c') . '] ' . $message . PHP_EOL, FILE_APPEND);
+if (!function_exists('nm_fp_password_reset_token_hash')) {
+    function nm_fp_password_reset_token_hash(string $token): string {
+        return hash('sha256', $token);
     }
 }
 
-
-if (!function_exists('nm_fp_send_reset_mail')) {
-    function nm_fp_send_reset_mail(string $to, string $resetUrl, string $lang, string $from = ''): bool {
-        $subject = $lang === 'ja' ? '[Notemod] パスワード再設定' : '[Notemod] Password Reset';
-        $body = $lang === 'ja'
-            ? "Notemod のパスワード再設定が要求されました。
-
-"
-              . "以下のリンクを開いて、新しいパスワードを設定してください。
-"
-              . "このリンクの有効期限は30分です。
-
-"
-              . $resetUrl . "
-
-"
-              . "このメールに心当たりがない場合は、そのまま破棄してください。
-"
-            : "A password reset was requested for Notemod.
-
-"
-              . "Open the link below to set a new password.
-"
-              . "This link is valid for 30 minutes.
-
-"
-              . $resetUrl . "
-
-"
-              . "If you did not request this, you can ignore this email.
-";
-        $error = null;
-        $ok = nm_send_mail_common($to, $subject, $body, $from, $error);
-        if (!$ok) {
-            nm_fp_log('mail send failed to=' . $to . ' error=' . (string)$error);
+if (!function_exists('nm_fp_write_auth_full')) {
+    function nm_fp_write_auth_full(string $dirUser, array $auth): bool {
+        $dirUser = nm_fp_normalize_username($dirUser);
+        if ($dirUser === '') {
+            return false;
         }
-        return $ok;
+        $path = nm_auth_config_path($dirUser);
+        $dir = dirname($path);
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+            return false;
+        }
+        $auth['DIR_USER'] = $dirUser;
+        $auth['UPDATED_AT'] = gmdate('c');
+        $php = "<?php\nreturn " . var_export($auth, true) . ";\n";
+        $tmp = $path . '.tmp-' . bin2hex(random_bytes(4));
+        if (@file_put_contents($tmp, $php, LOCK_EX) === false) {
+            @unlink($tmp);
+            return false;
+        }
+        @chmod($tmp, 0644);
+        if (!@rename($tmp, $path)) {
+            @unlink($tmp);
+            return false;
+        }
+        @chmod($path, 0644);
+        return true;
+    }
+}
+
+if (!function_exists('nm_fp_request_ip')) {
+    function nm_fp_request_ip(): string {
+        return function_exists('nm_request_ip') ? nm_request_ip() : (string)($_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN');
+    }
+}
+
+if (!function_exists('nm_fp_retry_message')) {
+    function nm_fp_retry_message(int $retryAfter, string $lang): string {
+        if ($lang === 'ja') {
+            return '試行回数が多すぎます。' . max(1, $retryAfter) . '秒後にもう一度お試しください。';
+        }
+        return 'Too many attempts. Please try again in ' . max(1, $retryAfter) . ' seconds.';
+    }
+}
+
+if (!function_exists('nm_fp_masked_input_for_audit')) {
+    function nm_fp_masked_input_for_audit(string $input): string {
+        $input = trim($input);
+        if ($input === '') {
+            return '';
+        }
+        if (strpos($input, '@') !== false) {
+            return function_exists('nm_mask_email_for_audit')
+                ? nm_mask_email_for_audit($input)
+                : $input;
+        }
+        return $input;
     }
 }
 
 $lang = nm_fp_lang();
 $theme = nm_fp_theme();
-$u = nm_fp_toggle_urls('/forgot_password.php', $lang, $theme);
-$loginUrl = nm_fp_url('/login.php');
 
 $t = [
-  'ja' => [
-    'title' => 'Notemod-selfhosted パスワード再設定',
-    'brand' => 'Notemod-selfhosted',
-    'subtitle' => '認証用メールアドレスへ再設定リンクを送信します',
-    'account' => 'ユーザー名またはメールアドレス',
-    'submit' => 'リセットメールを送信',
-    'back' => 'ログイン画面に戻る',
-    'done' => '該当するアカウントが存在する場合は、リセットメールを送信しました。',
-    'note' => '入力した情報に一致するアカウントが存在する場合、登録済みの認証用メールアドレスへリセットメールを送信します。',
-    'lang_label' => 'Language',
-    'theme_label' => 'Theme',
-    'dark' => 'Dark',
-    'light' => 'Light',
-    'screen' => 'Notemod-selfhosted Screen Forgot Password',
-  ],
-  'en' => [
-    'title' => 'Notemod-selfhosted Password Reset',
-    'brand' => 'Notemod-selfhosted',
-    'subtitle' => 'Send a reset link to the registered auth email address',
-    'account' => 'Username or email address',
-    'submit' => 'Send reset email',
-    'back' => 'Back to login',
-    'done' => 'If a matching account exists, a reset email has been sent.',
-    'note' => 'If a matching account exists, a reset email will be sent to the registered auth email address.',
-    'lang_label' => 'Language',
-    'theme_label' => 'Theme',
-    'dark' => 'Dark',
-    'light' => 'Light',
-    'screen' => 'Notemod-selfhosted Screen Forgot Password',
-  ],
+    'ja' => [
+        'title' => 'Notemod-selfhosted パスワード再設定',
+        'brand' => 'Notemod-selfhosted',
+        'subtitle' => 'ユーザー名またはメールアドレスを入力してください',
+        'input' => 'ユーザー名 または メールアドレス',
+        'submit' => '再設定リンクを送信',
+        'back' => 'ログイン画面に戻る',
+        'lang_label' => 'Language',
+        'theme_label' => 'Theme',
+        'dark' => 'Dark',
+        'light' => 'Light',
+        'screen' => 'Notemod-selfhosted Screen Forgot Password',
+        'success' => '該当するアカウントが存在する場合、再設定メールを送信しました。',
+        'invalid' => 'ユーザー名またはメールアドレスを入力してください。',
+        'csrf_invalid' => 'CSRFトークンが無効です。ページを再読み込みしてからもう一度お試しください。',
+    ],
+    'en' => [
+        'title' => 'Notemod-selfhosted Forgot Password',
+        'brand' => 'Notemod-selfhosted',
+        'subtitle' => 'Enter your username or email address',
+        'input' => 'Username or Email',
+        'submit' => 'Send reset link',
+        'back' => 'Back to login',
+        'lang_label' => 'Language',
+        'theme_label' => 'Theme',
+        'dark' => 'Dark',
+        'light' => 'Light',
+        'screen' => 'Notemod-selfhosted Screen Forgot Password',
+        'success' => 'If a matching account exists, a password reset email has been sent.',
+        'invalid' => 'Please enter your username or email address.',
+        'csrf_invalid' => 'Invalid CSRF token. Please reload the page and try again.',
+    ],
 ];
 
-$doneMessage = '';
-$submittedValue = '';
+$errorMessage = '';
+$statusType = '';
+$inputValue = trim((string)($_POST['user_or_email'] ?? ''));
+
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
-    $submittedValue = trim((string)($_POST['account'] ?? ''));
-    if ($submittedValue !== '') {
-        try {
-            $record = nm_fp_find_matching_user($submittedValue);
-            if (is_array($record)) {
-                $email = trim((string)($record['email'] ?? ''));
-                $username = (string)($record['username'] ?? '');
-                $dirUser = (string)($record['dir_user'] ?? '');
-                if ($email !== '' && $username !== '' && $dirUser !== '') {
-                    $plainToken = nm_fp_generate_reset_token();
-                    $tokenHash = nm_fp_hash_reset_token($plainToken);
-                    $resetData = [
-                        'token_hash' => $tokenHash,
-                        'created_at' => gmdate('c'),
-                        'expires_at' => gmdate('c', time() + (30 * 60)),
-                        'used' => false,
-                    ];
-                    if (nm_fp_save_password_reset($dirUser, $resetData)) {
-                        $resetUrl = nm_fp_build_reset_url($username, $plainToken);
-                        nm_fp_send_reset_mail($email, $resetUrl, $lang);
-                    } else {
-                        nm_fp_log('password_reset.json save failed for dir_user=' . $dirUser);
+    try {
+        nm_csrf_validate_or_die();
+    } catch (Throwable $e) {
+        $errorMessage = $t[$lang]['csrf_invalid'];
+        $statusType = 'err';
+    }
+
+    if ($errorMessage === '') {
+        $ip = nm_fp_request_ip();
+        $normalizedInput = strtolower(trim($inputValue));
+        $auditInput = nm_fp_masked_input_for_audit($inputValue);
+
+        $bucketIp = 'forgot_password:ip:' . $ip;
+        $bucketInput = 'forgot_password:input:' . $ip . ':' . sha1($normalizedInput);
+
+        $limitIp = nm_rate_limit_check($bucketIp, 5, 900);
+        if (!$limitIp['allowed']) {
+            nm_write_auth_event('password_reset_request_rate_limited', [
+                'input' => $auditInput,
+                'reason' => 'ip_limit',
+                'retry_after' => (int)$limitIp['retry_after'],
+            ]);
+            $errorMessage = nm_fp_retry_message((int)$limitIp['retry_after'], $lang);
+            $statusType = 'err';
+        }
+
+        if ($errorMessage === '' && $normalizedInput !== '') {
+            $limitInput = nm_rate_limit_check($bucketInput, 3, 900);
+            if (!$limitInput['allowed']) {
+                nm_write_auth_event('password_reset_request_rate_limited', [
+                    'input' => $auditInput,
+                    'reason' => 'input_limit',
+                    'retry_after' => (int)$limitInput['retry_after'],
+                ]);
+                $errorMessage = nm_fp_retry_message((int)$limitInput['retry_after'], $lang);
+                $statusType = 'err';
+            }
+        }
+
+        if ($errorMessage === '' && $inputValue === '') {
+            nm_rate_limit_record_failure($bucketIp, 900);
+            nm_rate_limit_record_failure($bucketInput, 900);
+            nm_write_auth_event('password_reset_requested', [
+                'input' => $auditInput,
+                'username' => '',
+                'dir_user' => '',
+                'email_masked' => '',
+                'reason' => 'empty_input',
+            ]);
+            $errorMessage = $t[$lang]['invalid'];
+            $statusType = 'err';
+        } elseif ($errorMessage === '') {
+            try {
+                $matched = nm_fp_find_matching_user($inputValue);
+
+                if (is_array($matched) && !empty($matched['dir_user']) && !empty($matched['auth'])) {
+                    $dirUser = (string)$matched['dir_user'];
+                    $auth = (array)$matched['auth'];
+                    $email = trim((string)($auth['EMAIL'] ?? ''));
+                    $username = trim((string)($auth['USERNAME'] ?? $dirUser));
+
+                    if ($email !== '') {
+                        $plainToken = nm_fp_generate_reset_token();
+
+                        $auth['PASSWORD_RESET_TOKEN'] = '';
+                        $auth['PASSWORD_RESET_TOKEN_HASH'] = nm_fp_password_reset_token_hash($plainToken);
+                        $auth['PASSWORD_RESET_TOKEN_EXPIRES_AT'] = time() + 1800;
+
+                        if (nm_fp_write_auth_full($dirUser, $auth)) {
+                            $resetUrl = nm_fp_build_reset_url($dirUser, $plainToken);
+
+                            $from = '';
+                            if (function_exists('nm_load_mail_config')) {
+                                $mailCfg = nm_load_mail_config();
+                                if (is_array($mailCfg)) {
+                                    $from = trim((string)($mailCfg['SMTP_FROM'] ?? ''));
+                                }
+                            }
+
+                            nm_fp_send_reset_mail($email, $resetUrl, $lang, $from);
+                            nm_write_auth_event('password_reset_requested', [
+                                'input' => $auditInput,
+                                'username' => $username,
+                                'dir_user' => $dirUser,
+                                'email_masked' => function_exists('nm_mask_email_for_audit') ? nm_mask_email_for_audit($email) : $email,
+                                'reason' => 'matched',
+                            ]);
+                            nm_fp_log('reset requested dir_user=' . $dirUser . ' username=' . $username . ' email=' . $email);
+                        } else {
+                            nm_fp_log('failed to write auth reset fields dir_user=' . $dirUser);
+                        }
                     }
                 }
+
+                if (!is_array($matched)) {
+                    nm_write_auth_event('password_reset_requested', [
+                        'input' => $auditInput,
+                        'username' => '',
+                        'dir_user' => '',
+                        'email_masked' => '',
+                        'reason' => 'no_match',
+                    ]);
+                }
+
+                nm_rate_limit_record_failure($bucketIp, 900);
+                nm_rate_limit_record_failure($bucketInput, 900);
+
+                $errorMessage = $t[$lang]['success'];
+                $statusType = 'ok';
+                $inputValue = '';
+            } catch (Throwable $e) {
+                nm_fp_log('forgot password exception: ' . $e->getMessage());
+                nm_rate_limit_record_failure($bucketIp, 900);
+                nm_rate_limit_record_failure($bucketInput, 900);
+                $errorMessage = $t[$lang]['success'];
+                $statusType = 'ok';
             }
-        } catch (Throwable $e) {
-            nm_fp_log('forgot exception: ' . $e->getMessage());
         }
     }
-    $doneMessage = $t[$lang]['done'];
 }
+
+$u = nm_fp_toggle_urls('/forgot_password.php', $lang, $theme);
+$loginUrl = nm_fp_url('/login.php');
 ?>
 <!doctype html>
 <html lang="<?=nm_fp_h($lang)?>" data-theme="<?=nm_fp_h($theme)?>">
@@ -340,19 +456,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title><?=nm_fp_h($t[$lang]['title'])?></title>
   <style>
-    html[data-theme="dark"]{--bg0:#070b14;--bg1:#0b1222;--card:rgba(15,23,42,.78);--card2:rgba(2,6,23,.22);--line:rgba(148,163,184,.20);--text:#e5e7eb;--muted:#a3b0c2;--accent:#a2c1f4;--danger:#fb7185;--success:#34d399;--shadow:0 18px 50px rgba(0,0,0,.55);}    
-    html[data-theme="light"]{--bg0:#f6f8fc;--bg1:#eef2ff;--card:rgba(255,255,255,.82);--card2:rgba(255,255,255,.70);--line:rgba(15,23,42,.12);--text:#0b1222;--muted:#4b5563;--accent:#2563eb;--danger:#e11d48;--success:#059669;--shadow:0 18px 50px rgba(15,23,42,.14);}    
+    html[data-theme="dark"]{--bg0:#070b14;--bg1:#0b1222;--card:rgba(15,23,42,.78);--card2:rgba(2,6,23,.22);--line:rgba(148,163,184,.20);--text:#e5e7eb;--muted:#a3b0c2;--accent:#a2c1f4;--danger:#fb7185;--success:#34d399;--shadow:0 18px 50px rgba(0,0,0,.55);}
+    html[data-theme="light"]{--bg0:#f6f8fc;--bg1:#eef2ff;--card:rgba(255,255,255,.82);--card2:rgba(255,255,255,.70);--line:rgba(15,23,42,.12);--text:#0b1222;--muted:#4b5563;--accent:#2563eb;--danger:#e11d48;--success:#059669;--shadow:0 18px 50px rgba(15,23,42,.14);}
     :root{--r:18px}*{box-sizing:border-box}
     body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;color:var(--text);background:radial-gradient(900px 600px at 20% 10%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),radial-gradient(800px 600px at 80% 30%, rgba(16,185,129,.10), transparent 55%),linear-gradient(180deg,var(--bg0),var(--bg1));padding:18px}
-    .wrap{width:min(860px,100%)}
+    .wrap{width:min(760px,100%)}
     .card{background:var(--card);border:1px solid var(--line);border-radius:28px;box-shadow:var(--shadow);overflow:hidden;backdrop-filter:blur(10px);position:relative}
     .head{padding:18px 18px 14px;background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 10%,transparent),transparent);border-bottom:1px solid var(--line);display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:nowrap;}
     .head-left{min-width:0; flex:1 1 auto}
     .title{margin:0; font-size:20px; font-weight:900; letter-spacing:.2px}
     .sub{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:1.55}
     .body{padding:16px 18px 18px}
+    .err{background:color-mix(in srgb,var(--danger) 12%,transparent);border:1px solid color-mix(in srgb,var(--danger) 25%,transparent);color:color-mix(in srgb,var(--danger) 70%,var(--text));padding:10px 12px;border-radius:14px;font-size:13px;margin-bottom:12px}
     .ok{background:color-mix(in srgb,var(--success) 12%,transparent);border:1px solid color-mix(in srgb,var(--success) 25%,transparent);color:color-mix(in srgb,var(--success) 70%,var(--text));padding:10px 12px;border-radius:14px;font-size:13px;margin-bottom:12px}
-    .note{background:color-mix(in srgb,var(--accent) 8%,transparent);border:1px solid color-mix(in srgb,var(--accent) 18%,transparent);color:var(--muted);padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.6;margin-bottom:12px}
     label{display:block;font-size:12px;color:var(--muted);margin:10px 0 6px}
     input{width:100%;padding:12px 12px;border-radius:14px;border:1px solid color-mix(in srgb,var(--line) 140%,transparent);background:var(--card2);color:var(--text);outline:none}
     input:focus{border-color:color-mix(in srgb,var(--accent) 70%,transparent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 14%,transparent)}
@@ -401,14 +517,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         </div>
       </div>
       <div class="body">
-        <div class="note"><?=nm_fp_h($t[$lang]['note'])?></div>
-        <?php if ($doneMessage !== ''): ?><div class="ok"><?=nm_fp_h($doneMessage)?></div><?php endif; ?>
+        <?php if ($errorMessage !== ''): ?>
+          <div class="<?= $statusType === 'ok' ? 'ok' : 'err' ?>"><?=nm_fp_h($errorMessage)?></div>
+        <?php endif; ?>
+
         <form method="post" autocomplete="on">
-          <label><?=nm_fp_h($t[$lang]['account'])?></label>
-          <input name="account" required autocomplete="username email" value="<?=nm_fp_h($submittedValue)?>">
+          <?= nm_csrf_input_html() ?>
+          <label><?=nm_fp_h($t[$lang]['input'])?></label>
+          <input name="user_or_email" required value="<?=nm_fp_h($inputValue)?>">
           <button class="btn" type="submit"><?=nm_fp_h($t[$lang]['submit'])?></button>
         </form>
+
         <div class="helper-links">
+          <a href="<?=nm_fp_h($loginUrl)?>"><?=nm_fp_h($t[$lang]['back'])?></a>
         </div>
       </div>
       <div class="foot">

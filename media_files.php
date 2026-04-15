@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/auth_common.php';
+nm_send_security_headers_html();
 
 /*
  * media_files.php
@@ -174,12 +175,9 @@ if (!is_array($cfg)) $cfg = [];
 
 $EXPECTED_TOKEN = (string)($cfg['EXPECTED_TOKEN'] ?? '');
 $ADMIN_TOKEN    = (string)($cfg['ADMIN_TOKEN'] ?? '');
-$DATA_JSON      = (string)($cfg['DATA_JSON'] ?? '');
-if ($DATA_JSON === '') {
-  $DATA_JSON = nm_data_json_path($currentDirUser !== '' ? $currentDirUser : null);
-}
+$dataJsonPath = nm_data_json_path($currentDirUser !== '' ? $currentDirUser : null);
 
-if ($EXPECTED_TOKEN === '' || $DATA_JSON === '') { http_response_code(500); echo "Server not configured (EXPECTED_TOKEN / DATA_JSON)"; exit; }
+if ($dataJsonPath === '') { http_response_code(500); echo "Server not configured (data.json path)"; exit; }
 
 // TIMEZONE (config/<USER_NAME>/config.php) - 画面表示の日時に反映
 $TIMEZONE = 'UTC';
@@ -216,6 +214,7 @@ function fmt_local_time_from_iso(string $iso): string {
 // USERNAME / DIR_USER
 $USERNAME = $user;
 $DIR_USER = $currentDirUser !== '' ? $currentDirUser : normalize_username($USERNAME);
+$CURRENT_DIR_USER_FOR_POST = $DIR_USER;
 
 // user directories
 $userDir   = nm_data_dir($DIR_USER !== '' ? $DIR_USER : null);
@@ -223,6 +222,7 @@ $imagesDir = nm_images_dir($DIR_USER !== '' ? $DIR_USER : null);
 $filesDir  = nm_files_dir($DIR_USER !== '' ? $DIR_USER : null);
 $fileHistoryPath = $userDir . DIRECTORY_SEPARATOR . 'file.json';
 $fileIndexPath  = $userDir . DIRECTORY_SEPARATOR . 'file_index.json';
+$imageIndexPath = $userDir . DIRECTORY_SEPARATOR . 'image_index.json';
 
 
 // URLs
@@ -231,8 +231,23 @@ $apiDirUrl     = rtrim($uBase, '/') . '/api';
 $apiUploadUrl  = $apiDirUrl . '/api.php';
 $apiCleanupUrl = $apiDirUrl . '/cleanup_api.php';
 
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+  || ((string)($_SERVER['SERVER_PORT'] ?? '') === '443')
+  || ((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+$scheme = $isHttps ? 'https' : 'http';
+$host = (string)($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost');
+$apiCleanupUrlAbs = $scheme . '://' . $host . $apiCleanupUrl;
+$apiUploadUrlAbs = $scheme . '://' . $host . $apiUploadUrl;
+
 // helpers
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
+
+function lock_icon_svg(bool $locked): string {
+  if ($locked) {
+    return '<svg class="lock-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17 9h-1V7a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2Zm-6 6.73V17a1 1 0 1 0 2 0v-1.27a2 2 0 1 0-2 0ZM10 9V7a2 2 0 1 1 4 0v2h-4Z"/></svg>';
+  }
+  return '<svg class="lock-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17 9h-5V7a4 4 0 1 1 8 0h-2a2 2 0 1 0-4 0v2h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h10Zm-5 6.73V17a1 1 0 1 0 2 0v-1.27a2 2 0 1 0-2 0Z"/></svg>';
+}
 
 function safe_basename(string $name): string {
   $name = basename($name);
@@ -309,9 +324,11 @@ function list_images(string $dir, int $limit = 500): array {
     if (!is_file($path)) continue;
     $items[] = [
       'stored_filename' => $f,
+      'filename' => $f,
       'ext' => strtolower(pathinfo($f, PATHINFO_EXTENSION)),
       'size' => filesize($path) ?: 0,
       'mtime' => filemtime($path) ?: 0,
+      'lock' => false,
     ];
     if (count($items) >= $limit) break;
   }
@@ -335,9 +352,33 @@ function parse_file_history_jsonl(string $path, int $limit = 2000): array {
 }
 
 
+function parse_image_index_json(string $path): array {
+  if (!is_file($path) || !is_readable($path)) return [];
+  $raw = @file_get_contents($path);
+  if (!is_string($raw) || $raw === '') return [];
+  $json = json_decode($raw, true);
+  if (!is_array($json) || !isset($json['images']) || !is_array($json['images'])) return [];
+  $out = [];
+  foreach ($json['images'] as $row) {
+    if (!is_array($row)) continue;
+    $filename = (string)($row['filename'] ?? '');
+    if ($filename === '') continue;
+    $out[] = [
+      'stored_filename' => $filename,
+      'filename' => $filename,
+      'ext' => (string)($row['ext'] ?? strtolower(pathinfo($filename, PATHINFO_EXTENSION))),
+      'size' => (int)($row['size'] ?? 0),
+      'mtime' => (int)($row['created_at_unix'] ?? 0),
+      'lock' => !empty($row['lock']),
+    ];
+    if (count($out) >= 500) break;
+  }
+  return $out;
+}
+
 function parse_file_index_json(string $path): array {
   // file_index.json の形式:
-  // { v, generated_at(_unix), count, files:[ {filename, original_name, ext, mime, size, created_at, created_at_unix, sha256, file_id?}, ... ] }
+  // { v, generated_at(_unix), count, files:[ {filename, original_name, ext, mime, size, created_at, created_at_unix, sha256, file_id?, lock}, ... ] }
   if (!is_file($path) || !is_readable($path)) return [];
   $raw = @file_get_contents($path);
   if (!is_string($raw) || $raw === '') return [];
@@ -348,6 +389,8 @@ function parse_file_index_json(string $path): array {
   foreach ($json['files'] as $row) {
     if (!is_array($row)) continue;
     if (!isset($row['filename']) || (string)$row['filename'] === '') continue;
+    if (!array_key_exists('lock', $row)) $row['lock'] = false;
+    $row['lock'] = !empty($row['lock']);
     $out[] = $row;
     if (count($out) >= 500) break;
   }
@@ -415,6 +458,113 @@ function call_cleanup_count(string $url, string $adminToken, string $modeKey): ?
   return null;
 }
 
+
+function call_cleanup_action(string $url, string $adminToken, array $params): array {
+  if ($adminToken === '') {
+    return ['ok' => false, 'message' => 'ADMIN_TOKEN is empty'];
+  }
+
+  $params = array_merge($params, [
+    'token' => $adminToken,
+    'user' => (string)(function_exists('nm_get_current_dir_user') ? nm_get_current_dir_user() : ''),
+    'confirm' => 'YES',
+  ]);
+
+  $post = http_build_query($params);
+  $opts = [
+    'http' => [
+      'method' => 'POST',
+      'header' => "Content-Type: application/x-www-form-urlencoded\r\n" .
+                  "Content-Length: " . strlen($post) . "\r\n",
+      'content' => $post,
+      'timeout' => 15,
+    ]
+  ];
+  $ctx = stream_context_create($opts);
+  $raw = @file_get_contents($url, false, $ctx);
+  if (!is_string($raw) || $raw === '') {
+    return ['ok' => false, 'message' => 'empty response'];
+  }
+
+  $json = json_decode($raw, true);
+  if (!is_array($json)) {
+    return ['ok' => false, 'message' => $raw];
+  }
+
+  if (($json['status'] ?? '') !== 'ok') {
+    return ['ok' => false, 'message' => (string)($json['message'] ?? 'cleanup failed'), 'json' => $json];
+  }
+
+  return ['ok' => true, 'json' => $json];
+}
+
+
+function call_upload_action(string $url, string $expectedToken, string $dirUser, string $type, array $fileInfo): array {
+  if ($expectedToken === '') {
+    return ['ok' => false, 'message' => 'EXPECTED_TOKEN is empty'];
+  }
+  if (!isset($fileInfo['tmp_name']) || !is_uploaded_file((string)$fileInfo['tmp_name'])) {
+    return ['ok' => false, 'message' => 'No uploaded file'];
+  }
+
+  $boundary = '----NotemodBoundary' . bin2hex(random_bytes(8));
+  $eol = "\r\n";
+  $filename = (string)($fileInfo['name'] ?? 'upload.bin');
+  $tmpName = (string)$fileInfo['tmp_name'];
+  $mime = (string)($fileInfo['type'] ?? '');
+  if ($mime === '') {
+    $mime = 'application/octet-stream';
+  }
+  $content = @file_get_contents($tmpName);
+  if ($content === false) {
+    return ['ok' => false, 'message' => 'Failed to read upload tmp file'];
+  }
+
+  $fieldName = $type === 'image' ? 'image' : 'file';
+
+  $body = '';
+  foreach ([
+    'token' => $expectedToken,
+    'user' => $dirUser,
+    'type' => $type,
+  ] as $name => $value) {
+    $body .= '--' . $boundary . $eol;
+    $body .= 'Content-Disposition: form-data; name="' . $name . '"' . $eol . $eol;
+    $body .= $value . $eol;
+  }
+
+  $safeFilename = str_replace(["\r", "\n", '"'], ['','','_'], $filename);
+  $body .= '--' . $boundary . $eol;
+  $body .= 'Content-Disposition: form-data; name="' . $fieldName . '"; filename="' . $safeFilename . '"' . $eol;
+  $body .= 'Content-Type: ' . $mime . $eol . $eol;
+  $body .= $content . $eol;
+  $body .= '--' . $boundary . '--' . $eol;
+
+  $opts = [
+    'http' => [
+      'method' => 'POST',
+      'header' => "Content-Type: multipart/form-data; boundary=" . $boundary . "\r\n" .
+                  "Content-Length: " . strlen($body) . "\r\n",
+      'content' => $body,
+      'timeout' => 60,
+    ]
+  ];
+  $ctx = stream_context_create($opts);
+  $raw = @file_get_contents($url, false, $ctx);
+  if (!is_string($raw) || $raw === '') {
+    return ['ok' => false, 'message' => 'empty response'];
+  }
+
+  $json = json_decode($raw, true);
+  if (!is_array($json)) {
+    return ['ok' => false, 'message' => $raw];
+  }
+  if (($json['status'] ?? '') !== 'ok') {
+    return ['ok' => false, 'message' => (string)($json['message'] ?? 'upload failed'), 'json' => $json];
+  }
+  return ['ok' => true, 'json' => $json];
+}
+
 // quick endpoints
 if (isset($_GET['thumb']) && $_GET['thumb'] === '1') {
   $f = safe_basename((string)($_GET['f'] ?? ''));
@@ -428,15 +578,118 @@ if (isset($_GET['thumb']) && $_GET['thumb'] === '1') {
   exit;
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'download') {
-  $token = (string)($_POST['token'] ?? '');
-  if (!hash_equals($EXPECTED_TOKEN, $token)) {
-    http_response_code(403);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(['status'=>'error','message'=>'Forbidden'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
+if (isset($_GET['image_copy']) && $_GET['image_copy'] === '1') {
+  $f = safe_basename((string)($_GET['f'] ?? ''));
+  $f = urldecode($f);
+  $real = real_under($imagesDir, $f);
+  if (!$real) { http_response_code(404); exit; }
+
+  $w = isset($_GET['w']) ? (int)$_GET['w'] : 0;
+  $h = isset($_GET['h']) ? (int)$_GET['h'] : 0;
+
+  if ($w > 0 || $h > 0) {
+    $mime = detect_mime($real);
+    $imgInfo = @getimagesize($real);
+    if (is_array($imgInfo)) {
+      $srcW = (int)($imgInfo[0] ?? 0);
+      $srcH = (int)($imgInfo[1] ?? 0);
+      $imgType = (int)($imgInfo[2] ?? 0);
+
+      if ($srcW > 0 && $srcH > 0) {
+        if ($w <= 0 && $h > 0) {
+          $w = (int)round($srcW * ($h / $srcH));
+        } elseif ($h <= 0 && $w > 0) {
+          $h = (int)round($srcH * ($w / $srcW));
+        }
+
+        $w = max(1, $w);
+        $h = max(1, $h);
+
+        $src = null;
+        switch ($imgType) {
+          case IMAGETYPE_JPEG:
+            $src = @imagecreatefromjpeg($real);
+            break;
+          case IMAGETYPE_PNG:
+            $src = @imagecreatefrompng($real);
+            break;
+          case IMAGETYPE_GIF:
+            $src = @imagecreatefromgif($real);
+            break;
+          case IMAGETYPE_WEBP:
+            if (function_exists('imagecreatefromwebp')) {
+              $src = @imagecreatefromwebp($real);
+            }
+            break;
+        }
+
+        if ($src) {
+          $dst = imagecreatetruecolor($w, $h);
+
+          if ($imgType === IMAGETYPE_PNG || $imgType === IMAGETYPE_GIF || $imgType === IMAGETYPE_WEBP) {
+            @imagealphablending($dst, false);
+            @imagesavealpha($dst, true);
+            $transparent = imagecolorallocatealpha($dst, 0, 0, 0, 127);
+            imagefilledrectangle($dst, 0, 0, $w, $h, $transparent);
+          }
+
+          imagecopyresampled($dst, $src, 0, 0, 0, 0, $w, $h, $srcW, $srcH);
+
+          header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
+          switch ($imgType) {
+            case IMAGETYPE_JPEG:
+              header('Content-Type: image/jpeg');
+              imagejpeg($dst, null, 90);
+              imagedestroy($dst);
+              imagedestroy($src);
+              exit;
+            case IMAGETYPE_PNG:
+              header('Content-Type: image/png');
+              imagepng($dst);
+              imagedestroy($dst);
+              imagedestroy($src);
+              exit;
+            case IMAGETYPE_GIF:
+              header('Content-Type: image/gif');
+              imagegif($dst);
+              imagedestroy($dst);
+              imagedestroy($src);
+              exit;
+            case IMAGETYPE_WEBP:
+              if (function_exists('imagewebp')) {
+                header('Content-Type: image/webp');
+                imagewebp($dst, null, 90);
+                imagedestroy($dst);
+                imagedestroy($src);
+                exit;
+              }
+              break;
+          }
+
+          imagedestroy($dst);
+          imagedestroy($src);
+        }
+      }
+    }
   }
 
+  $mime = detect_mime($real);
+  header('Content-Type: ' . $mime);
+  header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+  readfile($real);
+  exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'download') {
+  try {
+    nm_csrf_validate_or_die();
+  } catch (Throwable $e) {
+    http_response_code(403);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['status'=>'error','message'=>'Invalid CSRF token'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
   $kind = (string)($_POST['kind'] ?? '');
   $stored = safe_basename((string)($_POST['stored'] ?? ''));
   $orig = (string)($_POST['orig'] ?? '');
@@ -463,6 +716,147 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
   exit;
 }
 
+
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_media') {
+  try {
+    nm_csrf_validate_or_die();
+  } catch (Throwable $e) {
+    http_response_code(403);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['status'=>'error','message'=>'Invalid CSRF token'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+  header('Content-Type: application/json; charset=utf-8');
+
+  $type = (string)($_POST['upload_type'] ?? '');
+  if ($type !== 'image' && $type !== 'file') {
+    http_response_code(400);
+    echo json_encode(['status'=>'error','message'=>'Invalid upload type'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  $fieldName = $type === 'image' ? 'image' : 'file';
+  if (!isset($_FILES[$fieldName]) || !is_array($_FILES[$fieldName])) {
+    http_response_code(400);
+    echo json_encode(['status'=>'error','message'=>'No upload file'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  $fileInfo = $_FILES[$fieldName];
+  if ((int)($fileInfo['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+    http_response_code(400);
+    echo json_encode(['status'=>'error','message'=>'Upload error'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  $result = call_upload_action($apiUploadUrlAbs, $EXPECTED_TOKEN, $CURRENT_DIR_USER_FOR_POST ?? '', $type, $fileInfo);
+  if (empty($result['ok'])) {
+    http_response_code(500);
+    echo json_encode(['status'=>'error','message'=>(string)($result['message'] ?? 'upload failed')], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  echo json_encode(['status'=>'ok'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+  exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'cleanup_action') {
+  try {
+    nm_csrf_validate_or_die();
+  } catch (Throwable $e) {
+    http_response_code(403);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['status'=>'error','message'=>'Invalid CSRF token'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+  header('Content-Type: application/json; charset=utf-8');
+
+  $mode = (string)($_POST['mode'] ?? '');
+  $params = [];
+
+  if ($mode === 'delete_all_images') {
+    $params['purge_images'] = '1';
+  } elseif ($mode === 'delete_all_files') {
+    $params['purge_files'] = '1';
+  } elseif ($mode === 'delete_selected_images') {
+    $items = $_POST['delete_images'] ?? [];
+    if (!is_array($items) || count($items) === 0) {
+      http_response_code(400);
+      echo json_encode(['status'=>'error','message'=>'No image files selected'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+      exit;
+    }
+    $params['delete_images'] = array_values(array_filter(array_map(function($name){
+      return safe_basename((string)$name);
+    }, $items), function($name){
+      return $name !== '';
+    }));
+  } elseif ($mode === 'delete_selected_files') {
+    $items = $_POST['delete_files'] ?? [];
+    if (!is_array($items) || count($items) === 0) {
+      http_response_code(400);
+      echo json_encode(['status'=>'error','message'=>'No files selected'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+      exit;
+    }
+    $params['delete_files'] = array_values(array_filter(array_map(function($name){
+      return safe_basename((string)$name);
+    }, $items), function($name){
+      return $name !== '';
+    }));
+  } else {
+    http_response_code(400);
+    echo json_encode(['status'=>'error','message'=>'Unknown cleanup mode'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  $result = call_cleanup_action($apiCleanupUrlAbs, $ADMIN_TOKEN, $params);
+  if (empty($result['ok'])) {
+    http_response_code(500);
+    echo json_encode(['status'=>'error','message'=>(string)($result['message'] ?? 'cleanup failed')], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  echo json_encode(['status'=>'ok'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+  exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'lock_media') {
+  try {
+    nm_csrf_validate_or_die();
+  } catch (Throwable $e) {
+    http_response_code(403);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['status'=>'error','message'=>'Invalid CSRF token'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+  header('Content-Type: application/json; charset=utf-8');
+
+  $kind = (string)($_POST['kind'] ?? '');
+  $filename = safe_basename((string)($_POST['filename'] ?? ''));
+  $lockValue = !empty($_POST['lock']) ? '1' : '0';
+
+  if (($kind !== 'image' && $kind !== 'file') || $filename === '') {
+    http_response_code(400);
+    echo json_encode(['status'=>'error','message'=>'Invalid lock request'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  $result = call_cleanup_action($apiCleanupUrlAbs, $ADMIN_TOKEN, [
+    'lock_target_type' => $kind,
+    'lock_filename' => $filename,
+    'lock_value' => $lockValue,
+  ]);
+
+  if (empty($result['ok'])) {
+    http_response_code(500);
+    echo json_encode(['status'=>'error','message'=>(string)($result['message'] ?? 'lock update failed')], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  echo json_encode(['status'=>'ok'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+  exit;
+}
+
 // page data
 $iniKeys = [
   'file_uploads','upload_max_filesize','post_max_size','max_file_uploads','max_input_time',
@@ -472,12 +866,15 @@ $iniKeys = [
 $ini = [];
 foreach ($iniKeys as $k) $ini[$k] = ini_get($k);
 
-$imageCount = call_cleanup_count($apiCleanupUrl, $ADMIN_TOKEN, 'purge_images');
-$fileCount  = call_cleanup_count($apiCleanupUrl, $ADMIN_TOKEN, 'purge_files');
+$imageCount = call_cleanup_count($apiCleanupUrlAbs, $ADMIN_TOKEN, 'purge_images');
+$fileCount  = call_cleanup_count($apiCleanupUrlAbs, $ADMIN_TOKEN, 'purge_files');
 if ($imageCount === null) $imageCount = count_dir_files($imagesDir, '/\.(png|jpg|jpeg|webp|gif|heic|heif)$/i');
 if ($fileCount  === null) $fileCount  = count_dir_files($filesDir);
 
-$images = list_images($imagesDir, 500);
+$images = is_file($imageIndexPath) ? parse_image_index_json($imageIndexPath) : [];
+if (count($images) === 0) {
+  $images = list_images($imagesDir, 500);
+}
 
 // files: file_index.json を優先して表示（無い場合は file.json の履歴から復元）
 $files = [];
@@ -507,6 +904,7 @@ $setupauthUrl = nm_ui_url('/setup_auth.php');
 $logsettingsUrl = nm_ui_url('/log_settings.php');
 $baksettingsUrl = nm_ui_url('/bak_settings.php');
 $clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
+$csrfToken = function_exists('nm_csrf_token_get') ? nm_csrf_token_get() : '';
 ?>
 <!doctype html>
 <html lang="<?=htmlspecialchars($lang, ENT_QUOTES, 'UTF-8')?>" data-theme="<?=htmlspecialchars($theme, ENT_QUOTES, 'UTF-8')?>">
@@ -714,6 +1112,40 @@ $clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
       -moz-appearance: textfield;
     }
 
+
+    .lock-cell{ display:flex; align-items:center; gap:10px; }
+    .lock-btn{
+      width:34px; height:34px;
+      display:inline-flex; align-items:center; justify-content:center;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background: color-mix(in srgb, var(--card2) 82%, transparent);
+      color: var(--muted);
+      cursor:pointer;
+      transition:.15s ease;
+      padding:0;
+      flex:0 0 auto;
+    }
+    .lock-btn:hover{
+      transform: translateY(-1px);
+      border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+      color: color-mix(in srgb, var(--text) 80%, var(--accent));
+      background: color-mix(in srgb, var(--accent) 7%, var(--card2));
+    }
+    .lock-btn:disabled{ opacity:.6; cursor:wait; transform:none; }
+    .lock-btn.is-locked{
+      color: var(--accent);
+      border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+      background: color-mix(in srgb, var(--accent) 12%, var(--card2));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
+    }
+    .lock-btn.is-locked:hover{
+      border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+      background: color-mix(in srgb, var(--accent) 16%, var(--card2));
+    }
+    .lock-icon{ width:16px; height:16px; display:block; }
+    .media-check:disabled{ opacity:.45; cursor:not-allowed; }
+
     .row-links{ display:flex; gap:12px; flex-wrap:wrap;}
     .row-links a{ font-size:13px; color:var(--accent); }
 
@@ -832,7 +1264,7 @@ $clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
                     $ext   = (string)$img['ext'];
                   ?>
                   <tr>
-                    <td><input type="checkbox" class="media-check media-check-image" value="<?=h($fname)?>"></td>
+                    <td><div class="lock-cell"><input type="checkbox" class="media-check media-check-image" value="<?=h($fname)?>" <?=!empty($img['lock']) ? 'disabled' : ''?>><button type="button" class="lock-btn <?=!empty($img['lock']) ? 'is-locked' : ''?>" data-lock-kind="image" data-filename="<?=h($fname)?>" data-lock="<?=!empty($img['lock']) ? '1' : '0'?>" title="<?=!empty($img['lock']) ? 'Unlock' : 'Lock'?>" aria-label="<?=!empty($img['lock']) ? 'Unlock' : 'Lock'?>"><?=lock_icon_svg(!empty($img['lock']))?></button></div></td>
                     <td>
                       <img class="thumb copy-thumb" style="cursor:pointer;" title="<?=htmlspecialchars($t[$lang]['copied_image'], ENT_QUOTES, 'UTF-8')?>" src="<?=h($_SERVER['PHP_SELF'])?>?thumb=1&f=<?=h(urlencode($fname))?>" alt="" data-filename="<?=h($fname)?>">
                     </td>
@@ -843,8 +1275,8 @@ $clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
                     <td>
                       <form method="POST" action="<?=h($_SERVER['PHP_SELF'])?>" style="margin:0">
   <input type="hidden" name="action" value="download">
-  <input type="hidden" name="token" value="<?=h($EXPECTED_TOKEN)?>">
-  <input type="hidden" name="kind" value="image">
+  <input type="hidden" name="csrf_token" value="<?=h($csrfToken)?>">
+    <input type="hidden" name="kind" value="image">
   <input type="hidden" name="stored" value="<?=h($fname)?>">
   <input type="hidden" name="orig" value="<?=h($fname)?>">
   <button class="btn" type="submit"><?=htmlspecialchars($t[$lang]['btn_download'], ENT_QUOTES, 'UTF-8')?></button>
@@ -896,7 +1328,7 @@ $clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
                     $ext   = (string)($row['ext'] ?? '');
                   ?>
                   <tr>
-                    <td><input type="checkbox" class="media-check media-check-file" value="<?=h($stored)?>"></td>
+                    <td><div class="lock-cell"><input type="checkbox" class="media-check media-check-file" value="<?=h($stored)?>" <?=!empty($row['lock']) ? 'disabled' : ''?>><button type="button" class="lock-btn <?=!empty($row['lock']) ? 'is-locked' : ''?>" data-lock-kind="file" data-filename="<?=h($stored)?>" data-lock="<?=!empty($row['lock']) ? '1' : '0'?>" title="<?=!empty($row['lock']) ? 'Unlock' : 'Lock'?>" aria-label="<?=!empty($row['lock']) ? 'Unlock' : 'Lock'?>"><?=lock_icon_svg(!empty($row['lock']))?></button></div></td>
                     <td><?=h($orig)?></td>
                     <td class="muted"><?=h($stored)?></td>
                     <td><?=h(fmt_local_time_from_iso($createdAt))?></td>
@@ -905,8 +1337,8 @@ $clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
                     <td>
                       <form method="POST" action="<?=h($_SERVER['PHP_SELF'])?>" style="margin:0">
   <input type="hidden" name="action" value="download">
-  <input type="hidden" name="token" value="<?=h($EXPECTED_TOKEN)?>">
-  <input type="hidden" name="kind" value="file">
+  <input type="hidden" name="csrf_token" value="<?=h($csrfToken)?>">
+    <input type="hidden" name="kind" value="file">
   <input type="hidden" name="stored" value="<?=h($stored)?>">
   <input type="hidden" name="orig" value="<?=h($orig !== '' ? $orig : $stored)?>">
   <button class="btn" type="submit"><?=htmlspecialchars($t[$lang]['btn_download'], ENT_QUOTES, 'UTF-8')?></button>
@@ -946,10 +1378,6 @@ $clipboardsyncUrl = nm_ui_url('/clipboard_sync.php');
   </div>
 
 <script>
-const EXPECTED_TOKEN = <?=json_encode($EXPECTED_TOKEN)?>;
-const API_UPLOAD_URL = <?=json_encode($apiUploadUrl)?>;
-const API_CLEANUP_URL = <?=json_encode($apiCleanupUrl)?>;
-const ADMIN_TOKEN = <?=json_encode($ADMIN_TOKEN)?>;
 
 const TEXT_UPLOAD_DONE = <?=json_encode($t[$lang]['upload_done'])?>;
 const TEXT_UPLOAD_FAILED = <?=json_encode($t[$lang]['upload_failed'])?>;
@@ -967,20 +1395,26 @@ const TEXT_CONFIRM_DELETE_SELECTED_FILES = <?=json_encode($t[$lang]['confirm_del
 
 // --- 画像コピーツール用変数 ---
 const SITE_ORIGIN = <?=json_encode(((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || ((string)($_SERVER['SERVER_PORT'] ?? '') === '443') || ((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') ? 'https' : 'http') . '://' . (string)($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost'))?>;
-const IMAGE_API_BASE = <?=json_encode($apiDirUrl . '/image_api.php')?>;
 const CURRENT_USER = <?=json_encode(isset($currentDirUser) && $currentDirUser !== '' ? $currentDirUser : $USERNAME)?>;
 const TEXT_COPIED_IMAGE = <?=json_encode($t[$lang]['copied_image'])?>;
 const TEXT_COPIED_IMAGE_URL = <?=json_encode('Image URL copied to clipboard')?>;
+const CSRF_TOKEN = <?=json_encode($csrfToken)?>;
 // ------------------------------
 
 function humanErr(e) {
-  try { return (typeof e === 'string') ? e : JSON.stringify(e); } catch { return String(e); }
+  try {
+    if (typeof e === 'string') return e;
+    if (e && typeof e.message === 'string' && e.message !== '') return e.message;
+    const j = JSON.stringify(e);
+    return (j && j !== '{}') ? j : String(e);
+  } catch {
+    return String(e);
+  }
 }
 
 async function postDownload(kind, stored, orig) {
   const fd = new FormData();
   fd.append('action', 'download');
-  fd.append('token', EXPECTED_TOKEN);
   fd.append('kind', kind);
   fd.append('stored', stored);
   fd.append('orig', orig || '');
@@ -1008,8 +1442,9 @@ function downloadMedia(kind, stored, orig) {
 
 async function uploadToApi(type, fileObj) {
   const fd = new FormData();
-  fd.append('token', EXPECTED_TOKEN);
-  fd.append('type', type);
+  fd.append('action', 'upload_media');
+  fd.append('csrf_token', CSRF_TOKEN);
+  fd.append('upload_type', type);
   if (type === 'image') {
     fd.append('image', fileObj, fileObj.name || 'upload');
   } else if (type === 'file') {
@@ -1017,30 +1452,67 @@ async function uploadToApi(type, fileObj) {
   } else {
     throw new Error('unknown type');
   }
-  const res = await fetch(API_UPLOAD_URL, { method: 'POST', body: fd });
-  const txt = await res.text();
-  if (!res.ok) throw new Error(`upload failed: ${res.status} ${txt}`);
-  return txt;
+  return postLocalAction(fd);
 }
 
-async function callCleanup(formData) {
-  if (!ADMIN_TOKEN) {
-    throw new Error('ADMIN_TOKEN is empty');
-  }
-  formData.append('token', ADMIN_TOKEN);
-  formData.append('confirm', 'YES');
-
-  const res = await fetch(API_CLEANUP_URL, { method: 'POST', body: formData });
+async function postLocalAction(formData) {
+  const res = await fetch(location.href, { method: 'POST', body: formData });
   const txt = await res.text();
   let json = null;
   try { json = JSON.parse(txt); } catch (_) {}
   if (!res.ok) {
-    throw new Error(`cleanup failed: ${res.status} ${txt}`);
+    throw new Error((json && json.message) ? json.message : `request failed: ${res.status} ${txt}`);
   }
   if (json && json.status && json.status !== 'ok') {
-    throw new Error(json.message || txt || 'cleanup failed');
+    throw new Error(json.message || txt || 'request failed');
   }
   return json || txt;
+}
+
+async function callCleanup(mode, names) {
+  const fd = new FormData();
+  fd.append('action', 'cleanup_action');
+  fd.append('csrf_token', CSRF_TOKEN);
+  fd.append('mode', mode);
+
+  if (Array.isArray(names)) {
+    const key = mode.includes('images') ? 'delete_images' : 'delete_files';
+    names.forEach(name => fd.append(key + '[]', name));
+  }
+
+  return postLocalAction(fd);
+}
+
+async function setMediaLock(kind, filename, lockValue) {
+  const fd = new FormData();
+  fd.append('action', 'lock_media');
+  fd.append('csrf_token', CSRF_TOKEN);
+  fd.append('kind', kind);
+  fd.append('filename', filename);
+  fd.append('lock', lockValue ? '1' : '0');
+  return postLocalAction(fd);
+}
+
+function renderLockIcon(locked) {
+  if (locked) {
+    return '<svg class="lock-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17 9h-1V7a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2Zm-6 6.73V17a1 1 0 1 0 2 0v-1.27a2 2 0 1 0-2 0ZM10 9V7a2 2 0 1 1 4 0v2h-4Z"/></svg>';
+  }
+  return '<svg class="lock-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17 9h-5V7a4 4 0 1 1 8 0h-2a2 2 0 1 0-4 0v2h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h10Zm-5 6.73V17a1 1 0 1 0 2 0v-1.27a2 2 0 1 0-2 0Z"/></svg>';
+}
+
+function applyLockUi(button, locked) {
+  if (!button) return;
+  const wrap = button.closest('.lock-cell');
+  const cb = wrap ? wrap.querySelector('.media-check') : null;
+  button.dataset.lock = locked ? '1' : '0';
+  button.innerHTML = renderLockIcon(locked);
+  button.classList.toggle('is-locked', locked);
+  button.title = locked ? 'Unlock' : 'Lock';
+  button.setAttribute('aria-label', locked ? 'Unlock' : 'Lock');
+  if (cb) {
+    cb.disabled = !!locked;
+    if (locked) cb.checked = false;
+  }
 }
 
 function getCheckedValues(selector) {
@@ -1070,18 +1542,15 @@ function updateDeleteButtons() {
 
 async function handleDeleteImages() {
   const selected = getCheckedValues('.media-check-image');
-  const fd = new FormData();
 
   if (selected.length > 0) {
     if (!confirm(TEXT_CONFIRM_DELETE_SELECTED_IMAGES)) return;
-    for (const name of selected) fd.append('delete_images[]', name);
   } else {
     if (!confirm(TEXT_CONFIRM_DELETE_ALL_IMAGES)) return;
-    fd.append('purge_images', '1');
   }
 
   try {
-    await callCleanup(fd);
+    await callCleanup(selected.length > 0 ? 'delete_selected_images' : 'delete_all_images', selected.length > 0 ? selected : null);
     alert(TEXT_CLEANUP_DONE);
     location.reload();
   } catch (e) {
@@ -1091,18 +1560,14 @@ async function handleDeleteImages() {
 
 async function handleDeleteFiles() {
   const selected = getCheckedValues('.media-check-file');
-  const fd = new FormData();
-
   if (selected.length > 0) {
     if (!confirm(TEXT_CONFIRM_DELETE_SELECTED_FILES)) return;
-    for (const name of selected) fd.append('delete_files[]', name);
   } else {
     if (!confirm(TEXT_CONFIRM_DELETE_ALL_FILES)) return;
-    fd.append('purge_files', '1');
   }
 
   try {
-    await callCleanup(fd);
+    await callCleanup(selected.length > 0 ? 'delete_selected_files' : 'delete_all_files', selected.length > 0 ? selected : null);
     alert(TEXT_CLEANUP_DONE);
     location.reload();
   } catch (e) {
@@ -1147,6 +1612,24 @@ document.querySelectorAll('.media-check').forEach(el => {
   el.addEventListener('change', updateDeleteButtons);
 });
 
+document.querySelectorAll('.lock-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const kind = btn.dataset.lockKind || '';
+    const filename = btn.dataset.filename || '';
+    const current = btn.dataset.lock === '1';
+    btn.disabled = true;
+    try {
+      await setMediaLock(kind, filename, !current);
+      applyLockUi(btn, !current);
+      updateDeleteButtons();
+    } catch (e) {
+      alert(TEXT_CLEANUP_FAILED + "\n" + humanErr(e));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
+
 updateDeleteButtons();
 
 document.getElementById('btnDeleteAllImages')?.addEventListener('click', handleDeleteImages);
@@ -1167,7 +1650,7 @@ function showToast(msg) {
 }
 
 function buildImageUrl(filename) {
-  const rel = `${IMAGE_API_BASE}?user=${encodeURIComponent(CURRENT_USER)}&file=${encodeURIComponent(filename)}`;
+  const rel = `<?=h($_SERVER['PHP_SELF'])?>?image_copy=1&f=${encodeURIComponent(filename)}`;
   const url = new URL(rel.startsWith('http://') || rel.startsWith('https://') ? rel : (SITE_ORIGIN + rel));
 
   const widthEl = document.getElementById('imgCopyWidth');

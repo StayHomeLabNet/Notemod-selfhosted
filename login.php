@@ -2,6 +2,9 @@
 declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
 
+nm_send_security_headers_html();
+header('Content-Type: text/html; charset=utf-8');
+
 if (!function_exists('nm_is_valid_username')) {
     function nm_is_valid_username(string $name): bool {
         return (bool)preg_match('/^[a-z0-9_-]+$/', $name);
@@ -23,7 +26,30 @@ if (!function_exists('nm_any_auth_exists')) {
     }
 }
 
-header('Content-Type: text/html; charset=utf-8');
+if (!function_exists('nm_login_request_ip')) {
+    function nm_login_request_ip(): string {
+        return function_exists('nm_request_ip') ? nm_request_ip() : (string)($_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN');
+    }
+}
+
+if (!function_exists('nm_login_retry_message')) {
+    function nm_login_retry_message(int $retryAfter, string $lang): string {
+        if ($lang === 'ja') {
+            return '試行回数が多すぎます。' . max(1, $retryAfter) . '秒後にもう一度お試しください。';
+        }
+        return 'Too many attempts. Please try again in ' . max(1, $retryAfter) . ' seconds.';
+    }
+}
+
+if (!function_exists('nm_login_audit_username')) {
+    function nm_login_audit_username(string $inputUserRaw, string $normalizedUser): string {
+        $raw = trim($inputUserRaw);
+        if ($normalizedUser !== '') {
+            return $normalizedUser;
+        }
+        return $raw;
+    }
+}
 
 $ui = nm_ui_bootstrap();
 $lang = $ui['lang'];
@@ -48,6 +74,7 @@ $t = [
     'go_setup' => '今すぐセットアップを開く',
     'forgot_password' => 'パスワードを忘れた場合',
     'reset_success' => 'パスワードを更新しました。新しいパスワードでログインしてください。',
+    'csrf_invalid' => 'CSRFトークンが無効です。ページを再読み込みしてからもう一度お試しください。',
   ],
   'en' => [
     'title' => 'Notemod-selfhosted Login',
@@ -67,6 +94,7 @@ $t = [
     'go_setup' => 'Open setup now',
     'forgot_password' => 'Forgot your password?',
     'reset_success' => 'Your password has been updated. Please log in with your new password.',
+    'csrf_invalid' => 'Invalid CSRF token. Please reload the page and try again.',
   ],
 ];
 
@@ -83,8 +111,8 @@ if (!nm_any_auth_exists()) {
   <meta http-equiv="refresh" content="3; url=<?=htmlspecialchars($setupUrl, ENT_QUOTES, 'UTF-8')?>">
   <title>Setup required</title>
   <style>
-    html[data-theme="dark"]{--bg0:#070b14;--bg1:#0b1222;--card:rgba(15,23,42,.78);--card2:rgba(2,6,23,.22);--line:rgba(148,163,184,.20);--text:#e5e7eb;--muted:#a3b0c2;--accent:#a2c1f4;--shadow:0 18px 50px rgba(0,0,0,.55);}    
-    html[data-theme="light"]{--bg0:#f6f8fc;--bg1:#eef2ff;--card:rgba(255,255,255,.82);--card2:rgba(255,255,255,.70);--line:rgba(15,23,42,.12);--text:#0b1222;--muted:#4b5563;--accent:#2563eb;--shadow:0 18px 50px rgba(15,23,42,.14);}    
+    html[data-theme="dark"]{--bg0:#070b14;--bg1:#0b1222;--card:rgba(15,23,42,.78);--card2:rgba(2,6,23,.22);--line:rgba(148,163,184,.20);--text:#e5e7eb;--muted:#a3b0c2;--accent:#a2c1f4;--shadow:0 18px 50px rgba(0,0,0,.55);}
+    html[data-theme="light"]{--bg0:#f6f8fc;--bg1:#eef2ff;--card:rgba(255,255,255,.82);--card2:rgba(255,255,255,.70);--line:rgba(15,23,42,.12);--text:#0b1222;--muted:#4b5563;--accent:#2563eb;--shadow:0 18px 50px rgba(15,23,42,.14);}
     :root{--r:18px}*{box-sizing:border-box}
     body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;color:var(--text);background:radial-gradient(900px 600px at 20% 10%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),radial-gradient(800px 600px at 80% 30%, rgba(16,185,129,.10), transparent 55%),linear-gradient(180deg,var(--bg0),var(--bg1));padding:18px}
     .card{width:min(520px,100%);background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);backdrop-filter:blur(10px);padding:18px}
@@ -121,40 +149,104 @@ if ((string)($_GET['reset'] ?? '') === 'success') {
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
-    nm_auth_start_session();
+    try {
+        nm_csrf_validate_or_die();
+    } catch (Throwable $e) {
+        $error = $t[$lang]['csrf_invalid'];
+    }
 
-    $inputUserRaw = (string)($_POST['username'] ?? '');
-    $inputUser    = normalize_username($inputUserRaw);
-    $password     = (string)($_POST['password'] ?? '');
+    if ($error === '') {
+        nm_auth_start_session();
 
-    if ($inputUser === '' || !nm_is_valid_username($inputUser)) {
-        $error = $t[$lang]['invalid_username'];
-    } else {
-        $cfg = nm_find_user_by_username($inputUser);
-        $dirUser = normalize_username((string)($cfg['DIR_USER'] ?? ''));
-        $loginUser = (string)($cfg['USERNAME'] ?? $inputUser);
+        $inputUserRaw = (string)($_POST['username'] ?? '');
+        $inputUser    = normalize_username($inputUserRaw);
+        $auditUser    = nm_login_audit_username($inputUserRaw, $inputUser);
+        $password     = (string)($_POST['password'] ?? '');
+        $ip = nm_login_request_ip();
 
-        $hash = (string)($cfg['PASSWORD_HASH'] ?? '');
-        $okPass = ($hash !== '') && password_verify($password, $hash);
+        $bucketIp = 'login:ip:' . $ip;
+        $bucketUser = 'login:user:' . $ip . ':' . $inputUser;
 
-        if ($dirUser !== '' && nm_is_valid_username($dirUser) && $okPass) {
-            $_SESSION['nm_logged_in'] = true;
-            $_SESSION['nm_user'] = $dirUser;
-            $_SESSION['nm_dir_user'] = $dirUser;
-            $_SESSION['nm_username'] = $loginUser;
-            $_SESSION['nm_login_user'] = $loginUser;
-            header('Location: ' . (function_exists('nm_url') ? nm_url('') : (nm_auth_base_url() . '/')));
-            exit;
+        $limitIp = nm_rate_limit_check($bucketIp, 10, 900);
+        if (!$limitIp['allowed']) {
+            nm_write_auth_event('login_rate_limited', [
+                'username' => $auditUser,
+                'dir_user' => '',
+                'reason' => 'ip_limit',
+                'retry_after' => (int)$limitIp['retry_after'],
+            ]);
+            $error = nm_login_retry_message((int)$limitIp['retry_after'], $lang);
         }
 
-        if ($error === '') {
+        if ($error === '' && $inputUser !== '') {
+            $limitUser = nm_rate_limit_check($bucketUser, 5, 900);
+            if (!$limitUser['allowed']) {
+                nm_write_auth_event('login_rate_limited', [
+                    'username' => $auditUser,
+                    'dir_user' => '',
+                    'reason' => 'user_limit',
+                    'retry_after' => (int)$limitUser['retry_after'],
+                ]);
+                $error = nm_login_retry_message((int)$limitUser['retry_after'], $lang);
+            }
+        }
+
+        if ($error === '' && ($inputUser === '' || !nm_is_valid_username($inputUser))) {
+            nm_rate_limit_record_failure($bucketIp, 900);
+            if ($inputUser !== '') {
+                nm_rate_limit_record_failure($bucketUser, 900);
+            }
+            nm_write_auth_event('login_failed', [
+                'username' => $auditUser,
+                'dir_user' => '',
+                'reason' => 'invalid_username',
+            ]);
+            $error = $t[$lang]['invalid_username'];
+        } elseif ($error === '') {
+            $cfg = nm_find_user_by_username($inputUser);
+            $dirUser = normalize_username((string)($cfg['DIR_USER'] ?? ''));
+            $loginUser = (string)($cfg['USERNAME'] ?? $inputUser);
+
+            $hash = (string)($cfg['PASSWORD_HASH'] ?? '');
+            $okPass = ($hash !== '') && password_verify($password, $hash);
+
+            if ($dirUser !== '' && nm_is_valid_username($dirUser) && $okPass) {
+                nm_rate_limit_clear($bucketIp);
+                nm_rate_limit_clear($bucketUser);
+
+                session_regenerate_id(true);
+                nm_csrf_rotate_token();
+
+                $_SESSION['nm_logged_in'] = true;
+                $_SESSION['nm_user'] = $dirUser;
+                $_SESSION['nm_dir_user'] = $dirUser;
+                $_SESSION['nm_username'] = $loginUser;
+                $_SESSION['nm_login_user'] = $loginUser;
+                $_SESSION['nm_clear_sync_warning_once'] = true;
+                nm_refresh_dir_user_cookie($dirUser);
+
+                nm_write_auth_event('login_success', [
+                    'username' => $loginUser,
+                    'dir_user' => $dirUser,
+                ]);
+
+                header('Location: ' . (function_exists('nm_url') ? nm_url('') : (nm_auth_base_url() . '/')));
+                exit;
+            }
+
+            nm_rate_limit_record_failure($bucketIp, 900);
+            nm_rate_limit_record_failure($bucketUser, 900);
+            nm_write_auth_event('login_failed', [
+                'username' => $auditUser,
+                'dir_user' => $dirUser,
+                'reason' => 'bad_credentials',
+            ]);
             $error = $t[$lang]['login_failed'];
         }
     }
 }
 
 $u = nm_ui_toggle_urls('/login.php', $lang, $theme);
-$accountUrl = nm_ui_url('/account.php');
 $forgotUrl = nm_ui_url('/forgot_password.php');
 ?>
 <!doctype html>
@@ -164,8 +256,8 @@ $forgotUrl = nm_ui_url('/forgot_password.php');
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title><?=htmlspecialchars($t[$lang]['title'], ENT_QUOTES, 'UTF-8')?></title>
   <style>
-    html[data-theme="dark"]{--bg0:#070b14;--bg1:#0b1222;--card:rgba(15,23,42,.78);--card2:rgba(2,6,23,.22);--line:rgba(148,163,184,.20);--text:#e5e7eb;--muted:#a3b0c2;--accent:#a2c1f4;--danger:#fb7185;--success:#34d399;--shadow:0 18px 50px rgba(0,0,0,.55);}    
-    html[data-theme="light"]{--bg0:#f6f8fc;--bg1:#eef2ff;--card:rgba(255,255,255,.82);--card2:rgba(255,255,255,.70);--line:rgba(15,23,42,.12);--text:#0b1222;--muted:#4b5563;--accent:#2563eb;--danger:#e11d48;--success:#059669;--shadow:0 18px 50px rgba(15,23,42,.14);}    
+    html[data-theme="dark"]{--bg0:#070b14;--bg1:#0b1222;--card:rgba(15,23,42,.78);--card2:rgba(2,6,23,.22);--line:rgba(148,163,184,.20);--text:#e5e7eb;--muted:#a3b0c2;--accent:#a2c1f4;--danger:#fb7185;--success:#34d399;--shadow:0 18px 50px rgba(0,0,0,.55);}
+    html[data-theme="light"]{--bg0:#f6f8fc;--bg1:#eef2ff;--card:rgba(255,255,255,.82);--card2:rgba(255,255,255,.70);--line:rgba(15,23,42,.12);--text:#0b1222;--muted:#4b5563;--accent:#2563eb;--danger:#e11d48;--success:#059669;--shadow:0 18px 50px rgba(15,23,42,.14);}
     :root{--r:18px}*{box-sizing:border-box}
     body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;color:var(--text);background:radial-gradient(900px 600px at 20% 10%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),radial-gradient(800px 600px at 80% 30%, rgba(16,185,129,.10), transparent 55%),linear-gradient(180deg,var(--bg0),var(--bg1));padding:18px}
     .wrap{width:min(760px,100%)}
@@ -228,6 +320,7 @@ $forgotUrl = nm_ui_url('/forgot_password.php');
         <?php if ($success): ?><div class="ok"><?=htmlspecialchars($success, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
         <?php if ($error): ?><div class="err"><?=htmlspecialchars($error, ENT_QUOTES, 'UTF-8')?></div><?php endif; ?>
         <form method="post" autocomplete="on">
+          <?= nm_csrf_input_html() ?>
           <label><?=htmlspecialchars($t[$lang]['username'], ENT_QUOTES, 'UTF-8')?></label>
           <input name="username" required autocomplete="username">
           <label><?=htmlspecialchars($t[$lang]['password'], ENT_QUOTES, 'UTF-8')?></label>

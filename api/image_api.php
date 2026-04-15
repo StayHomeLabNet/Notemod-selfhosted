@@ -2,7 +2,11 @@
 declare(strict_types=1);
 require_once dirname(__DIR__) . '/auth_common.php';
 
-$user = isset($_GET['user']) ? normalize_username((string)$_GET['user']) : '';
+$user = '';
+
+if (isset($_GET['user'])) {
+    $user = normalize_username((string)$_GET['user']);
+}
 if ($user === '' && isset($_GET['dir_user'])) {
     $user = normalize_username((string)$_GET['dir_user']);
 }
@@ -35,7 +39,7 @@ function respond_error(int $status, string $message): void {
 
 function detect_mime(string $path): string {
     $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-    
+
     $expectedMime = match ($ext) {
         'jpg', 'jpeg' => 'image/jpeg',
         'png'         => 'image/png',
@@ -73,7 +77,7 @@ function resize_image(string $sourcePath, string $destPath, int $reqWidth, int $
         case 'image/webp': $src = @imagecreatefromwebp($sourcePath); break;
         default: return false;
     }
-    
+
     if (!$src) return false;
 
     $srcW = imagesx($src);
@@ -85,7 +89,7 @@ function resize_image(string $sourcePath, string $destPath, int $reqWidth, int $
     // wのみ指定された場合（アスペクト比維持）
     if ($reqWidth > 0 && $reqHeight === 0) {
         $targetHeight = (int)round($srcH * ($reqWidth / $srcW));
-    } 
+    }
     // hのみ指定された場合（アスペクト比維持）
     elseif ($reqHeight > 0 && $reqWidth === 0) {
         $targetWidth = (int)round($srcW * ($reqHeight / $srcH));
@@ -95,7 +99,7 @@ function resize_image(string $sourcePath, string $destPath, int $reqWidth, int $
         $targetWidth = $srcW;
         $targetHeight = $srcH;
     }
-    // wもhも指定された場合は、そのまま $targetWidth と $targetHeight を使用（強制リサイズ）
+    // wもhも指定された場合は、そのまま使用（強制リサイズ）
 
     $dst = imagecreatetruecolor($targetWidth, $targetHeight);
 
@@ -115,7 +119,6 @@ function resize_image(string $sourcePath, string $destPath, int $reqWidth, int $
         }
     }
 
-    // 再サンプリング
     imagecopyresampled($dst, $src, 0, 0, 0, 0, $targetWidth, $targetHeight, $srcW, $srcH);
 
     $result = false;
@@ -134,10 +137,10 @@ function resize_image(string $sourcePath, string $destPath, int $reqWidth, int $
 
 
 // --- メイン処理 ---
-$user = trim((string)($_GET['user'] ?? ''));
+$user = normalize_username($user);
 $file = trim((string)($_GET['file'] ?? ''));
-$width = (int)($_GET['w'] ?? 0);  // 指定幅
-$height = (int)($_GET['h'] ?? 0); // 指定高さ
+$width = (int)($_GET['w'] ?? 0);
+$height = (int)($_GET['h'] ?? 0);
 
 if ($user === '' || $file === '') {
     respond_error(400, 'Missing required parameters');
@@ -170,13 +173,13 @@ $resizableMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
 // 幅か高さのどちらかが指定されており、かつリサイズ可能な形式である場合
 if (($width > 0 || $height > 0) && in_array($mime, $resizableMimes, true)) {
-    
+
     $cacheDir = $baseDir . '/.cache';
     if (!is_dir($cacheDir)) {
         @mkdir($cacheDir, 0777, true);
     }
 
-    // キャッシュファイル名: 例) 300x0_photo.png (幅300, 高さ自動), 0x300_photo.png (幅自動, 高さ300)
+    // キャッシュファイル名: 例) 300x0_photo.png / 0x300_photo.png
     $cacheFile = $cacheDir . '/' . $width . 'x' . $height . '_' . $file;
 
     // キャッシュが存在しない、またはオリジナル画像が更新されている場合は再生成
@@ -186,7 +189,7 @@ if (($width > 0 || $height > 0) && in_array($mime, $resizableMimes, true)) {
             $cacheFile = $fullPath; // 失敗時はオリジナル
         }
     }
-    
+
     if (is_file($cacheFile)) {
         $servePath = $cacheFile;
     }
@@ -195,7 +198,7 @@ if (($width > 0 || $height > 0) && in_array($mime, $resizableMimes, true)) {
 $size = filesize($servePath);
 $size = $size !== false ? $size : 0;
 
-$cacheMaxAge = 604800; 
+$cacheMaxAge = 604800;
 
 header('Content-Type: ' . $mime);
 header('Content-Length: ' . (string)$size);

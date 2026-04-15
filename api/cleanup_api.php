@@ -238,6 +238,10 @@ $purgeFiles   = trim((string)($params['purge_files'] ?? '0'));
 $purgeMedia   = trim((string)($params['purge_media'] ?? '0'));
 $deleteImages = $_POST['delete_images'] ?? ($jsonBody['delete_images'] ?? []);
 $deleteFiles  = $_POST['delete_files'] ?? ($jsonBody['delete_files'] ?? []);
+$lockTargetType = trim((string)($params['lock_target_type'] ?? ''));
+$lockFilenameRaw = (string)($params['lock_filename'] ?? '');
+$lockValueRaw = trim((string)($params['lock_value'] ?? ''));
+$lockToggleRequested = ($lockTargetType !== '' && $lockFilenameRaw !== '' && $lockValueRaw !== '');
 
 $purgeBakBool    = ($purgeBak === '1' || strtolower($purgeBak) === 'true');
 $purgeLogBool    = ($purgeLog === '1' || strtolower($purgeLog) === 'true');
@@ -262,6 +266,32 @@ $dryRunMode = 0;
 if ($dryRunRaw === '2') $dryRunMode = 2;
 elseif ($dryRunRaw === '1' || strtolower($dryRunRaw) === 'true') $dryRunMode = 1;
 $dryRunBool = ($dryRunMode > 0);
+
+if ($lockToggleRequested) {
+    $lockFilename = nm_safe_basename($lockFilenameRaw);
+    $lockValue = ($lockValueRaw === '1' || strtolower($lockValueRaw) === 'true');
+    $username = $dirUser;
+    $userDir  = nm_get_user_dir($notemodFile, $username);
+    if ($lockTargetType === 'image') {
+        $indexPath = $userDir . DIRECTORY_SEPARATOR . 'image_index.json';
+        $ret = nm_set_index_lock($indexPath, 'images', $lockFilename, $lockValue);
+    } elseif ($lockTargetType === 'file') {
+        $indexPath = $userDir . DIRECTORY_SEPARATOR . 'file_index.json';
+        $ret = nm_set_index_lock($indexPath, 'files', $lockFilename, $lockValue);
+    } else {
+        respond_json(['status' => 'error', 'message' => 'invalid lock_target_type'], 400);
+    }
+    if (!$ret['ok']) {
+        respond_json(['status' => 'error', 'message' => $ret['message'] ?? 'failed to update lock', 'filename' => $lockFilename], 400);
+    }
+    respond_json([
+        'status' => 'ok',
+        'message' => 'lock updated',
+        'target_type' => $lockTargetType,
+        'filename' => $lockFilename,
+        'lock' => $lockValue,
+    ], 200);
+}
 
 // confirm が無いと実行しない（dry_run=1/2 はOK）
 if (!$dryRunBool && $confirm !== 'YES') {
@@ -510,83 +540,118 @@ function nm_load_file_history_map(string $fileJsonPath, int $maxLines = 20000): 
     return $map;
 }
 
+function nm_load_lock_map(string $indexPath, string $itemsKey): array
+{
+    if (!is_file($indexPath) || !is_readable($indexPath)) return [];
+    $raw = @file_get_contents($indexPath);
+    $json = is_string($raw) ? json_decode($raw, true) : null;
+    if (!is_array($json) || !isset($json[$itemsKey]) || !is_array($json[$itemsKey])) return [];
+    $map = [];
+    foreach ($json[$itemsKey] as $row) {
+        if (!is_array($row)) continue;
+        $fn = (string)($row['filename'] ?? '');
+        if ($fn === '') continue;
+        $map[$fn] = !empty($row['lock']);
+    }
+    return $map;
+}
+
+function nm_is_locked_filename(string $indexPath, string $itemsKey, string $filename): bool
+{
+    if ($filename === '') return false;
+    $map = nm_load_lock_map($indexPath, $itemsKey);
+    return !empty($map[$filename]);
+}
+
+function nm_set_index_lock(string $indexPath, string $itemsKey, string $filename, bool $lock): array
+{
+    if ($filename === '') {
+        return ['ok' => false, 'message' => 'filename is required'];
+    }
+    $json = [
+        'v' => 1,
+        'generated_at' => gmdate('c'),
+        'generated_at_unix' => time(),
+        'count' => 0,
+        $itemsKey => [],
+    ];
+    if (is_file($indexPath) && is_readable($indexPath)) {
+        $raw = @file_get_contents($indexPath);
+        $tmp = is_string($raw) ? json_decode($raw, true) : null;
+        if (is_array($tmp) && isset($tmp[$itemsKey]) && is_array($tmp[$itemsKey])) {
+            $json = $tmp;
+        }
+    }
+    $rows = $json[$itemsKey] ?? [];
+    $updated = false;
+    foreach ($rows as &$row) {
+        if (!is_array($row)) continue;
+        if ((string)($row['filename'] ?? '') !== $filename) continue;
+        $row['lock'] = $lock;
+        $updated = true;
+        break;
+    }
+    unset($row);
+    if (!$updated) {
+        return ['ok' => false, 'message' => 'target not found', 'filename' => $filename];
+    }
+    $json['generated_at'] = gmdate('c');
+    $json['generated_at_unix'] = time();
+    $json[$itemsKey] = $rows;
+    $json['count'] = count($rows);
+    if (!nm_write_json_atomic($indexPath, $json)) {
+        return ['ok' => false, 'message' => 'failed to write index', 'filename' => $filename];
+    }
+    return ['ok' => true, 'filename' => $filename, 'lock' => $lock];
+}
+
 function nm_rebuild_file_index_and_fix_latest(string $userDir): array
 {
     $filesDir = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'files';
     $indexPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'file_index.json';
     $latestPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'file_latest.json';
     $historyPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'file.json';
+    $lockMap = nm_load_lock_map($indexPath, 'files');
 
     if (!is_dir($filesDir)) {
-        // files/ 自体が無い場合：indexは空で作り、latestは消す
-        nm_write_json_atomic($indexPath, [
-            'v' => 1,
-            'generated_at' => gmdate('c'),
-            'generated_at_unix' => time(),
-            'count' => 0,
-            'files' => [],
-        ]);
-        if (is_file($latestPath)) @unlink($latestPath);
+        @unlink($indexPath);
+        @unlink($latestPath);
         return ['ok' => true, 'message' => 'no files dir; cleared file_latest.json', 'index_count' => 0];
     }
 
-    // 履歴マップ（filename -> latest meta row）
-    $histMap = nm_load_file_history_map($historyPath);
-
-    // files/ 走査
+    $historyMap = nm_load_file_history_map($historyPath);
     $items = [];
     $it = new DirectoryIterator($filesDir);
-    foreach ($it as $fi) {
-        if ($fi->isDot()) continue;
-        if (!$fi->isFile()) continue;
-
-        $stored = $fi->getFilename();
-        $stored = nm_safe_basename($stored);
-        if ($stored === '') continue;
-
-        $full = $fi->getPathname();
-        $size = $fi->getSize();
-        $mtime = $fi->getMTime();
-
-        $row = $histMap[$stored] ?? [];
-
-        $original = (string)($row['original_name'] ?? '');
-        $original = nm_decode_rfc2047($original);
-        $createdAt = (string)($row['created_at'] ?? '');
-        $createdUnix = (int)($row['created_at_unix'] ?? 0);
-        if ($createdUnix <= 0) $createdUnix = $mtime;
-
-        if ($createdAt === '') {
-            // UTCで保存
-            $createdAt = gmdate('c', $createdUnix);
-        }
-
-        $mime = (string)($row['mime'] ?? '');
-        if ($mime === '') $mime = nm_detect_mime($full);
-
-        $ext = (string)($row['ext'] ?? '');
-        if ($ext === '') $ext = strtolower(pathinfo($stored, PATHINFO_EXTENSION));
-
-        $sha = (string)($row['sha256'] ?? '');
-
+    foreach ($it as $f) {
+        if ($f->isDot() || !$f->isFile()) continue;
+        $name = $f->getFilename();
+        $path = $f->getPathname();
+        $ext = strtolower((string)pathinfo($name, PATHINFO_EXTENSION));
+        $mtime = (int)($f->getMTime() ?: @filemtime($path) ?: time());
+        $iso = gmdate('c', $mtime);
+        $size = (int)($f->getSize() ?: @filesize($path) ?: 0);
+        $mime = nm_detect_mime($path);
+        $sha256 = @hash_file('sha256', $path) ?: '';
+        $hist = $historyMap[$name] ?? [];
+        $orig = (string)($hist['original_name'] ?? '');
+        $orig = nm_decode_rfc2047($orig);
+        if ($orig === '') $orig = $name;
         $items[] = [
-            'filename' => $stored,
-            'original_name' => $original,
+            'filename' => $name,
+            'original_name' => $orig,
             'ext' => $ext,
             'mime' => $mime,
-            'size' => (int)$size,
-            'sha256' => $sha,
-            'created_at' => $createdAt,
-            'created_at_unix' => (int)$createdUnix,
-            'file_id' => (string)($row['file_id'] ?? ''),
+            'size' => $size,
+            'created_at' => (string)($hist['created_at'] ?? $iso),
+            'created_at_unix' => (int)($hist['created_at_unix'] ?? $mtime),
+            'sha256' => (string)($hist['sha256'] ?? $sha256),
+            'file_id' => (string)($hist['file_id'] ?? pathinfo($name, PATHINFO_FILENAME)),
+            'lock' => !empty($lockMap[$name]),
         ];
     }
 
-    // created_at_unix desc
-    usort($items, function($a, $b){
-        $au = (int)($a['created_at_unix'] ?? 0);
-        $bu = (int)($b['created_at_unix'] ?? 0);
-        return $bu <=> $au;
+    usort($items, function ($a, $b) {
+        return ((int)($b['created_at_unix'] ?? 0)) <=> ((int)($a['created_at_unix'] ?? 0));
     });
 
     $index = [
@@ -601,43 +666,29 @@ function nm_rebuild_file_index_and_fix_latest(string $userDir): array
         return ['ok' => false, 'message' => 'failed to write file_index.json', 'index_count' => count($items)];
     }
 
-    // latest補正：latestが無い or 指す実体が無い場合、index先頭へ付け替え
     if (count($items) === 0) {
-        if (is_file($latestPath)) @unlink($latestPath);
+        @unlink($latestPath);
         return ['ok' => true, 'message' => 'file_index rebuilt; no files -> removed file_latest.json', 'index_count' => 0];
     }
 
-    $needFix = false;
-    $latestFn = '';
+    $latest = nm_read_json_file($latestPath);
+    $latestFilename = is_array($latest) ? (string)($latest['filename'] ?? '') : '';
+    $latestRealPath = $latestFilename !== '' ? ($filesDir . DIRECTORY_SEPARATOR . $latestFilename) : '';
+    $latestOk = ($latestFilename !== '' && is_file($latestRealPath));
 
-    if (is_file($latestPath)) {
-        $meta = nm_read_json_file($latestPath);
-        if ($meta === null) {
-            // 壊れてたら付け替え
-            $needFix = true;
-        } else {
-            $latestFn = nm_safe_basename((string)($meta['filename'] ?? ''));
-            if ($latestFn === '' || !is_file($filesDir . DIRECTORY_SEPARATOR . $latestFn)) {
-                $needFix = true;
-            }
-        }
-    } else {
-        $needFix = true;
-    }
-
-    if ($needFix) {
+    if (!$latestOk) {
         $top = $items[0];
         $newLatest = [
             'v' => 1,
             'type' => 'file',
-            'file_id' => ($top['file_id'] !== '' ? $top['file_id'] : (string)pathinfo($top['filename'], PATHINFO_FILENAME)),
-            'filename' => $top['filename'],
-            'ext' => $top['ext'],
-            'mime' => $top['mime'],
+            'file_id' => $top['file_id'] ?? pathinfo((string)$top['filename'], PATHINFO_FILENAME),
+            'filename' => (string)$top['filename'],
+            'ext' => (string)$top['ext'],
+            'mime' => (string)$top['mime'],
             'size' => (int)$top['size'],
-            'sha256' => $top['sha256'],
-            'original_name' => $top['original_name'],
-            'created_at' => $top['created_at'],
+            'sha256' => (string)$top['sha256'],
+            'original_name' => (string)($top['original_name'] ?? (string)$top['filename']),
+            'created_at' => (string)$top['created_at'],
             'created_at_unix' => (int)$top['created_at_unix'],
         ];
         if (!nm_write_json_atomic($latestPath, $newLatest)) {
@@ -649,6 +700,93 @@ function nm_rebuild_file_index_and_fix_latest(string $userDir): array
     return ['ok' => true, 'message' => 'file_index rebuilt; file_latest.json ok', 'index_count' => count($items)];
 }
 
+function nm_rebuild_image_index_and_fix_latest(string $userDir): array
+{
+    $imagesDir = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'images';
+    $indexPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'image_index.json';
+    $latestPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'image_latest.json';
+    $lockMap = nm_load_lock_map($indexPath, 'images');
+
+    if (!is_dir($imagesDir)) {
+        @unlink($indexPath);
+        @unlink($latestPath);
+        return ['ok' => true, 'message' => 'no images dir; cleared image_latest.json', 'index_count' => 0];
+    }
+
+    $items = [];
+    $it = new DirectoryIterator($imagesDir);
+    foreach ($it as $f) {
+        if ($f->isDot() || !$f->isFile()) continue;
+        $name = $f->getFilename();
+        if (!preg_match('/\.(png|jpg|jpeg|webp|gif|heic|heif)$/i', $name)) continue;
+        $path = $f->getPathname();
+        $ext = strtolower((string)pathinfo($name, PATHINFO_EXTENSION));
+        $mtime = (int)($f->getMTime() ?: @filemtime($path) ?: time());
+        $iso = gmdate('c', $mtime);
+        $size = (int)($f->getSize() ?: @filesize($path) ?: 0);
+        $mime = nm_detect_mime($path);
+        $sha256 = @hash_file('sha256', $path) ?: '';
+        $items[] = [
+            'filename' => $name,
+            'ext' => $ext,
+            'mime' => $mime,
+            'size' => $size,
+            'sha256' => $sha256,
+            'created_at' => $iso,
+            'created_at_unix' => $mtime,
+            'image_id' => (string)pathinfo($name, PATHINFO_FILENAME),
+            'lock' => !empty($lockMap[$name]),
+        ];
+    }
+
+    usort($items, function ($a, $b) {
+        return ((int)($b['created_at_unix'] ?? 0)) <=> ((int)($a['created_at_unix'] ?? 0));
+    });
+
+    $index = [
+        'v' => 1,
+        'generated_at' => gmdate('c'),
+        'generated_at_unix' => time(),
+        'count' => count($items),
+        'images' => $items,
+    ];
+
+    if (!nm_write_json_atomic($indexPath, $index)) {
+        return ['ok' => false, 'message' => 'failed to write image_index.json', 'index_count' => count($items)];
+    }
+
+    if (count($items) === 0) {
+        @unlink($latestPath);
+        return ['ok' => true, 'message' => 'image_index rebuilt; no images -> removed image_latest.json', 'index_count' => 0];
+    }
+
+    $latest = nm_read_json_file($latestPath);
+    $latestFilename = is_array($latest) ? (string)($latest['filename'] ?? '') : '';
+    $latestRealPath = $latestFilename !== '' ? ($imagesDir . DIRECTORY_SEPARATOR . $latestFilename) : '';
+    $latestOk = ($latestFilename !== '' && is_file($latestRealPath));
+
+    if (!$latestOk) {
+        $top = $items[0];
+        $newLatest = [
+            'v' => 1,
+            'type' => 'image',
+            'image_id' => $top['image_id'] ?? pathinfo((string)$top['filename'], PATHINFO_FILENAME),
+            'filename' => (string)$top['filename'],
+            'ext' => (string)$top['ext'],
+            'mime' => (string)$top['mime'],
+            'size' => (int)$top['size'],
+            'sha256' => (string)$top['sha256'],
+            'created_at' => (string)$top['created_at'],
+            'created_at_unix' => (int)$top['created_at_unix'],
+        ];
+        if (!nm_write_json_atomic($latestPath, $newLatest)) {
+            return ['ok' => false, 'message' => 'image_index rebuilt but failed to update image_latest.json', 'index_count' => count($items)];
+        }
+        return ['ok' => true, 'message' => 'image_index rebuilt; image_latest.json updated', 'index_count' => count($items)];
+    }
+
+    return ['ok' => true, 'message' => 'image_index rebuilt; image_latest.json ok', 'index_count' => count($items)];
+}
 
 // =====================
 // 追加機能：images/files 削除（purge_images / purge_files / purge_media）
@@ -698,15 +836,42 @@ if ($purgeImagesBool || $purgeFilesBool || $deleteImagesBool || $deleteFilesBool
             $protect = $fn;
         }
 
-        $r = $deleteImagesBool
-            ? nm_delete_selected_in_dir($imagesDir, $deleteImagesList, $protect, $dryRunMode)
-            : nm_purge_files_in_dir($imagesDir, $protect, $dryRunMode);
+        $imageIndexPath = $userDir . DIRECTORY_SEPARATOR . 'image_index.json';
+        $lockedRequested = [];
+
+        if ($deleteImagesBool) {
+            $unlockedDeleteList = [];
+            foreach ($deleteImagesList as $name) {
+                if (nm_is_locked_filename($imageIndexPath, 'images', $name)) {
+                    $lockedRequested[] = $name;
+                } else {
+                    $unlockedDeleteList[] = $name;
+                }
+            }
+            $r = nm_delete_selected_in_dir($imagesDir, $unlockedDeleteList, $protect, $dryRunMode);
+        } else {
+            $lockMap = nm_load_lock_map($imageIndexPath, 'images');
+            $all = nm_purge_files_in_dir($imagesDir, $protect, 1);
+            $unlockedTargets = [];
+            foreach ($all['targets'] as $name) {
+                if (!empty($lockMap[$name])) {
+                    $lockedRequested[] = $name;
+                } else {
+                    $unlockedTargets[] = $name;
+                }
+            }
+            $r = ($dryRunMode > 0)
+                ? ['targets' => $unlockedTargets, 'deleted' => [], 'errors' => []]
+                : nm_delete_selected_in_dir($imagesDir, $unlockedTargets, $protect, 0);
+        }
         $result['images'] += [
             'dir'     => $imagesDir,
             'protect' => $protect,
             'mode'    => $deleteImagesBool ? 'selected' : 'purge',
             'requested' => $deleteImagesBool ? $deleteImagesList : [],
             'count'   => count($r['targets']),
+            'locked_skipped' => $lockedRequested,
+            'locked_skipped_count' => count($lockedRequested),
         ];
         $result['image'] = ['count' => $result['images']['count']];
 
@@ -752,15 +917,42 @@ if ($purgeImagesBool || $purgeFilesBool || $deleteImagesBool || $deleteFilesBool
             $protect = $fn;
         }
 
-        $r = $deleteFilesBool
-            ? nm_delete_selected_in_dir($filesDir, $deleteFilesList, $protect, $dryRunMode)
-            : nm_purge_files_in_dir($filesDir, $protect, $dryRunMode);
+        $fileIndexPath = $userDir . DIRECTORY_SEPARATOR . 'file_index.json';
+        $lockedRequested = [];
+
+        if ($deleteFilesBool) {
+            $unlockedDeleteList = [];
+            foreach ($deleteFilesList as $name) {
+                if (nm_is_locked_filename($fileIndexPath, 'files', $name)) {
+                    $lockedRequested[] = $name;
+                } else {
+                    $unlockedDeleteList[] = $name;
+                }
+            }
+            $r = nm_delete_selected_in_dir($filesDir, $unlockedDeleteList, $protect, $dryRunMode);
+        } else {
+            $lockMap = nm_load_lock_map($fileIndexPath, 'files');
+            $all = nm_purge_files_in_dir($filesDir, $protect, 1);
+            $unlockedTargets = [];
+            foreach ($all['targets'] as $name) {
+                if (!empty($lockMap[$name])) {
+                    $lockedRequested[] = $name;
+                } else {
+                    $unlockedTargets[] = $name;
+                }
+            }
+            $r = ($dryRunMode > 0)
+                ? ['targets' => $unlockedTargets, 'deleted' => [], 'errors' => []]
+                : nm_delete_selected_in_dir($filesDir, $unlockedTargets, $protect, 0);
+        }
         $result['files'] += [
             'dir'     => $filesDir,
             'protect' => $protect,
             'mode'    => $deleteFilesBool ? 'selected' : 'purge',
             'requested' => $deleteFilesBool ? $deleteFilesList : [],
             'count'   => count($r['targets']),
+            'locked_skipped' => $lockedRequested,
+            'locked_skipped_count' => count($lockedRequested),
         ];
         $result['file'] = ['count' => $result['files']['count']];
 
@@ -772,14 +964,17 @@ if ($purgeImagesBool || $purgeFilesBool || $deleteImagesBool || $deleteFilesBool
             $result['files']['failed']  = count($r['errors']);
             $result['files']['files']   = $r['deleted'];
             $result['files']['errors']  = $r['errors'];
+        }
+    }
 
-    // ---- post process: file_index.json 再生成 + latest補正（削除が実行された時のみ）----
+    // ---- post process: image/file index 再生成 + latest補正（削除が実行された時のみ）----
+    if (($purgeImagesBool || $deleteImagesBool) && $dryRunMode === 0) {
+        $fix = nm_rebuild_image_index_and_fix_latest($userDir);
+        $result['images']['index_rebuild'] = $fix;
+    }
     if (($purgeFilesBool || $deleteFilesBool) && $dryRunMode === 0) {
         $fix = nm_rebuild_file_index_and_fix_latest($userDir);
         $result['files']['index_rebuild'] = $fix;
-    }
-
-        }
     }
 
     // メッセージ調整

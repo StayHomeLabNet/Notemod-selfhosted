@@ -36,7 +36,7 @@ $t = [
 $loginUrl = nm_ui_url('/login.php');
 
 // ログアウト（lang/themeは保持）
-unset($_SESSION['nm_logged_in'], $_SESSION['nm_user']);
+unset($_SESSION['nm_logged_in'], $_SESSION['nm_user'], $_SESSION['nm_dir_user'], $_SESSION['nm_username'], $_SESSION['nm_login_user'], $_SESSION['nm_clear_sync_warning_once']);
 
 header('Refresh: 1.2; url=' . $loginUrl);
 
@@ -126,6 +126,18 @@ $u = nm_ui_toggle_urls('/logout.php', $lang, $theme);
   </div>
 
   <script>
+    (function () {
+      try {
+        sessionStorage.removeItem('nmSessionExpired');
+        sessionStorage.removeItem('nmLastSyncError');
+        sessionStorage.removeItem('nmLocalChangesAfterAuthFailure');
+        sessionStorage.removeItem('autoLoadDone');
+        sessionStorage.removeItem('autoLoadInProgress');
+        sessionStorage.removeItem('reloadedAfterSync');
+        localStorage.removeItem('nmUnsyncedLocalChanges');
+      } catch (e) {}
+    })();
+
     setTimeout(function () {
       location.href = <?=json_encode($loginUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)?>;
     }, 1200);

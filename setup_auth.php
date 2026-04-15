@@ -3,6 +3,9 @@ declare(strict_types=1);
 require_once __DIR__ . '/auth_common.php';
 require_once __DIR__ . '/data_crypto.php';
 
+nm_send_security_headers_html();
+header('Content-Type: text/html; charset=utf-8');
+
 /*
  * setup_auth.php
  * - 初回: 誰でもアクセス可（初期ユーザー作成 + SECRET設定 + APIトークン設定）
@@ -18,8 +21,6 @@ require_once __DIR__ . '/data_crypto.php';
  * - DATA_ENCRYPTION_ENABLED は config/<DIR_USER>/config.php で管理する
  * - 暗号化切替時は、切替前バックアップを1つ作成してから data.json を変換する
  */
-
-header('Content-Type: text/html; charset=utf-8');
 
 // --------------------
 // robots.txt auto-create
@@ -107,8 +108,11 @@ $t = [
     'api_saved' => 'config/<USER_NAME>/config.api.php を更新しました',
     'api_save_failed' => 'config/<USER_NAME>/config.api.php の保存に失敗しました（権限を確認）',
     'api_locked' => '※ トークンの閲覧 / 変更はログイン後のみ可能です（初回セットアップ時を除く）',
+    'api_current_masked' => '既存トークンは平文表示しません。変更する場合のみ新しい値を入力してください。',
+    'api_placeholder_masked' => '設定済み（平文は表示しません）',
 
     'auth_section' => '画面ログイン（config/<USER_NAME>/auth.php）',
+    'csrf_invalid' => 'CSRFトークンが無効です。ページを再読み込みしてからもう一度お試しください。',
   ],
   'en' => [
     'title' => 'Initial Setup / Authentication settings',
@@ -175,23 +179,26 @@ $t = [
     'api_saved' => 'Updated config/<USER_NAME>/config.api.php',
     'api_save_failed' => 'Failed to write config/<USER_NAME>/config.api.php (permission?)',
     'api_locked' => 'Token view / edit is available only after login (except initial setup).',
+    'api_current_masked' => 'Existing tokens are never shown in plain text. Enter a new value only when you want to change it.',
+    'api_placeholder_masked' => 'Configured (plain text hidden)',
 
     'auth_section' => 'Screen login (config/<USER_NAME>/auth.php)',
+    'csrf_invalid' => 'Invalid CSRF token. Please reload the page and try again.',
   ],
 ];
 
 // --------------------
 // Helpers
 // --------------------
-function nm_invalidate_php_cache(string $path): void {
+function nm_invalidate_php_cache_local(string $path): void {
     clearstatcache(true, $path);
     if (function_exists('opcache_invalidate')) {
         @opcache_invalidate($path, true);
     }
 }
-function nm_read_php_config_array(string $path): array {
+function nm_read_php_config_array_local(string $path): array {
     if (!file_exists($path)) return [];
-    nm_invalidate_php_cache($path);
+    nm_invalidate_php_cache_local($path);
     $arr = @require $path;
     return is_array($arr) ? $arr : [];
 }
@@ -210,28 +217,17 @@ function nm_mask_token(string $s): string {
     return str_repeat('•', 8) . $tail;
 }
 function nm_reload_api_tokens(string $configApiPath): array {
-    $cfgApi = nm_read_php_config_array($configApiPath);
+    $cfgApi = nm_read_php_config_array_local($configApiPath);
     return [
         'EXPECTED_TOKEN' => (string)($cfgApi['EXPECTED_TOKEN'] ?? ''),
         'ADMIN_TOKEN'    => (string)($cfgApi['ADMIN_TOKEN'] ?? ''),
     ];
 }
 function nm_write_protected_htaccess(string $dir): bool {
-    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
-        return false;
-    }
-    $path = rtrim($dir, '/\\') . '/.htaccess';
-    $content = "Options -Indexes\n<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n  Deny from all\n</IfModule>\n";
-    if (!file_exists($path)) {
-        if (@file_put_contents($path, $content, LOCK_EX) === false) {
-            return false;
-        }
-        @chmod($path, 0644);
-    }
-    return true;
+    return nm_write_htaccess_content($dir, nm_default_deny_htaccess_content(), false, true);
 }
 function nm_initial_snapshot_json(string $configPath): string {
-    $cfg = nm_read_php_config_array($configPath);
+    $cfg = nm_read_php_config_array_local($configPath);
     $raw = (string)($cfg['INITIAL_SNAPSHOT'] ?? '');
     if ($raw !== '') {
         json_decode($raw, true);
@@ -256,7 +252,7 @@ function nm_auth_email_is_valid(string $email): bool {
     return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
 }
 function nm_auth_load_config_local(string $path): array {
-    $cfg = nm_read_php_config_array($path);
+    $cfg = nm_read_php_config_array_local($path);
     return is_array($cfg) ? $cfg : [];
 }
 function nm_auth_write_config_local(string $username, string $passwordHash, string $dirUser, string $email): bool {
@@ -283,7 +279,7 @@ function nm_write_php_source(string $path, string $phpSource): bool {
     $ok = @file_put_contents($path, $phpSource, LOCK_EX);
     if ($ok === false) return false;
     @chmod($path, 0644);
-    nm_invalidate_php_cache($path);
+    nm_invalidate_php_cache_local($path);
     return true;
 }
 function nm_save_php_config_array(string $path, array $cfg): bool {
@@ -315,7 +311,7 @@ function nm_normalize_ip_alert_ignore_ips($raw): array {
     return array_values(array_unique($items));
 }
 function nm_update_data_encryption_enabled_define(string $configPath, bool $enabled): bool {
-    $cfg = nm_read_php_config_array($configPath);
+    $cfg = nm_read_php_config_array_local($configPath);
     if (!$cfg) {
         $cfg = [];
     }
@@ -326,7 +322,7 @@ function nm_ensure_data_encryption_defines(string $configPath, bool &$didAddKey,
     $didAddKey = false;
     $didChangeEnabled = false;
 
-    $cfg = nm_read_php_config_array($configPath);
+    $cfg = nm_read_php_config_array_local($configPath);
     if (!is_array($cfg)) {
         $cfg = [];
     }
@@ -348,11 +344,11 @@ function nm_ensure_data_encryption_defines(string $configPath, bool &$didAddKey,
     return nm_save_php_config_array($configPath, $cfg);
 }
 function nm_read_data_encryption_enabled_from_config(string $configPath): bool {
-    $cfg = nm_read_php_config_array($configPath);
+    $cfg = nm_read_php_config_array_local($configPath);
     return !empty($cfg['DATA_ENCRYPTION_ENABLED']);
 }
 function nm_has_data_encryption_key_in_config(string $configPath): bool {
-    $cfg = nm_read_php_config_array($configPath);
+    $cfg = nm_read_php_config_array_local($configPath);
     return isset($cfg['DATA_ENCRYPTION_KEY']) && trim((string)$cfg['DATA_ENCRYPTION_KEY']) !== '';
 }
 function nm_backup_filename_for_current_mode(string $dataDir, bool $isEncrypted): string {
@@ -409,7 +405,7 @@ function nm_ensure_secret_in_config(string $configPath, string $dirUser, bool &$
 
     $cfg = [];
     if (file_exists($configPath)) {
-        $cfg = nm_read_php_config_array($configPath);
+        $cfg = nm_read_php_config_array_local($configPath);
         if (!is_array($cfg)) {
             $cfg = [];
         }
@@ -430,7 +426,8 @@ function nm_ensure_secret_in_config(string $configPath, string $dirUser, bool &$
             'IP_ALERT_SUBJECT' => 'Notemod: First-time IP access',
             'IP_ALERT_IGNORE_BOTS' => true,
             'IP_ALERT_IGNORE_IPS' => array(),
-            'IP_ALERT_STORE' => dirname(__DIR__, 2) . '/notemod-data/' . $dirUser . '/_known_ips.json',
+            // IP_ALERT_STORE is intentionally omitted.
+            // logger.php resolves notemod-data/<DIR_USER>/_known_ips.json automatically.
             'LOGGER_FILE_MAX_LINES' => 500,
             'LOGGER_NOTEMOD_MAX_LINES' => 50,
         ];
@@ -493,7 +490,7 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $dir
         $ok = @file_put_contents($configApiPath, $tpl, LOCK_EX);
         if ($ok === false) return false;
         @chmod($configApiPath, 0644);
-        nm_invalidate_php_cache($configApiPath);
+        nm_invalidate_php_cache_local($configApiPath);
         return true;
     }
 
@@ -540,7 +537,7 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $dir
     if ($ok === false) return false;
 
     @chmod($configApiPath, 0644);
-    nm_invalidate_php_cache($configApiPath);
+    nm_invalidate_php_cache_local($configApiPath);
     return true;
 }
 
@@ -561,8 +558,9 @@ function create_user_environment(string $dirUser, string $username, string $pass
         }
     }
 
-    if (!nm_write_protected_htaccess($logsDir)) return false;
-    if (!nm_write_protected_htaccess($dataDir)) return false;
+    if (!nm_ensure_core_protection_htaccess($dirUser, false)) {
+        return false;
+    }
 
     $passwordHash = password_hash($password, PASSWORD_DEFAULT);
     if (!$passwordHash) return false;
@@ -644,7 +642,7 @@ $authNeedsEmail = $already && trim($currentAuthEmail) === '';
 $canEditAuth = (!$hasAnyUser) || $isLoggedIn;
 $canEditTokens     = (!$hasAnyUser) || $isLoggedIn;
 $canEditEncryption = (!$hasAnyUser) || $isLoggedIn;
-$showRealTokens = $canEditTokens;
+$showRealTokens = false;
 
 // --------------------
 // Prefill API tokens / encryption status
@@ -656,12 +654,12 @@ if ($configApiPath !== '' && file_exists($configApiPath)) {
     $prefExpected = $tokens['EXPECTED_TOKEN'];
     $prefAdmin    = $tokens['ADMIN_TOKEN'];
 }
-$displayExpected = $showRealTokens ? $prefExpected : nm_mask_token($prefExpected);
-$displayAdmin    = $showRealTokens ? $prefAdmin    : nm_mask_token($prefAdmin);
+$displayExpected = nm_mask_token($prefExpected);
+$displayAdmin    = nm_mask_token($prefAdmin);
 
 $currentEncryptionEnabled = false;
 if ($configPath !== '' && file_exists($configPath)) {
-    $GLOBALS['cfg'] = nm_read_php_config_array($configPath);
+    $GLOBALS['cfg'] = nm_read_php_config_array_local($configPath);
 }
 if ($configPath !== '' && file_exists($configPath)) {
     $currentEncryptionEnabled = nm_read_data_encryption_enabled_from_config($configPath);
@@ -678,8 +676,13 @@ $encInfo = '';
 $apiInfo = '';
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    try {
+        nm_csrf_validate_or_die();
+    } catch (Throwable $e) {
+        $err = $t[$lang]['csrf_invalid'];
+    }
 
-    if (!$hasAnyUser) {
+    if ($err === '' && !$hasAnyUser) {
         $uRaw = trim((string)($_POST['username'] ?? ''));
         $uDir = normalize_username($uRaw);
         $p1   = (string)($_POST['password'] ?? '');
@@ -721,7 +724,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $authNeedsEmail = trim($currentAuthEmail) === '';
             }
         }
-    } elseif ($isLoggedIn && $targetDirUser !== '' && $authPath !== '' && file_exists($authPath)) {
+    } elseif ($err === '' && $isLoggedIn && $targetDirUser !== '' && $authPath !== '' && file_exists($authPath)) {
         $authCfg = nm_auth_load_config_local($authPath);
         $currentUsername = (string)($authCfg['USERNAME'] ?? $targetDirUser);
         $email = trim((string)($_POST['email'] ?? ''));
@@ -778,7 +781,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $err = $t[$lang]['enc_key_write_failed'];
         } else {
             $encKeyInfo = $didAddKey ? $t[$lang]['enc_key_status_added'] : $t[$lang]['enc_key_status_ok'];
-            $GLOBALS['cfg'] = nm_read_php_config_array($configPath);
+            $GLOBALS['cfg'] = nm_read_php_config_array_local($configPath);
             $currentEncryptionEnabled = !empty($GLOBALS['cfg']['DATA_ENCRYPTION_ENABLED']);
         }
     }
@@ -823,7 +826,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     } elseif (!nm_update_data_encryption_enabled_define($configPath, $newEncryptionEnabled)) {
                         $err = $t[$lang]['enc_config_failed'];
                     } else {
-                        $GLOBALS['cfg'] = nm_read_php_config_array($configPath);
+                        $GLOBALS['cfg'] = nm_read_php_config_array_local($configPath);
                         $encInfo = $t[$lang]['enc_toggle_saved'];
                         $currentEncryptionEnabled = $newEncryptionEnabled;
                     }
@@ -875,7 +878,7 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
 if ($secretInfo === '') {
     if ($configPath !== '' && file_exists($configPath)) {
         try {
-            $cfg = nm_read_php_config_array($configPath);
+            $cfg = nm_read_php_config_array_local($configPath);
             if (isset($cfg['SECRET']) && is_string($cfg['SECRET']) && trim($cfg['SECRET']) !== '') {
                 $secretInfo = $t[$lang]['secret_status_ok'];
             } else {
@@ -1148,6 +1151,8 @@ if ($encKeyInfo === '') {
 
         <div class="box">
           <form method="post">
+            <?= nm_csrf_input_html() ?>
+
             <div class="checkline">
               <input
                 id="data_encryption_enabled"
@@ -1208,12 +1213,14 @@ if ($encKeyInfo === '') {
               <div class="notice"><?=htmlspecialchars($t[$lang]['api_locked'], ENT_QUOTES, 'UTF-8')?></div>
             <?php else: ?>
               <div class="notice"><?=htmlspecialchars($t[$lang]['api_note'], ENT_QUOTES, 'UTF-8')?></div>
+              <div class="notice" style="margin-top:10px;"><?=htmlspecialchars($t[$lang]['api_current_masked'], ENT_QUOTES, 'UTF-8')?></div>
             <?php endif; ?>
 
             <label><?=htmlspecialchars($t[$lang]['expected_token'], ENT_QUOTES, 'UTF-8')?></label>
             <input
               name="expected_token"
-              value="<?=htmlspecialchars($displayExpected, ENT_QUOTES, 'UTF-8')?>"
+              value=""
+              placeholder="<?=htmlspecialchars($displayExpected !== '' ? $t[$lang]['api_placeholder_masked'] : '—', ENT_QUOTES, 'UTF-8')?>"
               <?= $canEditTokens ? '' : 'disabled' ?>
               autocomplete="off"
             >
@@ -1221,7 +1228,8 @@ if ($encKeyInfo === '') {
             <label><?=htmlspecialchars($t[$lang]['admin_token'], ENT_QUOTES, 'UTF-8')?></label>
             <input
               name="admin_token"
-              value="<?=htmlspecialchars($displayAdmin, ENT_QUOTES, 'UTF-8')?>"
+              value=""
+              placeholder="<?=htmlspecialchars($displayAdmin !== '' ? $t[$lang]['api_placeholder_masked'] : '—', ENT_QUOTES, 'UTF-8')?>"
               <?= $canEditTokens ? '' : 'disabled' ?>
               autocomplete="off"
             >
