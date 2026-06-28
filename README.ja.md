@@ -1,17 +1,85 @@
-# Notemod-selfhosted v1.4.6
+<div align="center">
+
+# 📝 Notemod-selfhosted
+
+## PHP同期・API・暗号化・バックアップ・メディア保存に対応したセルフホスト版 Notemod
+
+**Notemod-selfhosted は、共有サーバーでも動作しやすい、データベース不要のセルフホスト型メモプラットフォームです。  
+メモデータは `notemod-data/<DIR_USER>/data.json` に保存され、Web UI同期、API連携、クリップボード連携、画像/ファイル保存、バックアップ、SMTP設定、AES-256-CBC + HMAC による任意の暗号化保存に対応しています。**
+
+[English](README.md) | [日本語](README.ja.md)
+
+<br>
+
+[概要](#概要) ・ [機能](#機能) ・ [動作要件](#動作要件) ・ [インストール](#インストール) ・ [初期設定](#初期設定) ・ [ディレクトリ構成](#ディレクトリ構成) ・ [API](#api-の概要) ・ [セキュリティ](#セキュリティ) ・ [バックアップ](#バックアップ) ・ [連携](#連携) ・ [ライセンス](#ライセンス)
+
+<br>
+
+![version](https://img.shields.io/badge/version-1.4.6-2ea44f)
+![license](https://img.shields.io/badge/license-MIT-97ca00)
+![language](https://img.shields.io/badge/language-PHP-777bb4)
+![database](https://img.shields.io/badge/database-not%20required-blue)
+![hosting](https://img.shields.io/badge/hosting-shared%20hosting-orange)
+![data](https://img.shields.io/badge/data-json-lightgrey)
+
+<br>
+
+![sync](https://img.shields.io/badge/sync-Web%20UI%20%2F%20API-brightgreen)
+![encryption](https://img.shields.io/badge/encryption-AES--256--CBC%20%2B%20HMAC-purple)
+![backup](https://img.shields.io/badge/backups-supported-blue)
+![media](https://img.shields.io/badge/media-images%20%2F%20files-ff69b4)
+![smtp](https://img.shields.io/badge/mail-mail%28%29%20%2F%20SMTP-yellow)
+![pwa](https://img.shields.io/badge/PWA-supported-555555)
+
+<br>
+
+<a href="https://ko-fi.com/stayhomelabnet">
+  <img src="https://img.shields.io/badge/Ko--fi-Support%20this%20project-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Ko-fi で支援">
+</a>
+<a href="https://buymeacoffee.com/stayhomelabnet">
+  <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20this%20project-ffdd00?style=for-the-badge&logo=buymeacoffee&logoColor=000000" alt="Buy Me a Coffee で支援">
+</a>
+
+</div>
+
+---
+
+## 概要
 
 これは **[Notemod（本家）](https://github.com/orayemre/Notemod)**（MIT License）をベースに、**共用サーバーでも動く自己ホスト型メモ基盤**として拡張したフォークです。  
 DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/data.json`** を使います。
 
 外部サービスに依存せず、**Windows PC と iPhone 間のテキスト・画像・ファイルのやり取りを円滑にする目的で開発**されています。simplenote.com などのノートサービスの代替にもなり得ます。
 
-動作確認済みの共用サーバー: Xサーバー、さくらインターネット、XREA、InfinityFree  
-テスト済み PHP: 8.3.21（**PHP 8.1 以上必須**）
-
 > **単一データソース:** `notemod-data/<DIR_USER>/data.json`
 
 ---
 
+## 機能
+
+- データベース不要の JSON ベース保存
+- Web UI によるメモ編集・同期保存
+- `api.php` / `read_api.php` / `cleanup_api.php` などの API 連携
+- ClipboardSync との連携による PC / iPhone 間のテキスト・画像・ファイル共有
+- 画像 / ファイル保存、一覧表示、削除、ロック保護
+- AES-256-CBC + HMAC による任意のデータ暗号化
+- 自動バックアップ、復元、同期保存前バックアップ
+- `mail()` / SMTP による通知・パスワードリセット
+- CSRF、rate limit、audit log、security header などの認証系セキュリティ強化
+
+---
+
+## 動作要件
+
+- PHP 8.1 以上
+- ファイル書き込み可能な PHP 対応Webサーバー
+- データベース不要
+- 共用サーバー対応
+
+動作確認済みの共用サーバー: Xサーバー、さくらインターネット、XREA、InfinityFree  
+テスト済み PHP: 8.3.21
+
+---
 ## この更新で特に重要なポイント
 
 - **ユーザーごとの設定ファイル**
@@ -254,6 +322,18 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 /logs/system/
   audit.log
 ```
+
+---
+
+## インストール
+
+1. リポジトリをダウンロードまたは clone します。
+2. サーバー上の公開ディレクトリへファイルをアップロードします。
+3. `config/`、`logs/`、`notemod-data/` に PHP から書き込みできる権限を設定します。
+4. ブラウザで `login.php` にアクセスします。
+5. 初回 admin 作成後、`setup_auth.php` で SECRET、API token、暗号化設定などを確認します。
+
+> 既存データを移行する場合は、作業前に `notemod-data/<DIR_USER>/data.json` と `config/<DIR_USER>/` を必ずバックアップしてください。
 
 ---
 
@@ -577,3 +657,11 @@ v1.4.6 では、次の追加保護を導入しています。
 - `clipboard_sync.php` / `media_files.php` では、ブラウザへ API token 実値を直接出さない方針です
 - 壊れた旧形式の `data.json` を扱う場合でも、現行コードでは可能な範囲で正規化してから保存する想定です
 - `append_api.php` / `search_api.php` / `journal_api.php` は、未指定時に `pretty=2` 相当で **人間が読みやすい text/plain** を返す設計です
+
+
+---
+
+## ライセンス
+
+このプロジェクトは MIT License です。  
+本家 Notemod も MIT License のもとで公開されています。
