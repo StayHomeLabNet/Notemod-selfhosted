@@ -1,17 +1,85 @@
-# Notemod-selfhosted v1.4.6
+<div align="center">
+
+# 📝 Notemod-selfhosted
+
+## A self-hosted Notemod fork with PHP sync, APIs, encryption, backups, and media support
+
+**Notemod-selfhosted is a database-free, self-hosted memo platform designed to run even on shared hosting.  
+It stores notes in `notemod-data/<DIR_USER>/data.json` and provides Web UI sync, API access, clipboard integration, image/file handling, backups, SMTP settings, and optional AES-256-CBC + HMAC encryption.**
+
+[English](README.md) | [日本語](README.ja.md)
+
+<br>
+
+[Overview](#overview) ・ [Features](#features) ・ [Requirements](#requirements) ・ [Installation](#installation) ・ [Initial Setup](#initial-setup) ・ [Directory Structure](#directory-structure) ・ [API](#api-overview) ・ [Security](#security) ・ [Backups](#backups) ・ [Links](#links) ・ [License](#license)
+
+<br>
+
+![version](https://img.shields.io/badge/version-1.4.6-2ea44f)
+![license](https://img.shields.io/badge/license-MIT-97ca00)
+![language](https://img.shields.io/badge/language-PHP-777bb4)
+![database](https://img.shields.io/badge/database-not%20required-blue)
+![hosting](https://img.shields.io/badge/hosting-shared%20hosting-orange)
+![data](https://img.shields.io/badge/data-json-lightgrey)
+
+<br>
+
+![sync](https://img.shields.io/badge/sync-Web%20UI%20%2F%20API-brightgreen)
+![encryption](https://img.shields.io/badge/encryption-AES--256--CBC%20%2B%20HMAC-purple)
+![backup](https://img.shields.io/badge/backups-supported-blue)
+![media](https://img.shields.io/badge/media-images%20%2F%20files-ff69b4)
+![smtp](https://img.shields.io/badge/mail-mail%28%29%20%2F%20SMTP-yellow)
+![pwa](https://img.shields.io/badge/PWA-supported-555555)
+
+<br>
+
+<a href="https://ko-fi.com/stayhomelabnet">
+  <img src="https://img.shields.io/badge/Ko--fi-Support%20this%20project-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Support this project on Ko-fi">
+</a>
+<a href="https://buymeacoffee.com/stayhomelabnet">
+  <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20this%20project-ffdd00?style=for-the-badge&logo=buymeacoffee&logoColor=000000" alt="Support this project on Buy Me a Coffee">
+</a>
+
+</div>
+
+---
+
+## Overview
 
 This is a fork based on **[Notemod (upstream)](https://github.com/orayemre/Notemod)** (MIT License), extended as a **self-hosted note platform that can run on shared hosting environments**.  
 No database is required, and **`notemod-data/<DIR_USER>/data.json`** is used as the single data source.
 
 It is developed to **smoothly exchange text, images, and files between Windows PCs and iPhones** without relying on external services. It can also serve as an alternative to note services such as simplenote.com.
 
-Verified shared hosting environments: Xserver, Sakura Internet, XREA, InfinityFree  
-Tested PHP: 8.3.21 (**PHP 8.1 or later is required**)
-
 > **Single data source:** `notemod-data/<DIR_USER>/data.json`
 
 ---
 
+## Features
+
+- Database-free JSON-based storage
+- Memo editing and sync save through the Web UI
+- API integration through `api.php`, `read_api.php`, `cleanup_api.php`, and related endpoints
+- ClipboardSync integration for sharing text, images, and files between PCs and iPhones
+- Image/file storage, listing, deletion, and lock protection
+- Optional data encryption with AES-256-CBC + HMAC
+- Automatic backups, restore support, and pre-sync-save backups
+- Notifications and password reset through `mail()` / SMTP
+- Authentication security improvements such as CSRF protection, rate limiting, audit logs, and security headers
+
+---
+
+## Requirements
+
+- PHP 8.1 or later
+- PHP-compatible web server with writable file storage
+- No database required
+- Shared hosting supported
+
+Verified shared hosting environments: Xserver, Sakura Internet, XREA, InfinityFree  
+Tested PHP: 8.3.21
+
+---
 ## Especially important points in this update
 
 - **Per-user configuration files**
@@ -252,6 +320,18 @@ Short-time repeated attempts are now restricted
 /logs/system/
   audit.log
 ```
+
+---
+
+## Installation
+
+1. Download or clone this repository.
+2. Upload the files to the public directory of your server.
+3. Make sure `config/`, `logs/`, and `notemod-data/` are writable by PHP.
+4. Open `login.php` in your browser.
+5. After creating the first admin user, check SECRET, API token, encryption settings, and related options in `setup_auth.php`.
+
+> If you are migrating existing data, back up `notemod-data/<DIR_USER>/data.json` and `config/<DIR_USER>/` before making changes.
 
 ---
 
@@ -575,3 +655,11 @@ Description:
 - `clipboard_sync.php` / `media_files.php` are designed not to directly expose API token values to the browser
 - Even when handling broken legacy `data.json` formats, the current code is intended to normalize as much as possible before saving
 - `append_api.php` / `search_api.php` / `journal_api.php` are designed to return **human-readable text/plain** equivalent to `pretty=2` when unspecified
+
+
+---
+
+## License
+
+This project is released under the MIT License.  
+The upstream Notemod project is also released under the MIT License.
