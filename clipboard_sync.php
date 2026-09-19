@@ -55,8 +55,8 @@ $LINKS = [
   // 1行2つ表示：通常版 / BASIC認証対応版
   'shortcuts' => [
     'ja' => [
-      'pc_to_iphone' => ['label'=>'PC→iPhone', 'normal'=>'https://www.icloud.com/shortcuts/348a2e78412146f89fa4dfc596d15f17', 'basic'=>'https://www.icloud.com/shortcuts/97dca42384e74eb5ab1fea8794d33e21'],
-      'iphone_to_pc' => ['label'=>'iPhone→PC', 'normal'=>'https://www.icloud.com/shortcuts/d2f61159c563434c84de1088fbe4f72c', 'basic'=>'https://www.icloud.com/shortcuts/f590d35fee0048ba80a2d6664ba00428'],
+      'pc_to_iphone' => ['label'=>'PC→iPhone', 'normal'=>'https://www.icloud.com/shortcuts/424c1476574342c59da89a247d6bbd15', 'basic'=>'https://www.icloud.com/shortcuts/ee7a9398f32d462ba058e525dbd4895b'],
+      'iphone_to_pc' => ['label'=>'iPhone→PC', 'normal'=>'https://www.icloud.com/shortcuts/456a87b005b4432494c418460186c9cd', 'basic'=>'https://www.icloud.com/shortcuts/f590d35fee0048ba80a2d6664ba00428'],
       'pc_to_iphone_image' => ['label'=>'PC→iPhone 画像対応', 'normal'=>'https://www.icloud.com/shortcuts/cf5f6e31d531473b9135356d39d08ea7', 'basic'=>'https://www.icloud.com/shortcuts/736f90eee13d4f249f01d9ca2eeed399'],
       'iphone_to_pc_image' => ['label'=>'iPhone→PC 画像対応', 'normal'=>'https://www.icloud.com/shortcuts/ff530316acb74f62b4ce215c01d5ab70', 'basic'=>'https://www.icloud.com/shortcuts/4730959339df4ab38407f59041ae9360'],
       'pc_to_iphone_file' => ['label'=>'PC→iPhone ファイル', 'normal'=>'https://www.icloud.com/shortcuts/a893bdb2e0dc4cfd992be43b1c671c5c', 'basic'=>'https://www.icloud.com/shortcuts/75703d1dc0234d4cb1ae456d2a7ff946'],
