@@ -41,6 +41,14 @@ return [
     // 2592000 = 30 days
     'SESSION_COOKIE_LIFETIME' => 0,
 
+    // Application-level upload and image processing limits
+    'MAX_IMAGE_UPLOAD_BYTES' => 10 * 1024 * 1024,
+    'MAX_FILE_UPLOAD_BYTES' => 25 * 1024 * 1024,
+    'MAX_IMAGE_DIMENSION' => 10000,
+    'MAX_IMAGE_PIXELS' => 25000000,
+    'MAX_RESIZE_DIMENSION' => 2000,
+    'MAX_RESIZE_PIXELS' => 4000000,
+
     // Optional: customize Notemod initial snapshot
     // (Must be stored as a JSON string)
     // 'INITIAL_SNAPSHOT' => '{"categories":null,"hasSelectedLanguage":null,"notes":null,"selectedLanguage":null}',

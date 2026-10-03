@@ -15,7 +15,7 @@
 
 <br>
 
-![version](https://img.shields.io/badge/version-1.4.6-2ea44f)
+![version](https://img.shields.io/badge/version-1.4.7-2ea44f)
 ![license](https://img.shields.io/badge/license-MIT-97ca00)
 ![language](https://img.shields.io/badge/language-PHP-777bb4)
 ![database](https://img.shields.io/badge/database-not%20required-blue)
@@ -79,6 +79,19 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 動作確認済みの共用サーバー: Xサーバー、さくらインターネット、XREA、InfinityFree  
 テスト済み PHP: 8.3.21
 
+### 自動テスト
+
+外部依存のないPHPテストとHTTPセキュリティヘッダーのスモークテストは、ローカルで次のように実行できます。
+
+```bash
+php tests/run.php
+bash tests/http_smoke.sh
+```
+
+PHPテストでは、設定既定値、保存先、信頼プロキシ経由のIP・HTTPS判定、正規URL検証、Unicodeパスワード長、メディア上限、rate limitの同時更新、インデックスロック、認証設定の原子的保存、暗号化データの完全性を確認します。HTTPスモークテストでは、隔離した一時保存先を使い、HTML、API、未認証画像応答のセキュリティ方針を検証します。
+
+GitHub Actionsでは、pushとpull requestごとにPHP 8.1から8.5でPHP構文検査と両テストを実行します。
+
 ---
 ## この更新で特に重要なポイント
 
@@ -130,6 +143,19 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
   - `setup_auth.php` で API トークンを平文表示しない
   - `clipboard_sync.php` は初期伏字 + 一時表示
   - `media_files.php` はブラウザへ token を出さずサーバー側中継方式に変更
+
+---
+
+## v1.4.7 の主な追加・改善
+
+- `NM_STORAGE_ROOT`を追加し、ユーザー別保存構造に合わせて`.gitignore`を更新して、稼働データと秘密情報をバージョン管理対象から除外
+- `NM_TRUSTED_PROXIES`による信頼プロキシ対応のクライアントIP・HTTPS判定を追加
+- `Host`ヘッダー由来のURL生成を廃止し、検証済みの`NM_PUBLIC_BASE_URL`と任意の`NM_INTERNAL_BASE_URL`を使用
+- 画像APIの認証要件を明確化し、保護対象の応答にprivate・no-storeのキャッシュ制御を適用
+- rate limit状態、認証設定、メディアインデックスの更新をロックと原子的保存で競合に強い構成へ改善
+- アップロード、画像処理、リクエストサイズにアプリケーション側の上限を追加
+- Unicode対応のパスワード長判定、セキュリティヘッダー、CSP処理、共通設定の既定値を統一
+- 外部依存のないPHPテスト、HTTPセキュリティスモークテスト、PHP 8.1から8.5のGitHub Actionsテスト行列を追加
 
 ---
 
@@ -205,7 +231,7 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 
 ### 9. 監査ログを追加
 - `auth_common.php` に監査ログ共通処理を追加
-- 保存先は **`logs/system/audit.log`**（JSON Lines）
+- 保存先は `NM_STORAGE_ROOT` 配下の **`logs/audit.log`**（JSON Lines）
 - 次のようなイベントを記録
   - `login_success`
   - `login_failed`
@@ -253,6 +279,8 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 のいずれでも利用できるようにしつつ、  
 後半で `$_GET['user']` を再代入して先頭の補助解決を無効化していた処理を整理
 - `dir_user` や `username` 経由でも意図どおり画像取得できるよう改善
+- 画像取得には、同じユーザーでログイン済みのWeb UIセッション、またはそのユーザーの`EXPECTED_TOKEN`が必要です
+- 認証済み画像の応答は`Cache-Control: private, no-store`とし、リサイズ画像はユーザーの`.cache`ディレクトリ内に限ってサーバー側でキャッシュします
 
 ### 14. v1.4.5 までの機能も継続
 - 認証用メールアドレス保存
@@ -319,8 +347,7 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
   images/
   files/
 /logs/<DIR_USER>/
-/logs/system/
-  audit.log
+/logs/audit.log
 ```
 
 ---
@@ -329,11 +356,56 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 
 1. リポジトリをダウンロードまたは clone します。
 2. サーバー上の公開ディレクトリへファイルをアップロードします。
-3. `config/`、`logs/`、`notemod-data/` に PHP から書き込みできる権限を設定します。
+3. 下記の手順で稼働データの保存先を設定します。公開ディレクトリ外の利用を強く推奨します。
 4. ブラウザで `login.php` にアクセスします。
 5. 初回 admin 作成後、`setup_auth.php` で SECRET、API token、暗号化設定などを確認します。
 
 > 既存データを移行する場合は、作業前に `notemod-data/<DIR_USER>/data.json` と `config/<DIR_USER>/` を必ずバックアップしてください。
+
+### 稼働データを公開ディレクトリ外へ置く（推奨）
+
+PHP が読み書きできる絶対パスを環境変数 `NM_STORAGE_ROOT` に設定します。Notemod はアプリケーションディレクトリ内ではなく、そのパスの配下に `config/`、`notemod-data/`、`logs/` を保存します。
+
+```text
+NM_STORAGE_ROOT=/var/lib/notemod
+```
+
+新規インストールでは、保存先ディレクトリを作成して PHP プロセスに読み書き権限を与え、`setup_auth.php` を開く前に環境変数を設定します。既存環境を移行する場合:
+
+1. 現在の `config/`、`notemod-data/`、`logs/` をバックアップします。
+2. 3つのディレクトリを、名前と内容を変えずに新しい保存ルートの配下へ移動します。
+3. PHP-FPM pool、Apache の環境設定、コンテナ設定、またはホスティングの管理画面で `NM_STORAGE_ROOT` を設定します。
+4. PHP/Web サーバーを再起動または再読み込みし、ログイン、メモ同期、メディア表示、ログ出力を確認します。
+
+環境変数には絶対パスを指定し、ファイルシステムのルート自体は指定しないでください。未設定時は後方互換性のため、従来どおりアプリケーションディレクトリ内の保存先を使用します。従来配置では Web サーバー側でも直接アクセスを拒否してください。自動生成される `.htaccess` が保護できるのは Apache 互換サーバーだけです。
+
+### 信頼するリバースプロキシ経由のクライアントIP
+
+Notemod は既定で`REMOTE_ADDR`だけを使い、クライアントから送られた転送ヘッダーを無視します。リバースプロキシの背後で運用する場合は、プロキシのIPアドレスまたはCIDRを`NM_TRUSTED_PROXIES`に設定します。
+
+```text
+NM_TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8,2001:db8:1234::/48
+```
+
+`REMOTE_ADDR`がこの一覧に一致する場合だけ、Notemodは`X-Forwarded-For`と`X-Forwarded-Proto`を参照します。IPチェーンを右端から順に検証し、信頼するプロキシではない最初のアドレスをクライアントIPとして採用します。検証済みの`X-Forwarded-Proto: https`は、Cookieの`Secure`属性とHTTPS状態判定にも使います。プロキシ側では、受信した転送ヘッダーを検証済みの値で置き換え、信頼範囲は必要最小限にしてください。リバースプロキシを使わない場合、この環境変数は設定しません。
+
+### 正規の公開URLと内部URL
+
+Notemodを公開する正規URLを`NM_PUBLIC_BASE_URL`に設定します。サブディレクトリへ設置する場合はそのパスまで含め、クエリやフラグメントは含めません。
+
+```text
+NM_PUBLIC_BASE_URL=https://notes.example.com/notemod
+```
+
+パスワード再設定リンクはこの設定値だけから生成し、リクエストの`Host`ヘッダーは使用しません。未設定の場合は再設定メールを送信せず、アカウントの存在を要求元へ示さないまま`logs/forgot_password.log`へ記録します。
+
+メディア画面のサーバー内部API呼び出しにもこのURLを使用します。公開URLへサーバー自身から接続できない場合は、内部用URLを別に設定します。
+
+```text
+NM_INTERNAL_BASE_URL=http://127.0.0.1/notemod
+```
+
+`NM_INTERNAL_BASE_URL`は任意で、未設定時は`NM_PUBLIC_BASE_URL`を使います。どちらも認証情報、クエリ、フラグメント、親ディレクトリ要素を含まない`http`または`https`の絶対URLである必要があります。ブラウザーに表示するAPI URLは、設定済みの公開URL、または未設定時にはブラウザー自身のオリジンから補完します。
 
 ---
 
@@ -345,7 +417,7 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 ### 2. 初回アクセス
 `setup_auth.php` / `index.php` へアクセスし、初回セットアップを行います。
 
-v1.4.6 では `setup_auth.php` で次を設定します。
+`setup_auth.php`では次の項目を設定します。
 
 - 初期ユーザー
 - パスワード
@@ -390,10 +462,18 @@ v1.4.6 では `setup_auth.php` で次を設定します。
 - `IP_ALERT_IGNORE_IPS`
 - `IP_ALERT_STORE`
 - `SESSION_COOKIE_LIFETIME`
+- `MAX_IMAGE_UPLOAD_BYTES`
+- `MAX_FILE_UPLOAD_BYTES`
+- `MAX_IMAGE_DIMENSION`
+- `MAX_IMAGE_PIXELS`
+- `MAX_RESIZE_DIMENSION`
+- `MAX_RESIZE_PIXELS`
 - `DATA_ENCRYPTION_ENABLED`
 - `DATA_ENCRYPTION_KEY`
 - `SYNC_PRE_SAVE_BACKUP_ENABLED`
 - `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
+
+アップロードの保存前とGDによる画像展開前にも、アプリ側で上限を検査します。初期値は画像10 MiB、一般ファイル25 MiB、元画像10,000 px・2,500万画素、リサイズ後2,000 px・400万画素です。PHPの `upload_max_filesize` と `post_max_size` は別の上限として引き続き適用され、最も小さい上限が有効になります。
 
 ### API設定
 `config/<DIR_USER>/config.api.php`
@@ -496,11 +576,15 @@ v1.4.6 では `setup_auth.php` で次を設定します。
 Basic認証が使えない場合は、`setup_auth.php` と `login.php` / `logout.php` を使った Web UI認証で運用することで、一定のセキュリティを確保できます。
 
 ### Web UI の追加保護
-v1.4.6 では、次の追加保護を導入しています。
+次の追加保護を適用しています。
 
-- security header
+- HTML、API・テキスト、バイナリの各応答種別に合わせたCSPを含む共通security header
+- 初期設定、設定画面、API、ロガーで共有する設定既定値の一元化
 - CSRF 対策
 - `login.php` / `forgot_password.php` / `reset_password.php` の rate limit
+- Rate limit状態の同時更新に対する共有・排他ファイルロックと原子的置換
+- アップロード、メディアロック変更、削除後再構築が競合しないインデックス単位の排他ロックと原子的置換
+- 初期設定、アカウント変更、パスワード再設定で共通利用するUnicode対応の最低10文字判定
 - 監査ログ
 - `session_regenerate_id(true)` によるログイン成功時のセッション再生成
 - `setup_auth.php` / `clipboard_sync.php` / `media_files.php` での API トークン平文露出削減
@@ -512,10 +596,10 @@ v1.4.6 では、次の追加保護を導入しています。
 
 ### SMTP パスワード
 - `config/mail.php` の `SMTP_PASSWORD` は平文保存です
-- `config/mail.php` は公開されない配置前提で運用してください
+- `config/mail.php` が直接配信されないよう、公開ディレクトリ外の `NM_STORAGE_ROOT` を推奨します
 
 ### 監査ログ
-- 保存先: `logs/system/audit.log`
+- 保存先: `<NM_STORAGE_ROOT>/logs/audit.log`（`NM_STORAGE_ROOT`未設定時は`logs/audit.log`）
 - 形式: JSON Lines
 - パスワード / API token / SECRET / SMTP password などの実値は記録しない方針です
 
@@ -550,10 +634,21 @@ v1.4.6 では、次の追加保護を導入しています。
 - メディアロック状態の更新
 
 ### `api/image_api.php`
-- 画像配信
+- 認証付き画像配信
 - 簡易リサイズ
-- キャッシュ制御
 - `user` / `dir_user` / `username` によるユーザー解決に対応
+- 同一ユーザーのWeb UIセッション、`Authorization: Bearer <EXPECTED_TOKEN>`、または`X-Notemod-Token: <EXPECTED_TOKEN>`を受け付けます
+- URLのクエリ文字列にAPIトークンは指定できません
+- `Cache-Control: private, no-store, no-cache, must-revalidate, max-age=0`を返し、ブラウザーや共有プロキシに保護対象画像を保存させません
+- リサイズ結果はサーバー内の`.cache`ディレクトリに保持しますが、これは公開HTTPキャッシュとは別のものです
+
+例:
+
+```bash
+curl -H 'Authorization: Bearer YOUR_EXPECTED_TOKEN' \
+  'https://notes.example.com/notemod/api/image_api.php?user=YOUR_DIR_USER&file=photo.png' \
+  --output photo.png
+```
 
 ### `api/append_api.php`
 - 既存ノートの末尾に追記

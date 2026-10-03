@@ -10,6 +10,7 @@ header('Content-Type: text/html; charset=utf-8');
 $ui = nm_ui_bootstrap();
 $lang  = $ui['lang'];
 $theme = $ui['theme'];
+$passwordMinLength = nm_password_min_length();
 
 $t = [
   'ja' => [
@@ -32,13 +33,13 @@ $t = [
     'new_username' => '新しいユーザー名',
     'username_note' => 'ログイン名を変更しても、保存先ディレクトリ名は変更されません。',
     'change_password' => 'パスワードを変更',
-    'new_password' => '新しいパスワード（10文字以上）',
+    'new_password' => '新しいパスワード（' . $passwordMinLength . '文字以上）',
     'repeat_password' => '新しいパスワード（再入力）',
     'current_password' => '現在のパスワード',
     'btn_username' => 'ユーザー名を更新',
     'btn_password' => 'パスワードを更新',
     'pw_mismatch' => '新しいパスワードが一致しません',
-    'pw_short' => '新しいパスワードは10文字以上にしてください',
+    'pw_short' => '新しいパスワードは' . $passwordMinLength . '文字以上にしてください',
     'pw_hash_fail' => 'パスワードの保存に失敗しました',
     'note_api' => 'API ディレクトリに Basic 認証を使用することをおすすめします。この画面は Notemod-selfhosted へのログインにのみ使用されます',
     'show_storage' => '現在の主要ディレクトリとファイルを表示',
@@ -50,6 +51,8 @@ $t = [
     'light' => 'Light',
     'new_username_empty' => '新しいユーザー名を入力してください',
     'csrf_invalid' => 'CSRFトークンが無効です。ページを再読み込みしてからもう一度お試しください。',
+    'app_info_label' => 'アプリ情報',
+    'github_repository' => 'GitHub',
   ],
   'en' => [
     'title' => 'Account',
@@ -71,13 +74,13 @@ $t = [
     'new_username' => 'New username',
     'username_note' => 'Changing the login name does not change the storage directory name.',
     'change_password' => 'Change Password',
-    'new_password' => 'New password (min 10 chars)',
+    'new_password' => 'New password (min ' . $passwordMinLength . ' characters)',
     'repeat_password' => 'Repeat new password',
     'current_password' => 'Current password',
     'btn_username' => 'Update Username',
     'btn_password' => 'Update Password',
     'pw_mismatch' => 'New passwords do not match',
-    'pw_short' => 'New password must be at least 10 characters',
+    'pw_short' => 'New password must be at least ' . $passwordMinLength . ' characters',
     'pw_hash_fail' => 'Failed to hash password',
     'note_api' => 'It is recommended to use Basic Authentication for the API directory. This screen is only used for logging in to Notemod-selfhosted.',
     'show_storage' => 'Show current main directories and files',
@@ -89,6 +92,8 @@ $t = [
     'light' => 'Light',
     'new_username_empty' => 'Please enter a new username',
     'csrf_invalid' => 'Invalid CSRF token. Please reload the page and try again.',
+    'app_info_label' => 'Application information',
+    'github_repository' => 'GitHub',
   ],
 ];
 
@@ -159,7 +164,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     $err = $t[$lang]['pw_mismatch'];
                     $auditEvent = 'account_update_failed';
                     $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'password_mismatch'];
-                } elseif (strlen($p1) < 10) {
+                } elseif (!nm_password_meets_minimum_length($p1)) {
                     $err = $t[$lang]['pw_short'];
                     $auditEvent = 'account_update_failed';
                     $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'password_too_short'];
@@ -429,6 +434,17 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
 
     .row-links{ display:flex; gap:12px; flex-wrap:wrap; }
     .row-links a{ font-size:13px; color:var(--accent); }
+    .app-meta{
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      gap:8px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.5;
+    }
+    .app-meta a{ color:var(--muted); text-decoration:underline; text-underline-offset:3px; }
+    .app-meta a:hover{ color:var(--accent); }
   </style>
   <script>
   (function(){
@@ -540,6 +556,12 @@ $mediafilesUrl = nm_ui_url('/media_files.php');
       <a class="header-btn" href="<?=htmlspecialchars($baksettingsUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_bak_settings'], ENT_QUOTES, 'UTF-8')?></a>
       <a class="header-btn" href="<?=htmlspecialchars($clipboardsyncUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_clipboard_sync'], ENT_QUOTES, 'UTF-8')?></a>
       <a class="header-btn" href="<?=htmlspecialchars($mediafilesUrl, ENT_QUOTES, 'UTF-8')?>"><?=htmlspecialchars($t[$lang]['go_media_files'], ENT_QUOTES, 'UTF-8')?></a>
+    </div>
+
+    <div class="app-meta" aria-label="<?=htmlspecialchars($t[$lang]['app_info_label'], ENT_QUOTES, 'UTF-8')?>">
+      <span>Notemod-selfhosted v<?=htmlspecialchars(NM_APP_VERSION, ENT_QUOTES, 'UTF-8')?></span>
+      <span aria-hidden="true">|</span>
+      <a href="<?=htmlspecialchars(NM_REPOSITORY_URL, ENT_QUOTES, 'UTF-8')?>" target="_blank" rel="noopener noreferrer"><?=htmlspecialchars($t[$lang]['github_repository'], ENT_QUOTES, 'UTF-8')?></a>
     </div>
     
   </div>

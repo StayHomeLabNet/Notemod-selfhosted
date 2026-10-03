@@ -18,6 +18,7 @@
 //   キーは小文字正規化するので Category / category 等の揺れを吸収
 
 require_once dirname(__DIR__) . '/auth_common.php';
+nm_send_security_headers_json();
 
 $dirUser = '';
 foreach (['dir_user', 'user', 'username'] as $key) {
@@ -32,12 +33,12 @@ if ($dirUser === '' && function_exists('nm_get_current_dir_user')) {
     $dirUser = nm_get_current_dir_user();
 }
 
-$cfgCommon = array();
+$cfgCommon = nm_common_config_defaults();
 
 // =====================
 // タイムゾーン初期値
 // =====================
-$tz = 'Pacific/Auckland';
+$tz = (string)$cfgCommon['TIMEZONE'];
 date_default_timezone_set($tz);
 
 // =====================
@@ -196,7 +197,7 @@ $configCommonFile = nm_config_path($resolvedDirUser !== '' ? $resolvedDirUser : 
 if (is_file($configCommonFile)) {
     $tmpCfg = require $configCommonFile;
     if (is_array($tmpCfg)) {
-        $cfgCommon = $tmpCfg;
+        $cfgCommon = nm_common_config_with_defaults($tmpCfg);
     }
 }
 
@@ -228,10 +229,7 @@ function respond_binary_file(string $path, string $mime, ?string $downloadName =
         respond_json(['status' => 'error', 'message' => 'file not found'], 404, '0');
     }
 
-    // キャッシュ抑制
-    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-    header('Pragma: no-cache');
-    header('Expires: 0');
+    nm_send_security_headers_binary();
 
     header('Content-Type: ' . $mime);
 

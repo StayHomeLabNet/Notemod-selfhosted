@@ -25,30 +25,29 @@ if ($currentDirUser === null || $currentDirUser === '') {
 // 0) config.php から設定を読む
 // -----------------------------
 $cfg = [];
-$configFile = function_exists('nm_config_path')
-    ? nm_config_path($currentDirUser)
-    : (__DIR__ . '/config/' . $currentDirUser . '/config.php');
+$configFile = nm_config_path($currentDirUser);
 if (file_exists($configFile)) {
     $tmp = require $configFile;
     if (is_array($tmp)) {
         $cfg = $tmp;
     }
 }
+$cfg = nm_common_config_with_defaults($cfg);
 
 // TIMEZONE（無ければ既定）
-$timezone = (string)($cfg['TIMEZONE'] ?? $cfg['timezone'] ?? (defined('APP_TIMEZONE') ? APP_TIMEZONE : 'Pacific/Auckland'));
+$timezone = (string)($cfg['TIMEZONE'] ?? $cfg['timezone'] ?? nm_common_config_defaults()['TIMEZONE']);
 if ($timezone === '') {
-    $timezone = 'Asia/Tokyo';
+    $timezone = nm_common_config_defaults()['TIMEZONE'];
 }
 @date_default_timezone_set($timezone);
 
 // ★logger のON/OFF（個別）
-$logFileEnabled    = (bool)($cfg['LOGGER_FILE_ENABLED'] ?? true);
-$logNotemodEnabled = (bool)($cfg['LOGGER_NOTEMOD_ENABLED'] ?? true);
+$logFileEnabled    = (bool)$cfg['LOGGER_FILE_ENABLED'];
+$logNotemodEnabled = (bool)$cfg['LOGGER_NOTEMOD_ENABLED'];
 
 // ★最大行数（0以下なら無制限）
-$maxFileLines    = (int)($cfg['LOGGER_FILE_MAX_LINES'] ?? 0);
-$maxNotemodLines = (int)($cfg['LOGGER_NOTEMOD_MAX_LINES'] ?? 0);
+$maxFileLines    = (int)$cfg['LOGGER_FILE_MAX_LINES'];
+$maxNotemodLines = (int)$cfg['LOGGER_NOTEMOD_MAX_LINES'];
 
 // 両方OFFなら何もしない
 if (!$logFileEnabled && !$logNotemodEnabled) {
@@ -176,22 +175,7 @@ if (!function_exists('nm_keep_latest_n_lines_in_notemod_log_content')) {
 if (!function_exists('getClientIp')) {
     function getClientIp(): string
     {
-        $keys = [
-            'HTTP_CLIENT_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_X_FORWARDED', 'HTTP_X_CLUSTER_CLIENT_IP',
-            'HTTP_FORWARDED_FOR', 'HTTP_FORWARDED', 'REMOTE_ADDR',
-        ];
-        foreach ($keys as $key) {
-            if (!empty($_SERVER[$key])) {
-                $ipList = explode(',', $_SERVER[$key]);
-                foreach ($ipList as $ip) {
-                    $ip = trim($ip);
-                    if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                        return $ip;
-                    }
-                }
-            }
-        }
-        return 'UNKNOWN';
+        return nm_request_ip();
     }
 }
 
@@ -273,9 +257,7 @@ if (!function_exists('nm_ip_first_seen_notify')) {
 
         $store = (string)($cfg['IP_ALERT_STORE'] ?? '');
         if ($store === '') {
-            $store = function_exists('nm_user_data_dir')
-                ? rtrim(nm_user_data_dir($ctx['dir_user'] ?? null), '/\\') . '/_known_ips.json'
-                : (__DIR__ . '/notemod-data/' . ($ctx['dir_user'] ?? '') . '/_known_ips.json');
+            $store = rtrim(nm_user_data_dir($ctx['dir_user'] ?? null), '/\\') . '/_known_ips.json';
         }
 
         $dir = dirname($store);
@@ -371,19 +353,13 @@ $datetime = date('Y-m-d H:i:s');
 $ip       = getClientIp();
 $uri      = $_SERVER['REQUEST_URI'] ?? '-';
 $method   = $_SERVER['REQUEST_METHOD'] ?? '';
-$host     = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? '');
+$host     = (string)($_SERVER['SERVER_NAME'] ?? '');
 $uaRaw    = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $uaShort  = uaSummary($uaRaw);
 
-$logsDir = function_exists('nm_logs_dir')
-    ? nm_logs_dir($currentDirUser)
-    : (__DIR__ . '/logs/' . $currentDirUser);
-$dataDir = function_exists('nm_user_data_dir')
-    ? nm_user_data_dir($currentDirUser)
-    : (__DIR__ . '/notemod-data/' . $currentDirUser);
-$notemodFile = function_exists('nm_data_json_path')
-    ? nm_data_json_path($currentDirUser)
-    : ($dataDir . '/data.json');
+$logsDir = nm_logs_dir($currentDirUser);
+$dataDir = nm_user_data_dir($currentDirUser);
+$notemodFile = nm_data_json_path($currentDirUser);
 $knownIpsFile = rtrim($dataDir, '/\\') . '/_known_ips.json';
 $debugFile = rtrim($logsDir, '/\\') . '/_logger_debug.log';
 

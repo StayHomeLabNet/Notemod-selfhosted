@@ -40,6 +40,7 @@ declare(strict_types=1);
 
 require_once dirname(__DIR__) . '/auth_common.php';
 require_once __DIR__ . '/../logger.php';
+nm_send_security_headers_json();
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -355,7 +356,7 @@ if ($dirUser === '') {
 /* =========================
  * タイムゾーン設定
  * ========================= */
-$tz = 'Pacific/Auckland';
+$tz = (string)nm_common_config_defaults()['TIMEZONE'];
 $cfgCommonFile = nm_config_path($dirUser !== '' ? $dirUser : null);
 if (file_exists($cfgCommonFile)) {
     $common = require $cfgCommonFile;

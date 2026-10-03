@@ -255,7 +255,7 @@ $displayExpected = nm_mask_token($expectedToken);
 $displayAdmin    = nm_mask_token($adminToken);
 
 // --------------------
-// Build API URLs (full origin + base-path aware)
+// Build API URLs without using the request Host header.
 // 期待形:
 // - app base が /api のとき
 //   https://host/api/
@@ -263,12 +263,6 @@ $displayAdmin    = nm_mask_token($adminToken);
 //   https://host/api/api/read_api.php
 //   https://host/api/api/cleanup_api.php
 // --------------------
-$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-  || ((string)($_SERVER['SERVER_PORT'] ?? '') === '443')
-  || ((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-$scheme = $isHttps ? 'https' : 'http';
-$host = (string)($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost');
-
 $baseAppPath = function_exists('nm_base_path') ? (string) nm_base_path() : '';
 if ($baseAppPath === '') {
   $script = (string) ($_SERVER['SCRIPT_NAME'] ?? '/clipboard_sync.php');
@@ -276,8 +270,10 @@ if ($baseAppPath === '') {
   $baseAppPath = ($dir === '/' || $dir === '.' || $dir === '\\') ? '' : rtrim($dir, '/');
 }
 
-$origin = $scheme . '://' . $host;
-$baseAppUrl = $origin . ($baseAppPath !== '' ? $baseAppPath : '');
+$baseAppUrl = nm_public_base_url();
+if ($baseAppUrl === '') {
+  $baseAppUrl = $baseAppPath;
+}
 
 $apiDirUrl     = rtrim($baseAppUrl, '/') . '/api/';
 $apiUrl        = rtrim($baseAppUrl, '/') . '/api/api.php';
@@ -296,6 +292,7 @@ $baksettingsUrl = nm_ui_url('/bak_settings.php');
 $mediafilesUrl = nm_ui_url('/media_files.php');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'reveal_token') {
+  nm_send_security_headers_json();
   header('Content-Type: application/json; charset=utf-8');
 
   try {
@@ -702,29 +699,29 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
           <div class="kv">
             <div class="row">
               <div class="k"><?= htmlspecialchars($t[$lang]['api_dir'], ENT_QUOTES, 'UTF-8') ?></div>
-              <div class="copy" data-copy="<?= htmlspecialchars($apiDirUrl, ENT_QUOTES, 'UTF-8') ?>">
-                <?= htmlspecialchars($apiDirUrl, ENT_QUOTES, 'UTF-8') ?>
+              <div class="copy" data-copy="<?= htmlspecialchars($apiDirUrl, ENT_QUOTES, 'UTF-8') ?>" data-public-url>
+                <span class="url-value"><?= htmlspecialchars($apiDirUrl, ENT_QUOTES, 'UTF-8') ?></span>
                 <small>click to copy</small>
               </div>
             </div>
             <div class="row">
               <div class="k"><?= htmlspecialchars($t[$lang]['api_php'], ENT_QUOTES, 'UTF-8') ?></div>
-              <div class="copy" data-copy="<?= htmlspecialchars($apiUrl, ENT_QUOTES, 'UTF-8') ?>">
-                <?= htmlspecialchars($apiUrl, ENT_QUOTES, 'UTF-8') ?>
+              <div class="copy" data-copy="<?= htmlspecialchars($apiUrl, ENT_QUOTES, 'UTF-8') ?>" data-public-url>
+                <span class="url-value"><?= htmlspecialchars($apiUrl, ENT_QUOTES, 'UTF-8') ?></span>
                 <small>click to copy</small>
               </div>
             </div>
             <div class="row">
               <div class="k"><?= htmlspecialchars($t[$lang]['read_api_php'], ENT_QUOTES, 'UTF-8') ?></div>
-              <div class="copy" data-copy="<?= htmlspecialchars($readApiUrl, ENT_QUOTES, 'UTF-8') ?>">
-                <?= htmlspecialchars($readApiUrl, ENT_QUOTES, 'UTF-8') ?>
+              <div class="copy" data-copy="<?= htmlspecialchars($readApiUrl, ENT_QUOTES, 'UTF-8') ?>" data-public-url>
+                <span class="url-value"><?= htmlspecialchars($readApiUrl, ENT_QUOTES, 'UTF-8') ?></span>
                 <small>click to copy</small>
               </div>
             </div>
             <div class="row">
               <div class="k"><?= htmlspecialchars($t[$lang]['cleanup_api_php'], ENT_QUOTES, 'UTF-8') ?></div>
-              <div class="copy" data-copy="<?= htmlspecialchars($cleanupApiUrl, ENT_QUOTES, 'UTF-8') ?>">
-                <?= htmlspecialchars($cleanupApiUrl, ENT_QUOTES, 'UTF-8') ?>
+              <div class="copy" data-copy="<?= htmlspecialchars($cleanupApiUrl, ENT_QUOTES, 'UTF-8') ?>" data-public-url>
+                <span class="url-value"><?= htmlspecialchars($cleanupApiUrl, ENT_QUOTES, 'UTF-8') ?></span>
                 <small>click to copy</small>
               </div>
             </div>
@@ -862,6 +859,17 @@ window.NM_CURRENT_USER = <?= json_encode($currentUser ?? '', JSON_UNESCAPED_SLAS
           return false;
         }
       }
+
+      document.querySelectorAll('[data-public-url]').forEach(el => {
+        const configured = el.getAttribute('data-copy') || '';
+        if (!configured) return;
+        try {
+          const absolute = new URL(configured, window.location.origin).toString();
+          el.setAttribute('data-copy', absolute);
+          const value = el.querySelector('.url-value');
+          if (value) value.textContent = absolute;
+        } catch (_) {}
+      });
 
       document.querySelectorAll('[data-copy]').forEach(el=>{
         el.addEventListener('click', async ()=>{

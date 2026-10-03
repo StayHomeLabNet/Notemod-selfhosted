@@ -14,6 +14,7 @@
 // - WebP画像を受信した場合、サーバー側で自動的にPNGに変換して保存する
 
 require_once dirname(__DIR__) . '/auth_common.php';
+nm_send_security_headers_json();
 
 $dirUser = '';
 foreach (['dir_user', 'user', 'username'] as $key) {
@@ -33,7 +34,7 @@ require_once __DIR__ . '/../logger.php';
 // =====================
 // タイムゾーン設定（config/config.php から読む）
 // =====================
-$tz = 'Pacific/Auckland';
+$tz = (string)nm_common_config_defaults()['TIMEZONE'];
 $cfgCommonFile = nm_config_path($dirUser !== '' ? $dirUser : null);
 if (file_exists($cfgCommonFile)) {
     $common = require $cfgCommonFile;
@@ -144,15 +145,11 @@ function nm_find_existing_lock(array $rows, string $filename): bool
 // - file_index.json は「現存ファイルの一覧」を表示用に持つ
 //   ※ upload時は差分更新。purge後は cleanup_api.php 側で再生成する想定
 // =====================
-function nm_update_file_index(string $userDir, array $latestMeta, string $originalName): bool
+function nm_update_file_index_unlocked(string $indexPath, array $latestMeta, string $originalName, string $filename): bool
 {
-    $indexPath = rtrim($userDir, '/\\') . '/file_index.json';
-    $tmpPath   = $indexPath . '.tmp';
-
+    $tmpPath = $indexPath . '.tmp';
     $nowUnix = time();
     $nowIso  = gmdate('c');
-    $filename = (string)($latestMeta['filename'] ?? '');
-    if ($filename === '') return false;
 
     $existingRows = nm_load_index_json($indexPath, 'files');
     $existingLock = nm_find_existing_lock($existingRows, $filename);
@@ -224,15 +221,24 @@ function nm_update_file_index(string $userDir, array $latestMeta, string $origin
     return true;
 }
 
-function nm_update_image_index(string $userDir, array $latestMeta): bool
+function nm_update_file_index(string $userDir, array $latestMeta, string $originalName): bool
 {
-    $indexPath = rtrim($userDir, '/\\') . '/image_index.json';
-    $tmpPath   = $indexPath . '.tmp';
-
-    $nowUnix = time();
-    $nowIso  = gmdate('c');
+    $indexPath = rtrim($userDir, '/\\') . '/file_index.json';
     $filename = (string)($latestMeta['filename'] ?? '');
     if ($filename === '') return false;
+
+    $result = nm_with_index_lock(
+        $indexPath,
+        fn(): bool => nm_update_file_index_unlocked($indexPath, $latestMeta, $originalName, $filename)
+    );
+    return $result === true;
+}
+
+function nm_update_image_index_unlocked(string $indexPath, array $latestMeta, string $filename): bool
+{
+    $tmpPath = $indexPath . '.tmp';
+    $nowUnix = time();
+    $nowIso  = gmdate('c');
 
     $existingRows = nm_load_index_json($indexPath, 'images');
     $existingLock = nm_find_existing_lock($existingRows, $filename);
@@ -301,6 +307,19 @@ function nm_update_image_index(string $userDir, array $latestMeta): bool
     }
     @chmod($indexPath, 0644);
     return true;
+}
+
+function nm_update_image_index(string $userDir, array $latestMeta): bool
+{
+    $indexPath = rtrim($userDir, '/\\') . '/image_index.json';
+    $filename = (string)($latestMeta['filename'] ?? '');
+    if ($filename === '') return false;
+
+    $result = nm_with_index_lock(
+        $indexPath,
+        fn(): bool => nm_update_image_index_unlocked($indexPath, $latestMeta, $filename)
+    );
+    return $result === true;
 }
 
 // =====================
@@ -514,14 +533,24 @@ if ($type === 'image') {
     if ($file === null || !isset($file['tmp_name'])) {
         respond_json(['status' => 'error', 'message' => 'image file is required (multipart/form-data)'], 400);
     }
-    if (!isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
-        $err = $file['error'] ?? 'unknown';
-        respond_json(['status' => 'error', 'message' => 'Upload failed', 'error' => $err], 400);
+    $uploadError = isset($file['error']) ? (int)$file['error'] : UPLOAD_ERR_NO_FILE;
+    if ($uploadError !== UPLOAD_ERR_OK) {
+        $status = in_array($uploadError, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true) ? 413 : 400;
+        respond_json(['status' => 'error', 'message' => 'Upload failed', 'error' => $uploadError], $status);
     }
 
     $tmpPath = (string)$file['tmp_name'];
     if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
         respond_json(['status' => 'error', 'message' => 'Invalid uploaded file'], 400);
+    }
+
+    $mediaLimits = nm_media_limits($dirUser !== '' ? $dirUser : null);
+    $uploadedSize = nm_file_size_bytes($tmpPath);
+    if ($uploadedSize === null) {
+        respond_json(['status' => 'error', 'message' => 'Failed to determine uploaded image size'], 400);
+    }
+    if ($uploadedSize > $mediaLimits['image_upload_bytes']) {
+        respond_json(['status' => 'error', 'message' => 'Image exceeds the application upload limit'], 413);
     }
 
     $finfo = new finfo(FILEINFO_MIME_TYPE);
@@ -542,6 +571,21 @@ if ($type === 'image') {
         respond_json(['status' => 'error', 'message' => 'Unsupported image type', 'mime' => $mime], 415);
     }
 
+    $imageInfo = @getimagesize($tmpPath);
+    $mustHaveDimensions = in_array($mime, ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp'], true);
+    if (!is_array($imageInfo)) {
+        if ($mustHaveDimensions) {
+            respond_json(['status' => 'error', 'message' => 'Failed to read image dimensions'], 415);
+        }
+    } elseif (!nm_image_dimensions_allowed(
+        (int)($imageInfo[0] ?? 0),
+        (int)($imageInfo[1] ?? 0),
+        $mediaLimits['image_dimension'],
+        $mediaLimits['image_pixels']
+    )) {
+        respond_json(['status' => 'error', 'message' => 'Image dimensions exceed the application limit'], 413);
+    }
+
     // ==========================================
     // WebP だった場合は強制的に PNG に変換する
     // ==========================================
@@ -558,10 +602,16 @@ if ($type === 'image') {
         // 変換用の一時ファイルを作成
         $newTmpPath = $tmpPath . '_converted.png';
         if (!imagepng($image, $newTmpPath)) {
-            imagedestroy($image);
+            nm_release_gd_image($image);
             respond_json(['status' => 'error', 'message' => 'Failed to convert WebP to PNG'], 500);
         }
-        imagedestroy($image);
+        nm_release_gd_image($image);
+
+        $convertedSize = nm_file_size_bytes($newTmpPath);
+        if ($convertedSize === null || $convertedSize > $mediaLimits['image_upload_bytes']) {
+            @unlink($newTmpPath);
+            respond_json(['status' => 'error', 'message' => 'Converted image exceeds the application upload limit'], 413);
+        }
 
         // 以降の処理は変換後の PNG として扱う
         $tmpPath = $newTmpPath;
@@ -595,8 +645,10 @@ if ($type === 'image') {
         respond_json(['status' => 'error', 'message' => 'Failed to generate unique filename'], 500);
     }
 
-    $size = (int)filesize($tmpPath); // filesize を再取得 (変換で変わるため)
-    if ($size < 0) $size = 0;
+    $size = nm_file_size_bytes($tmpPath); // 変換後の実サイズを再取得
+    if ($size === null) {
+        respond_json(['status' => 'error', 'message' => 'Failed to determine image size'], 500);
+    }
 
     $sha256 = hash_file('sha256', $tmpPath);
 
@@ -700,14 +752,24 @@ if ($type === 'file') {
     if ($file === null || !isset($file['tmp_name'])) {
         respond_json(['status' => 'error', 'message' => 'file is required (multipart/form-data)'], 400);
     }
-    if (!isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
-        $err = $file['error'] ?? 'unknown';
-        respond_json(['status' => 'error', 'message' => 'Upload failed', 'error' => $err], 400);
+    $uploadError = isset($file['error']) ? (int)$file['error'] : UPLOAD_ERR_NO_FILE;
+    if ($uploadError !== UPLOAD_ERR_OK) {
+        $status = in_array($uploadError, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true) ? 413 : 400;
+        respond_json(['status' => 'error', 'message' => 'Upload failed', 'error' => $uploadError], $status);
     }
 
     $tmpPath = (string)$file['tmp_name'];
     if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
         respond_json(['status' => 'error', 'message' => 'Invalid uploaded file'], 400);
+    }
+
+    $mediaLimits = nm_media_limits($dirUser !== '' ? $dirUser : null);
+    $uploadedSize = nm_file_size_bytes($tmpPath);
+    if ($uploadedSize === null) {
+        respond_json(['status' => 'error', 'message' => 'Failed to determine uploaded file size'], 400);
+    }
+    if ($uploadedSize > $mediaLimits['file_upload_bytes']) {
+        respond_json(['status' => 'error', 'message' => 'File exceeds the application upload limit'], 413);
     }
 
     $finfo = new finfo(FILEINFO_MIME_TYPE);
@@ -788,8 +850,7 @@ if ($type === 'file') {
         respond_json(['status' => 'error', 'message' => 'Failed to generate unique filename'], 500);
     }
 
-    $size = (int)($file['size'] ?? filesize($tmpPath));
-    if ($size < 0) $size = 0;
+    $size = $uploadedSize;
 
     $sha256 = hash_file('sha256', $tmpPath);
 

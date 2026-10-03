@@ -34,9 +34,7 @@ if ($dirUser === '') {
     exit;
 }
 
-$configPath = function_exists('nm_config_path')
-    ? nm_config_path($dirUser)
-    : (__DIR__ . '/config/' . $dirUser . '/config.php');
+$configPath = nm_config_path($dirUser);
 
 if (!file_exists($configPath)) {
     die('Missing config for current user: ' . htmlspecialchars('config/' . $dirUser . '/config.php', ENT_QUOTES, 'UTF-8'));
@@ -95,7 +93,7 @@ if ($nmDirUser === '') {
     header('Location: ' . (function_exists('nm_url') ? nm_url('login.php') : 'login.php'));
     exit;
 }
-$nmConfigPath = function_exists('nm_config_path') ? nm_config_path($nmDirUser) : (__DIR__ . '/config/' . $nmDirUser . '/config.php');
+$nmConfigPath = nm_config_path($nmDirUser);
 if (!file_exists($nmConfigPath)) {
     die('Missing config for current user: ' . htmlspecialchars('config/' . $nmDirUser . '/config.php', ENT_QUOTES, 'UTF-8'));
 }

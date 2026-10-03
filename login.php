@@ -13,7 +13,7 @@ if (!function_exists('nm_is_valid_username')) {
 
 if (!function_exists('nm_any_auth_exists')) {
     function nm_any_auth_exists(): bool {
-        $configRoot = __DIR__ . '/config';
+        $configRoot = nm_config_root();
         if (!is_dir($configRoot)) {
             return false;
         }

@@ -404,18 +404,18 @@ if (is_file($configPath)) {
         $cfg = [];
     }
 }
-$GLOBALS['cfg'] = is_array($cfg) ? $cfg : [];
+$GLOBALS['cfg'] = nm_common_config_with_defaults(is_array($cfg) ? $cfg : []);
 
 // --------------------
 // TIMEZONE from config/<USER_NAME>/config.php
 // --------------------
-$tzName = (string)($GLOBALS['cfg']['TIMEZONE'] ?? 'Pacific/Auckland');
+$tzName = (string)$GLOBALS['cfg']['TIMEZONE'];
 
 // Validate timezone
 try {
     new DateTimeZone($tzName);
 } catch (Throwable $e) {
-    $tzName = 'Pacific/Auckland';
+    $tzName = (string)nm_common_config_defaults()['TIMEZONE'];
 }
 
 // --------------------

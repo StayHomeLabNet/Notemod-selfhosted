@@ -81,7 +81,7 @@ if (!function_exists('nm_rp_is_valid_username')) {
 
 if (!function_exists('nm_rp_auth_path')) {
     function nm_rp_auth_path(string $dirUser): string {
-        return __DIR__ . '/config/' . $dirUser . '/auth.php';
+        return nm_auth_config_path($dirUser);
     }
 }
 
@@ -154,7 +154,7 @@ if (!function_exists('nm_rp_find_user_by_user_param')) {
 
 if (!function_exists('nm_rp_log')) {
     function nm_rp_log(string $message): void {
-        $dir = __DIR__ . '/logs';
+        $dir = nm_logs_root();
         if (!is_dir($dir)) {
             @mkdir($dir, 0777, true);
         }
@@ -192,13 +192,14 @@ if ($tokenParam !== '') {
 }
 $u = nm_rp_toggle_urls('/reset_password.php', $lang, $theme, $extraParams);
 $loginUrl = nm_rp_url('/login.php');
+$passwordMinLength = nm_password_min_length();
 
 $t = [
     'ja' => [
         'title' => 'Notemod-selfhosted パスワード再設定',
         'brand' => 'Notemod-selfhosted',
         'subtitle' => '新しいパスワードを設定してください',
-        'password' => '新しいパスワード',
+        'password' => '新しいパスワード（' . $passwordMinLength . '文字以上）',
         'password_confirm' => '新しいパスワード（確認）',
         'submit' => 'パスワードを更新',
         'back' => 'ログイン画面に戻る',
@@ -213,7 +214,7 @@ $t = [
         'used' => 'このリセットリンクはすでに使用されています。',
         'mismatch' => 'パスワード確認が一致しません。',
         'required' => '新しいパスワードを入力してください。',
-        'min_length' => 'パスワードは10文字以上で入力してください。',
+        'min_length' => 'パスワードは' . $passwordMinLength . '文字以上で入力してください。',
         'save_failed' => 'パスワードの保存に失敗しました。',
         'note' => 'このリンクは30分間有効です。リンクが無効または期限切れの場合は、再度パスワードリセットを申請してください。',
         'csrf_invalid' => 'CSRFトークンが無効です。ページを再読み込みしてからもう一度お試しください。',
@@ -222,7 +223,7 @@ $t = [
         'title' => 'Notemod-selfhosted Password Reset',
         'brand' => 'Notemod-selfhosted',
         'subtitle' => 'Set your new password',
-        'password' => 'New password',
+        'password' => 'New password (min ' . $passwordMinLength . ' characters)',
         'password_confirm' => 'Confirm new password',
         'submit' => 'Update password',
         'back' => 'Back to login',
@@ -237,7 +238,7 @@ $t = [
         'used' => 'This reset link has already been used.',
         'mismatch' => 'Password confirmation does not match.',
         'required' => 'Please enter a new password.',
-        'min_length' => 'Password must be at least 10 characters long.',
+        'min_length' => 'Password must be at least ' . $passwordMinLength . ' characters long.',
         'save_failed' => 'Failed to save the new password.',
         'note' => 'This link is valid for 30 minutes. If the link is invalid or expired, please request a new password reset.',
         'csrf_invalid' => 'Invalid CSRF token. Please reload the page and try again.',
@@ -339,7 +340,7 @@ if ($validLink && (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST')) {
                 ]);
                 $errorMessage = $t[$lang]['required'];
                 $statusType = 'err';
-            } elseif (function_exists('mb_strlen') ? (mb_strlen($newPassword, 'UTF-8') < 10) : (strlen($newPassword) < 10)) {
+            } elseif (!nm_password_meets_minimum_length($newPassword)) {
                 nm_rate_limit_record_failure($bucketIp, 1800);
                 nm_rate_limit_record_failure($bucketUser, 1800);
                 nm_write_auth_event('password_reset_failed', [

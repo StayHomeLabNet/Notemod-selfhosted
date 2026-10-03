@@ -15,7 +15,7 @@ It stores notes in `notemod-data/<DIR_USER>/data.json` and provides Web UI sync,
 
 <br>
 
-![version](https://img.shields.io/badge/version-1.4.6-2ea44f)
+![version](https://img.shields.io/badge/version-1.4.7-2ea44f)
 ![license](https://img.shields.io/badge/license-MIT-97ca00)
 ![language](https://img.shields.io/badge/language-PHP-777bb4)
 ![database](https://img.shields.io/badge/database-not%20required-blue)
@@ -79,6 +79,19 @@ It is developed to **smoothly exchange text, images, and files between Windows P
 Verified shared hosting environments: Xserver, Sakura Internet, XREA, InfinityFree  
 Tested PHP: 8.3.21
 
+### Automated tests
+
+Run the dependency-free PHP test suite and HTTP security-header smoke tests locally:
+
+```bash
+php tests/run.php
+bash tests/http_smoke.sh
+```
+
+The PHP suite covers configuration defaults, storage paths, trusted-proxy IP and HTTPS detection, canonical URL validation, Unicode password length, media limits, concurrent rate-limit updates, index locking, atomic authentication-config writes, and encrypted-data integrity. The HTTP smoke test verifies the HTML, API, and unauthenticated image-response security policies against a temporary isolated storage directory.
+
+GitHub Actions runs PHP syntax checks and both test suites on PHP 8.1 through 8.5 for every push and pull request.
+
 ---
 ## Especially important points in this update
 
@@ -130,6 +143,19 @@ Tested PHP: 8.3.21
   - `setup_auth.php` no longer shows API tokens in plain text
   - `clipboard_sync.php` uses masked-by-default + temporary reveal
   - `media_files.php` was changed to a server-side relay design without exposing tokens to the browser
+
+---
+
+## Main additions and improvements in v1.4.7
+
+- Added `NM_STORAGE_ROOT` and updated `.gitignore` for the per-user storage layout, keeping runtime data and secrets out of version control
+- Added trusted-proxy-aware client IP and HTTPS detection through `NM_TRUSTED_PROXIES`
+- Replaced URLs derived from the `Host` header with validated `NM_PUBLIC_BASE_URL` and optional `NM_INTERNAL_BASE_URL` settings
+- Clarified image API authentication and applied private, no-store cache controls to protected responses
+- Made rate-limit state, authentication configuration, and media index updates concurrency-safe with locking and atomic writes
+- Added application-level upload, image-processing, and request-size limits
+- Unified Unicode-aware password length validation, security headers, CSP handling, and shared configuration defaults
+- Added dependency-free PHP tests, HTTP security smoke tests, and a PHP 8.1-8.5 GitHub Actions test matrix
 
 ---
 
@@ -204,7 +230,7 @@ Short-time repeated attempts are now restricted
 
 ### 9. Added audit logging
 - Added shared audit log handling to `auth_common.php`
-- Stored in **`logs/system/audit.log`** (JSON Lines)
+- Stored in **`logs/audit.log`** under `NM_STORAGE_ROOT` (JSON Lines)
 - Records events such as:
   - `login_success`
   - `login_failed`
@@ -251,6 +277,8 @@ Short-time repeated attempts are now restricted
   - `username`
 - Reorganized the old logic that re-assigned `$_GET['user']` later in the file and effectively invalidated the earlier helper-based resolution
 - This improves image retrieval so `dir_user` and `username` based access works as intended
+- Image retrieval requires either a logged-in Web UI session for the same user or that user's `EXPECTED_TOKEN`
+- Authenticated image responses use `Cache-Control: private, no-store`; resized derivatives may still be cached only on the server under the user's `.cache` directory
 
 ### 14. Features up to v1.4.5 continue
 - Saving authentication email addresses
@@ -317,8 +345,7 @@ Short-time repeated attempts are now restricted
   images/
   files/
 /logs/<DIR_USER>/
-/logs/system/
-  audit.log
+/logs/audit.log
 ```
 
 ---
@@ -327,11 +354,56 @@ Short-time repeated attempts are now restricted
 
 1. Download or clone this repository.
 2. Upload the files to the public directory of your server.
-3. Make sure `config/`, `logs/`, and `notemod-data/` are writable by PHP.
+3. Configure the runtime storage directory as described below. Using a directory outside the public directory is strongly recommended.
 4. Open `login.php` in your browser.
 5. After creating the first admin user, check SECRET, API token, encryption settings, and related options in `setup_auth.php`.
 
 > If you are migrating existing data, back up `notemod-data/<DIR_USER>/data.json` and `config/<DIR_USER>/` before making changes.
+
+### Runtime storage outside the public directory (recommended)
+
+Set the `NM_STORAGE_ROOT` environment variable to an absolute path that PHP can read and write. Notemod then stores `config/`, `notemod-data/`, and `logs/` under that path instead of under the application directory.
+
+```text
+NM_STORAGE_ROOT=/var/lib/notemod
+```
+
+For a new installation, create the directory, grant the PHP process read/write access, and set the environment variable before opening `setup_auth.php`. For an existing installation:
+
+1. Back up the current `config/`, `notemod-data/`, and `logs/` directories.
+2. Move all three directories under the new storage root without changing their names or contents.
+3. Set `NM_STORAGE_ROOT` in the PHP-FPM pool, Apache environment, container configuration, or hosting control panel.
+4. Restart or reload the PHP/web server and verify login, note sync, media access, and logging.
+
+The variable must contain an absolute path and must not point to the filesystem root itself. If it is unset, Notemod keeps using the legacy directories inside the application directory for backward compatibility. In that legacy layout, direct HTTP access must be denied by the web-server configuration; the generated `.htaccess` files only protect Apache-compatible servers.
+
+### Client IP behind a trusted reverse proxy
+
+By default, Notemod uses only `REMOTE_ADDR` and ignores client-supplied forwarding headers. If Notemod is behind a reverse proxy, set `NM_TRUSTED_PROXIES` to the proxy IP addresses or CIDR ranges:
+
+```text
+NM_TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8,2001:db8:1234::/48
+```
+
+Only when `REMOTE_ADDR` matches this list does Notemod inspect `X-Forwarded-For` and `X-Forwarded-Proto`. It evaluates the address chain from right to left and selects the first address that is not a trusted proxy. A validated `X-Forwarded-Proto: https` value is also used for secure cookies and HTTPS state detection. Configure the proxy to replace incoming forwarding headers with validated values, and keep the trusted ranges as narrow as possible. Leave the variable unset when no reverse proxy is used.
+
+### Canonical public and internal URLs
+
+Set `NM_PUBLIC_BASE_URL` to the canonical URL where Notemod is available. Include the installation subdirectory, if any, and do not include a query or fragment:
+
+```text
+NM_PUBLIC_BASE_URL=https://notes.example.com/notemod
+```
+
+Password-reset links use only this configured URL and are never generated from the request `Host` header. If it is not configured, reset mail delivery is skipped and the omission is recorded in `logs/forgot_password.log` without exposing account existence to the requester.
+
+The media screen also uses this URL for its server-side API calls. If the public address is not reachable from the server itself, set a separate internal address:
+
+```text
+NM_INTERNAL_BASE_URL=http://127.0.0.1/notemod
+```
+
+`NM_INTERNAL_BASE_URL` is optional and falls back to `NM_PUBLIC_BASE_URL`. Both values must be absolute `http` or `https` URLs without credentials, query parameters, fragments, or parent-directory segments. API URLs shown in the browser are completed using the configured public URL, or the browser's own origin when it is unset.
 
 ---
 
@@ -343,7 +415,7 @@ Upload the full repository contents to your public folder.
 ### 2. First access
 Access `setup_auth.php` / `index.php` and complete the initial setup.
 
-In v1.4.6, `setup_auth.php` sets:
+`setup_auth.php` manages the following settings:
 
 - Initial user
 - Password
@@ -388,10 +460,18 @@ Main keys:
 - `IP_ALERT_IGNORE_IPS`
 - `IP_ALERT_STORE`
 - `SESSION_COOKIE_LIFETIME`
+- `MAX_IMAGE_UPLOAD_BYTES`
+- `MAX_FILE_UPLOAD_BYTES`
+- `MAX_IMAGE_DIMENSION`
+- `MAX_IMAGE_PIXELS`
+- `MAX_RESIZE_DIMENSION`
+- `MAX_RESIZE_PIXELS`
 - `DATA_ENCRYPTION_ENABLED`
 - `DATA_ENCRYPTION_KEY`
 - `SYNC_PRE_SAVE_BACKUP_ENABLED`
 - `SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED`
+
+Uploads and image decoding are also limited by the application before files are stored or GD allocates image buffers. Defaults are 10 MiB for images, 25 MiB for other files, 10,000 px / 25 megapixels for source images, and 2,000 px / 4 megapixels for resized images. PHP's `upload_max_filesize` and `post_max_size` remain separate limits; the lowest applicable limit wins.
 
 ### API settings
 `config/<DIR_USER>/config.api.php`
@@ -494,11 +574,15 @@ If possible, configure BASIC authentication for `api/`.
 If BASIC authentication is not available, you can still achieve a reasonable level of security by operating with Web UI authentication using `setup_auth.php`, `login.php`, and `logout.php`.
 
 ### Additional Web UI protections
-v1.4.6 introduces the following extra protections:
+The following additional protections are applied:
 
-- security headers
+- response-type-specific security headers for HTML, API/text, and binary responses, including a Content Security Policy (CSP)
+- centralized common configuration defaults shared by setup, settings screens, APIs, and logging
 - CSRF protection
 - rate limiting for `login.php` / `forgot_password.php` / `reset_password.php`
+- shared/exclusive file locking and atomic replacement for concurrent rate-limit state updates
+- per-index exclusive locking from read through atomic replacement for concurrent upload, media-lock, and cleanup updates
+- one shared 10-character Unicode-aware minimum-password check for initial setup, account changes, and password resets
 - audit logging
 - session regeneration on successful login via `session_regenerate_id(true)`
 - reduced plain-text exposure of API tokens in `setup_auth.php`, `clipboard_sync.php`, and `media_files.php`
@@ -510,10 +594,10 @@ v1.4.6 introduces the following extra protections:
 
 ### SMTP password
 - `SMTP_PASSWORD` in `config/mail.php` is stored in plain text
-- Operate on the assumption that `config/mail.php` is not publicly accessible
+- Prefer an `NM_STORAGE_ROOT` outside the public directory so that `config/mail.php` cannot be served directly
 
 ### Audit log
-- Path: `logs/system/audit.log`
+- Path: `<NM_STORAGE_ROOT>/logs/audit.log` (`logs/audit.log` when `NM_STORAGE_ROOT` is unset)
 - Format: JSON Lines
 - Secret values such as passwords, API tokens, SECRET, and SMTP password are not recorded
 
@@ -548,10 +632,21 @@ v1.4.6 introduces the following extra protections:
 - Update media lock state
 
 ### `api/image_api.php`
-- Serve images
+- Serve authenticated images
 - Simple resizing
-- Cache control
 - Supports user resolution via `user` / `dir_user` / `username`
+- Accepts a same-user Web UI session, `Authorization: Bearer <EXPECTED_TOKEN>`, or `X-Notemod-Token: <EXPECTED_TOKEN>`
+- Does not accept API tokens in the URL query string
+- Returns `Cache-Control: private, no-store, no-cache, must-revalidate, max-age=0` so browsers and shared proxies do not retain protected image responses
+- Keeps resized derivatives in a server-side `.cache` directory; this disk cache is never a public HTTP cache policy
+
+Example:
+
+```bash
+curl -H 'Authorization: Bearer YOUR_EXPECTED_TOKEN' \
+  'https://notes.example.com/notemod/api/image_api.php?user=YOUR_DIR_USER&file=photo.png' \
+  --output photo.png
+```
 
 ### `api/append_api.php`
 - Append to the end of an existing note

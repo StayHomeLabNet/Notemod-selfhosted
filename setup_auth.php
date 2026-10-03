@@ -38,6 +38,7 @@ nm_auth_start_session();
 $ui    = nm_ui_bootstrap();
 $lang  = $ui['lang'];
 $theme = $ui['theme'];
+$passwordMinLength = nm_password_min_length();
 
 // --------------------
 // i18n
@@ -51,7 +52,7 @@ $t = [
     'dir_user' => '保存ディレクトリ:',
 
     'username' => 'ユーザー名',
-    'password' => 'パスワード（10文字以上）',
+    'password' => 'パスワード（' . $passwordMinLength . '文字以上）',
     'password2'=> 'パスワード（再入力）',
     'email' => 'メールアドレス',
     'password_optional' => '※ 変更時は、パスワードを空欄のまま保存すると変更しません',
@@ -59,7 +60,7 @@ $t = [
     'ok' => '保存しました',
     'err_write_auth' => '認証設定の保存に失敗しました（権限を確認）',
     'err_pw_mismatch' => 'パスワードが一致しません',
-    'err_pw_short' => 'パスワードは10文字以上にしてください',
+    'err_pw_short' => 'パスワードは' . $passwordMinLength . '文字以上にしてください',
     'err_user_empty' => 'ユーザー名が空です',
     'err_user_invalid' => 'ユーザー名が無効です（英小文字・数字・_・- を使用）',
     'err_email_empty' => 'メールアドレスを入力してください',
@@ -122,7 +123,7 @@ $t = [
     'dir_user' => 'Storage directory:',
 
     'username' => 'Username',
-    'password' => 'Password (min 10 chars)',
+    'password' => 'Password (min ' . $passwordMinLength . ' characters)',
     'password2'=> 'Repeat password',
     'email' => 'Email address',
     'password_optional' => 'Leave the password blank to keep the current password when editing.',
@@ -130,7 +131,7 @@ $t = [
     'ok' => 'Saved',
     'err_write_auth' => 'Failed to save authentication settings (permission?)',
     'err_pw_mismatch' => 'Passwords do not match',
-    'err_pw_short' => 'Password must be at least 10 characters',
+    'err_pw_short' => 'Password must be at least ' . $passwordMinLength . ' characters',
     'err_user_empty' => 'Username is empty',
     'err_user_invalid' => 'Invalid username (use lowercase letters, numbers, _ and -)',
     'err_email_empty' => 'Email address is required',
@@ -409,41 +410,16 @@ function nm_ensure_secret_in_config(string $configPath, string $dirUser, bool &$
         if (!is_array($cfg)) {
             $cfg = [];
         }
+        $cfg = nm_common_config_with_defaults($cfg);
     } else {
-        $cfg = [
-            'TIMEZONE' => 'Asia/Tokyo',
-            'DEBUG' => false,
-            'LOGGER_FILE_ENABLED' => true,
-            'LOGGER_NOTEMOD_ENABLED' => false,
-            'SYNC_PRE_SAVE_BACKUP_ENABLED' => true,
-            'SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED' => false,
-            'DATA_ENCRYPTION_ENABLED' => false,
-            'DATA_ENCRYPTION_KEY' => nm_generate_encryption_key(32),
-            'SESSION_COOKIE_LIFETIME' => 0,
-            'IP_ALERT_ENABLED' => false,
-            'IP_ALERT_TO' => 'YOUR_EMAIL',
-            'IP_ALERT_FROM' => 'no-reply@notemod',
-            'IP_ALERT_SUBJECT' => 'Notemod: First-time IP access',
-            'IP_ALERT_IGNORE_BOTS' => true,
-            'IP_ALERT_IGNORE_IPS' => array(),
-            // IP_ALERT_STORE is intentionally omitted.
-            // logger.php resolves notemod-data/<DIR_USER>/_known_ips.json automatically.
-            'LOGGER_FILE_MAX_LINES' => 500,
-            'LOGGER_NOTEMOD_MAX_LINES' => 50,
-        ];
+        $cfg = nm_common_config_defaults();
+        $cfg['DATA_ENCRYPTION_KEY'] = nm_generate_encryption_key(32);
     }
 
     if (array_key_exists('IP_ALERT_IGNORE_IPS', $cfg)) {
         $cfg['IP_ALERT_IGNORE_IPS'] = nm_normalize_ip_alert_ignore_ips($cfg['IP_ALERT_IGNORE_IPS']);
     } else {
         $cfg['IP_ALERT_IGNORE_IPS'] = array();
-    }
-
-    if (!array_key_exists('SYNC_PRE_SAVE_BACKUP_ENABLED', $cfg)) {
-        $cfg['SYNC_PRE_SAVE_BACKUP_ENABLED'] = true;
-    }
-    if (!array_key_exists('SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED', $cfg)) {
-        $cfg['SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED'] = false;
     }
 
     if (isset($cfg['SECRET']) && is_string($cfg['SECRET']) && trim($cfg['SECRET']) !== '') {
@@ -544,7 +520,7 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $dir
 function create_user_environment(string $dirUser, string $username, string $password, string $email): bool
 {
     $dirUser = normalize_username($dirUser);
-    if ($dirUser === '' || $password === '') return false;
+    if ($dirUser === '' || !nm_password_meets_minimum_length($password)) return false;
 
     $configDir = nm_config_dir($dirUser);
     $logsDir   = nm_logs_dir($dirUser);
@@ -612,26 +588,26 @@ $previewUser    = normalize_username((string)($_POST['username'] ?? $_GET['usern
 $currentDirUser = nm_get_current_dir_user();
 $targetDirUser  = $currentDirUser !== '' ? $currentDirUser : $previewUser;
 
-$authGlob = glob(__DIR__ . '/config/*/auth.php');
+$authGlob = glob(nm_config_root() . '/*/auth.php');
 $hasAnyUser = is_array($authGlob) && count($authGlob) > 0;
 
-$configDir     = $targetDirUser !== '' ? __DIR__ . '/config/' . $targetDirUser : __DIR__ . '/config';
-$authPath      = $targetDirUser !== '' ? __DIR__ . '/config/' . $targetDirUser . '/auth.php' : '';
-$configPath    = $targetDirUser !== '' ? __DIR__ . '/config/' . $targetDirUser . '/config.php' : '';
-$configApiPath = $targetDirUser !== '' ? __DIR__ . '/config/' . $targetDirUser . '/config.api.php' : '';
-$dataJsonPath  = $targetDirUser !== '' ? __DIR__ . '/notemod-data/' . $targetDirUser . '/data.json' : '';
-$dataDirPath   = $targetDirUser !== '' ? __DIR__ . '/notemod-data/' . $targetDirUser : '';
+$configDir     = $targetDirUser !== '' ? nm_config_dir($targetDirUser) : nm_config_root();
+$authPath      = $targetDirUser !== '' ? nm_auth_config_path($targetDirUser) : '';
+$configPath    = $targetDirUser !== '' ? nm_config_path($targetDirUser) : '';
+$configApiPath = $targetDirUser !== '' ? nm_api_config_path($targetDirUser) : '';
+$dataJsonPath  = $targetDirUser !== '' ? nm_data_json_path($targetDirUser) : '';
+$dataDirPath   = $targetDirUser !== '' ? nm_data_dir($targetDirUser) : '';
 
 $isLoggedIn = function_exists('nm_auth_is_logged_in') ? (bool)nm_auth_is_logged_in() : false;
 $loggedUser = $isLoggedIn ? nm_get_current_user() : '';
 if ($targetDirUser === '' && $isLoggedIn) {
     $targetDirUser = nm_get_current_dir_user();
-    $configDir     = __DIR__ . '/config/' . $targetDirUser;
-    $authPath      = __DIR__ . '/config/' . $targetDirUser . '/auth.php';
-    $configPath    = __DIR__ . '/config/' . $targetDirUser . '/config.php';
-    $configApiPath = __DIR__ . '/config/' . $targetDirUser . '/config.api.php';
-    $dataJsonPath  = __DIR__ . '/notemod-data/' . $targetDirUser . '/data.json';
-    $dataDirPath   = __DIR__ . '/notemod-data/' . $targetDirUser;
+    $configDir     = nm_config_dir($targetDirUser);
+    $authPath      = nm_auth_config_path($targetDirUser);
+    $configPath    = nm_config_path($targetDirUser);
+    $configApiPath = nm_api_config_path($targetDirUser);
+    $dataJsonPath  = nm_data_json_path($targetDirUser);
+    $dataDirPath   = nm_data_dir($targetDirUser);
 }
 
 $already = ($targetDirUser !== '' && file_exists($authPath));
@@ -699,7 +675,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $err = $t[$lang]['err_email_invalid'];
         } elseif ($p1 !== $p2) {
             $err = $t[$lang]['err_pw_mismatch'];
-        } elseif (strlen($p1) < 10) {
+        } elseif (!nm_password_meets_minimum_length($p1)) {
             $err = $t[$lang]['err_pw_short'];
         } elseif (user_exists($uDir)) {
             $err = $t[$lang]['exists'];
@@ -708,12 +684,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $err = $t[$lang]['err_write_auth'];
             } else {
                 $targetDirUser  = $uDir;
-                $configDir      = __DIR__ . '/config/' . $targetDirUser;
-                $authPath       = __DIR__ . '/config/' . $targetDirUser . '/auth.php';
-                $configPath     = __DIR__ . '/config/' . $targetDirUser . '/config.php';
-                $configApiPath  = __DIR__ . '/config/' . $targetDirUser . '/config.api.php';
-                $dataJsonPath   = __DIR__ . '/notemod-data/' . $targetDirUser . '/data.json';
-                $dataDirPath    = __DIR__ . '/notemod-data/' . $targetDirUser;
+                $configDir      = nm_config_dir($targetDirUser);
+                $authPath       = nm_auth_config_path($targetDirUser);
+                $configPath     = nm_config_path($targetDirUser);
+                $configApiPath  = nm_api_config_path($targetDirUser);
+                $dataJsonPath   = nm_data_json_path($targetDirUser);
+                $dataDirPath    = nm_data_dir($targetDirUser);
                 $hasAnyUser     = true;
                 $already        = true;
                 $canEditAuth    = true;
@@ -738,7 +714,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         } elseif ($p1 !== '' || $p2 !== '') {
             if ($p1 !== $p2) {
                 $err = $t[$lang]['err_pw_mismatch'];
-            } elseif (strlen($p1) < 10) {
+            } elseif (!nm_password_meets_minimum_length($p1)) {
                 $err = $t[$lang]['err_pw_short'];
             }
         }

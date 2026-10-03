@@ -79,7 +79,7 @@ if (!function_exists('nm_fp_normalize_email_for_compare')) {
 
 if (!function_exists('nm_fp_auth_path')) {
     function nm_fp_auth_path(string $dirUser): string {
-        return __DIR__ . '/config/' . $dirUser . '/auth.php';
+        return nm_auth_config_path($dirUser);
     }
 }
 
@@ -95,7 +95,7 @@ if (!function_exists('nm_fp_load_auth_file')) {
 
 if (!function_exists('nm_fp_find_all_auth_records')) {
     function nm_fp_find_all_auth_records(): array {
-        $configRoot = __DIR__ . '/config';
+        $configRoot = nm_config_root();
         $results = [];
         if (!is_dir($configRoot)) {
             return $results;
@@ -164,7 +164,7 @@ if (!function_exists('nm_fp_generate_reset_token')) {
 
 if (!function_exists('nm_fp_log')) {
     function nm_fp_log(string $message): void {
-        $dir = __DIR__ . '/logs';
+        $dir = nm_logs_root();
         if (!is_dir($dir)) {
             @mkdir($dir, 0777, true);
         }
@@ -195,25 +195,13 @@ if (!function_exists('nm_fp_send_reset_mail')) {
     }
 }
 
-if (!function_exists('nm_fp_detect_scheme')) {
-    function nm_fp_detect_scheme(): string {
-        if ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (string)($_SERVER['SERVER_PORT'] ?? '') === '443') {
-            return 'https';
-        }
-        return 'http';
-    }
-}
-
 if (!function_exists('nm_fp_build_reset_url')) {
     function nm_fp_build_reset_url(string $dirUser, string $token): string {
-        $scheme = nm_fp_detect_scheme();
-        $host = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
-        $scriptDir = str_replace('\\', '/', dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/')));
-        if ($scriptDir === '/' || $scriptDir === '\\') {
-            $scriptDir = '';
+        $base = nm_public_url('/reset_password.php');
+        if ($base === '') {
+            return '';
         }
-        $base = rtrim($scheme . '://' . $host . $scriptDir, '/');
-        return $base . '/reset_password.php?user=' . rawurlencode($dirUser) . '&token=' . rawurlencode($token);
+        return $base . '?user=' . rawurlencode($dirUser) . '&token=' . rawurlencode($token);
     }
 }
 
@@ -388,33 +376,37 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
                     if ($email !== '') {
                         $plainToken = nm_fp_generate_reset_token();
+                        $resetUrl = nm_fp_build_reset_url($dirUser, $plainToken);
 
-                        $auth['PASSWORD_RESET_TOKEN'] = '';
-                        $auth['PASSWORD_RESET_TOKEN_HASH'] = nm_fp_password_reset_token_hash($plainToken);
-                        $auth['PASSWORD_RESET_TOKEN_EXPIRES_AT'] = time() + 1800;
-
-                        if (nm_fp_write_auth_full($dirUser, $auth)) {
-                            $resetUrl = nm_fp_build_reset_url($dirUser, $plainToken);
-
-                            $from = '';
-                            if (function_exists('nm_load_mail_config')) {
-                                $mailCfg = nm_load_mail_config();
-                                if (is_array($mailCfg)) {
-                                    $from = trim((string)($mailCfg['SMTP_FROM'] ?? ''));
-                                }
-                            }
-
-                            nm_fp_send_reset_mail($email, $resetUrl, $lang, $from);
-                            nm_write_auth_event('password_reset_requested', [
-                                'input' => $auditInput,
-                                'username' => $username,
-                                'dir_user' => $dirUser,
-                                'email_masked' => function_exists('nm_mask_email_for_audit') ? nm_mask_email_for_audit($email) : $email,
-                                'reason' => 'matched',
-                            ]);
-                            nm_fp_log('reset requested dir_user=' . $dirUser . ' username=' . $username . ' email=' . $email);
+                        if ($resetUrl === '') {
+                            nm_fp_log('password reset mail skipped: NM_PUBLIC_BASE_URL is not configured');
                         } else {
-                            nm_fp_log('failed to write auth reset fields dir_user=' . $dirUser);
+                            $auth['PASSWORD_RESET_TOKEN'] = '';
+                            $auth['PASSWORD_RESET_TOKEN_HASH'] = nm_fp_password_reset_token_hash($plainToken);
+                            $auth['PASSWORD_RESET_TOKEN_EXPIRES_AT'] = time() + 1800;
+
+                            if (nm_fp_write_auth_full($dirUser, $auth)) {
+
+                                $from = '';
+                                if (function_exists('nm_load_mail_config')) {
+                                    $mailCfg = nm_load_mail_config();
+                                    if (is_array($mailCfg)) {
+                                        $from = trim((string)($mailCfg['SMTP_FROM'] ?? ''));
+                                    }
+                                }
+
+                                nm_fp_send_reset_mail($email, $resetUrl, $lang, $from);
+                                nm_write_auth_event('password_reset_requested', [
+                                    'input' => $auditInput,
+                                    'username' => $username,
+                                    'dir_user' => $dirUser,
+                                    'email_masked' => function_exists('nm_mask_email_for_audit') ? nm_mask_email_for_audit($email) : $email,
+                                    'reason' => 'matched',
+                                ]);
+                                nm_fp_log('reset requested dir_user=' . $dirUser . ' username=' . $username . ' email=' . $email);
+                            } else {
+                                nm_fp_log('failed to write auth reset fields dir_user=' . $dirUser);
+                            }
                         }
                     }
                 }

@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
 
+defined('NM_APP_VERSION') || define('NM_APP_VERSION', '1.4.7');
+defined('NM_REPOSITORY_URL') || define('NM_REPOSITORY_URL', 'https://github.com/StayHomeLabNet/Notemod-selfhosted');
+
 // ==============================
 // Username / DIR_USER helpers
 // ==============================
@@ -17,6 +20,81 @@ function normalize_username(string $username): string
     $username = strtolower($username);
     $username = preg_replace('/[^a-z0-9_-]/', '', $username) ?? '';
     return $username;
+}
+
+// ==============================
+// Password policy helpers
+// ==============================
+
+function nm_password_min_length(): int
+{
+    return 10;
+}
+
+function nm_password_character_length(string $password): int
+{
+    if (function_exists('mb_strlen')) {
+        return mb_strlen($password, 'UTF-8');
+    }
+
+    $count = preg_match_all('/./us', $password, $matches);
+    return $count === false ? strlen($password) : $count;
+}
+
+function nm_password_meets_minimum_length(string $password): bool
+{
+    return nm_password_character_length($password) >= nm_password_min_length();
+}
+
+// ==============================
+// Storage path helpers
+// ==============================
+
+/**
+ * Runtime storage root. Set NM_STORAGE_ROOT to an absolute path outside the
+ * web document root in production. The project directory remains the legacy
+ * default so existing installations continue to work without migration.
+ */
+function nm_storage_root(): string
+{
+    $configured = getenv('NM_STORAGE_ROOT');
+    if ($configured === false || trim($configured) === '') {
+        $configured = (string)($_SERVER['NM_STORAGE_ROOT'] ?? '');
+    }
+
+    $configured = trim((string)$configured);
+    if ($configured === '') {
+        return __DIR__;
+    }
+
+    $isAbsolute = str_starts_with($configured, '/')
+        || str_starts_with($configured, '\\\\')
+        || (bool)preg_match('/^[A-Za-z]:[\\\\\/]/', $configured);
+    if (!$isAbsolute) {
+        throw new RuntimeException('NM_STORAGE_ROOT must be an absolute path.');
+    }
+
+    $configured = rtrim($configured, "/\\");
+    if ($configured === '' || (bool)preg_match('/^[A-Za-z]:$/', $configured)) {
+        throw new RuntimeException('NM_STORAGE_ROOT must not be a filesystem root.');
+    }
+
+    return $configured;
+}
+
+function nm_config_root(): string
+{
+    return nm_storage_root() . '/config';
+}
+
+function nm_data_root(): string
+{
+    return nm_storage_root() . '/notemod-data';
+}
+
+function nm_logs_root(): string
+{
+    return nm_storage_root() . '/logs';
 }
 
 // ==============================
@@ -74,6 +152,103 @@ function nm_url(string $path = ''): string
     return $base . '/' . ltrim($path, '/');
 }
 
+function nm_configured_base_url(string $environmentName): string
+{
+    $value = getenv($environmentName);
+    if ($value === false || trim($value) === '') {
+        $value = (string)($_SERVER[$environmentName] ?? '');
+    }
+
+    $value = trim((string)$value);
+    if ($value === '') {
+        return '';
+    }
+    if (preg_match('/[\x00-\x20\\\\]/', $value)) {
+        throw new RuntimeException($environmentName . ' contains invalid characters.');
+    }
+
+    $parts = parse_url($value);
+    if (!is_array($parts)) {
+        throw new RuntimeException($environmentName . ' must be a valid absolute URL.');
+    }
+
+    $scheme = strtolower((string)($parts['scheme'] ?? ''));
+    $host = (string)($parts['host'] ?? '');
+    if (!in_array($scheme, ['http', 'https'], true) || $host === '') {
+        throw new RuntimeException($environmentName . ' must use an http or https URL with a host.');
+    }
+    if (isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+        throw new RuntimeException($environmentName . ' must not include credentials, a query, or a fragment.');
+    }
+    if (preg_match('/[\s\\\\\/@]/', $host)) {
+        throw new RuntimeException($environmentName . ' contains an invalid host.');
+    }
+    $hostForValidation = $host;
+    if (str_starts_with($host, '[') && str_ends_with($host, ']')) {
+        $hostForValidation = substr($host, 1, -1);
+    }
+    $validHost = filter_var($hostForValidation, FILTER_VALIDATE_IP) !== false
+        || filter_var($hostForValidation, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false;
+    if (!$validHost) {
+        throw new RuntimeException($environmentName . ' contains an invalid host.');
+    }
+
+    $port = isset($parts['port']) ? (int)$parts['port'] : null;
+    if ($port !== null && ($port < 1 || $port > 65535)) {
+        throw new RuntimeException($environmentName . ' contains an invalid port.');
+    }
+
+    $path = (string)($parts['path'] ?? '');
+    if ($path !== '' && $path[0] !== '/') {
+        throw new RuntimeException($environmentName . ' contains an invalid path.');
+    }
+    $decodedPath = rawurldecode($path);
+    if (preg_match('/[\x00-\x20\\\\]/', $decodedPath)) {
+        throw new RuntimeException($environmentName . ' contains an invalid path.');
+    }
+    foreach (explode('/', $decodedPath) as $segment) {
+        if ($segment === '..') {
+            throw new RuntimeException($environmentName . ' must not contain parent path segments.');
+        }
+    }
+
+    $authority = $host;
+    if ($port !== null) {
+        $authority .= ':' . $port;
+    }
+
+    return rtrim($scheme . '://' . $authority . $path, '/');
+}
+
+function nm_public_base_url(): string
+{
+    return nm_configured_base_url('NM_PUBLIC_BASE_URL');
+}
+
+function nm_internal_base_url(): string
+{
+    $internal = nm_configured_base_url('NM_INTERNAL_BASE_URL');
+    return $internal !== '' ? $internal : nm_public_base_url();
+}
+
+function nm_join_base_url(string $baseUrl, string $path): string
+{
+    if ($baseUrl === '') {
+        return '';
+    }
+    return rtrim($baseUrl, '/') . '/' . ltrim($path, '/');
+}
+
+function nm_public_url(string $path = ''): string
+{
+    return nm_join_base_url(nm_public_base_url(), $path);
+}
+
+function nm_internal_url(string $path = ''): string
+{
+    return nm_join_base_url(nm_internal_base_url(), $path);
+}
+
 // ==============================
 // Session / Config helpers
 // ==============================
@@ -120,16 +295,53 @@ function nm_read_php_config_array(string $configPath): array
 }
 }
 
+if (!function_exists('nm_common_config_defaults')) {
+function nm_common_config_defaults(): array
+{
+    return [
+        'TIMEZONE' => 'Asia/Tokyo',
+        'DEBUG' => false,
+        'LOGGER_FILE_ENABLED' => true,
+        'LOGGER_NOTEMOD_ENABLED' => false,
+        'SYNC_PRE_SAVE_BACKUP_ENABLED' => true,
+        'SYNC_PRE_SAVE_BACKUP_PRUNE_ENABLED' => false,
+        'DATA_ENCRYPTION_ENABLED' => false,
+        'SESSION_COOKIE_LIFETIME' => 0,
+        'MAX_IMAGE_UPLOAD_BYTES' => 10 * 1024 * 1024,
+        'MAX_FILE_UPLOAD_BYTES' => 25 * 1024 * 1024,
+        'MAX_IMAGE_DIMENSION' => 10000,
+        'MAX_IMAGE_PIXELS' => 25000000,
+        'MAX_RESIZE_DIMENSION' => 2000,
+        'MAX_RESIZE_PIXELS' => 4000000,
+        'IP_ALERT_ENABLED' => false,
+        'IP_ALERT_TO' => 'YOUR_EMAIL',
+        'IP_ALERT_FROM' => 'no-reply@notemod',
+        'IP_ALERT_SUBJECT' => 'Notemod: First-time IP access',
+        'IP_ALERT_IGNORE_BOTS' => true,
+        'IP_ALERT_IGNORE_IPS' => [],
+        'LOGGER_FILE_MAX_LINES' => 500,
+        'LOGGER_NOTEMOD_MAX_LINES' => 50,
+    ];
+}
+}
+
+if (!function_exists('nm_common_config_with_defaults')) {
+function nm_common_config_with_defaults(array $config): array
+{
+    return array_replace(nm_common_config_defaults(), $config);
+}
+}
+
 if (!function_exists('nm_read_common_config_for_dir_user')) {
 function nm_read_common_config_for_dir_user(?string $dirUser = null): array
 {
     $dirUser = nm_guess_dir_user_for_cookie($dirUser);
     if ($dirUser === '') {
-        return [];
+        return nm_common_config_defaults();
     }
 
-    $configPath = __DIR__ . '/config/' . $dirUser . '/config.php';
-    return nm_read_php_config_array($configPath);
+    $configPath = nm_config_root() . '/' . $dirUser . '/config.php';
+    return nm_common_config_with_defaults(nm_read_php_config_array($configPath));
 }
 }
 
@@ -200,7 +412,7 @@ function nm_refresh_dir_user_cookie(?string $dirUser = null, ?int $lifetime = nu
     }
 
     $cookiePath = nm_auth_cookie_path();
-    $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    $secure = nm_is_https_request();
     $lifetime = $lifetime ?? nm_session_cookie_lifetime_value($dirUser);
     $expires = $lifetime > 0 ? (time() + $lifetime) : 0;
 
@@ -223,7 +435,7 @@ function nm_refresh_dir_user_cookie(?string $dirUser = null, ?int $lifetime = nu
 function nm_clear_dir_user_cookie(): void
 {
     $cookiePath = nm_auth_cookie_path();
-    $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    $secure = nm_is_https_request();
 
     if (PHP_VERSION_ID >= 70300) {
         setcookie('nm_dir_user', '', [
@@ -253,7 +465,7 @@ function nm_auth_start_session(?string $dirUser = null): void
     @ini_set('session.use_strict_mode', '1');
 
     $cookiePath = nm_auth_cookie_path();
-    $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    $secure = nm_is_https_request();
     $lifetime = nm_session_cookie_lifetime_value($dirUser);
 
     if (PHP_VERSION_ID >= 70300) {
@@ -280,33 +492,50 @@ function nm_auth_start_session(?string $dirUser = null): void
 // Security headers helpers
 // ==============================
 
-if (!function_exists('nm_send_security_headers_html')) {
-function nm_send_security_headers_html(): void
+if (!function_exists('nm_send_security_headers_base')) {
+function nm_send_security_headers_base(string $frameOptions, string $referrerPolicy): void
 {
     if (headers_sent()) {
         return;
     }
 
     header('X-Content-Type-Options: nosniff');
-    header('X-Frame-Options: SAMEORIGIN');
-    header('Referrer-Policy: same-origin');
+    header('X-Frame-Options: ' . $frameOptions);
+    header('Referrer-Policy: ' . $referrerPolicy);
+    header('Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), usb=()');
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
+    header('Expires: 0');
+}
+}
+
+if (!function_exists('nm_send_security_headers_html')) {
+function nm_send_security_headers_html(): void
+{
+    nm_send_security_headers_base('SAMEORIGIN', 'same-origin');
+    if (!headers_sent()) {
+        header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; media-src 'self' blob:");
+    }
 }
 }
 
 if (!function_exists('nm_send_security_headers_json')) {
 function nm_send_security_headers_json(): void
 {
-    if (headers_sent()) {
-        return;
+    nm_send_security_headers_base('DENY', 'no-referrer');
+    if (!headers_sent()) {
+        header("Content-Security-Policy: default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox");
     }
+}
+}
 
-    header('X-Content-Type-Options: nosniff');
-    header('X-Frame-Options: SAMEORIGIN');
-    header('Referrer-Policy: same-origin');
-    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-    header('Pragma: no-cache');
+if (!function_exists('nm_send_security_headers_binary')) {
+function nm_send_security_headers_binary(): void
+{
+    nm_send_security_headers_base('DENY', 'no-referrer');
+    if (!headers_sent()) {
+        header("Content-Security-Policy: default-src 'none'; base-uri 'none'; frame-ancestors 'none'; sandbox");
+    }
 }
 }
 
@@ -485,19 +714,19 @@ function nm_resolve_effective_dir_user(?string $dirUser = null): string
 function nm_config_dir(?string $dirUser = null): string
 {
     $dirUser = nm_resolve_effective_dir_user($dirUser);
-    return __DIR__ . '/config/' . $dirUser;
+    return nm_config_root() . '/' . $dirUser;
 }
 
 function nm_data_dir(?string $dirUser = null): string
 {
     $dirUser = nm_resolve_effective_dir_user($dirUser);
-    return __DIR__ . '/notemod-data/' . $dirUser;
+    return nm_data_root() . '/' . $dirUser;
 }
 
 function nm_logs_dir(?string $dirUser = null): string
 {
     $dirUser = nm_resolve_effective_dir_user($dirUser);
-    return __DIR__ . '/logs/' . $dirUser;
+    return nm_logs_root() . '/' . $dirUser;
 }
 
 // 互換名（マルチユーザー版寄せ）
@@ -550,6 +779,101 @@ function nm_files_dir(?string $dirUser = null): string
 {
     $dirUser = nm_resolve_effective_dir_user($dirUser);
     return nm_data_dir($dirUser) . '/files';
+}
+
+// ==============================
+// Upload / image processing limits
+// ==============================
+
+function nm_media_limit_value(array $config, string $key, int $default): int
+{
+    $value = $config[$key] ?? $default;
+    if (is_string($value) && ctype_digit($value)) {
+        $value = (int)$value;
+    }
+
+    return is_int($value) && $value > 0 ? $value : $default;
+}
+
+function nm_media_limits(?string $dirUser = null): array
+{
+    $defaults = nm_common_config_defaults();
+    $config = nm_common_config_with_defaults(nm_read_php_config_array(nm_config_path($dirUser)));
+
+    return [
+        'image_upload_bytes' => nm_media_limit_value($config, 'MAX_IMAGE_UPLOAD_BYTES', $defaults['MAX_IMAGE_UPLOAD_BYTES']),
+        'file_upload_bytes' => nm_media_limit_value($config, 'MAX_FILE_UPLOAD_BYTES', $defaults['MAX_FILE_UPLOAD_BYTES']),
+        'image_dimension' => nm_media_limit_value($config, 'MAX_IMAGE_DIMENSION', $defaults['MAX_IMAGE_DIMENSION']),
+        'image_pixels' => nm_media_limit_value($config, 'MAX_IMAGE_PIXELS', $defaults['MAX_IMAGE_PIXELS']),
+        'resize_dimension' => nm_media_limit_value($config, 'MAX_RESIZE_DIMENSION', $defaults['MAX_RESIZE_DIMENSION']),
+        'resize_pixels' => nm_media_limit_value($config, 'MAX_RESIZE_PIXELS', $defaults['MAX_RESIZE_PIXELS']),
+    ];
+}
+
+function nm_file_size_bytes(string $path): ?int
+{
+    clearstatcache(true, $path);
+    $size = @filesize($path);
+    return is_int($size) && $size >= 0 ? $size : null;
+}
+
+function nm_image_dimensions_allowed(int $width, int $height, int $maxDimension, int $maxPixels): bool
+{
+    if ($width < 1 || $height < 1 || $width > $maxDimension || $height > $maxDimension) {
+        return false;
+    }
+
+    return $width <= intdiv($maxPixels, $height);
+}
+
+function nm_calculate_resize_dimensions(int $sourceWidth, int $sourceHeight, int $requestedWidth, int $requestedHeight): ?array
+{
+    if ($sourceWidth < 1 || $sourceHeight < 1 || $requestedWidth < 0 || $requestedHeight < 0) {
+        return null;
+    }
+
+    if ($requestedWidth === 0 && $requestedHeight === 0) {
+        return [$sourceWidth, $sourceHeight];
+    }
+    if ($requestedWidth === 0) {
+        $requestedWidth = (int)round($sourceWidth * ($requestedHeight / $sourceHeight));
+    } elseif ($requestedHeight === 0) {
+        $requestedHeight = (int)round($sourceHeight * ($requestedWidth / $sourceWidth));
+    }
+
+    if ($requestedWidth < 1 || $requestedHeight < 1) {
+        return null;
+    }
+
+    return [$requestedWidth, $requestedHeight];
+}
+
+function nm_release_gd_image(&$image): void
+{
+    if ($image !== null && $image !== false && PHP_VERSION_ID < 80500 && function_exists('imagedestroy')) {
+        @imagedestroy($image);
+    }
+    $image = null;
+}
+
+function nm_with_index_lock(string $indexPath, callable $operation)
+{
+    $lockPath = $indexPath . '.lock';
+    $lockHandle = @fopen($lockPath, 'c+');
+    if ($lockHandle === false) {
+        return null;
+    }
+    if (!@flock($lockHandle, LOCK_EX)) {
+        @fclose($lockHandle);
+        return null;
+    }
+
+    try {
+        return $operation();
+    } finally {
+        @flock($lockHandle, LOCK_UN);
+        @fclose($lockHandle);
+    }
 }
 
 // Legacy root-path helpers (do not use in normal flow)
@@ -646,9 +970,9 @@ function nm_ensure_core_protection_htaccess(?string $dirUser = null, bool $overw
 {
     $ok = true;
 
-    $rootConfig = nm_legacy_root_config_dir();
-    $rootLogs   = nm_legacy_root_logs_dir();
-    $rootData   = nm_legacy_root_data_dir();
+    $rootConfig = nm_config_root();
+    $rootLogs   = nm_logs_root();
+    $rootData   = nm_data_root();
     $apiDir     = __DIR__ . '/api';
 
     $ok = nm_write_htaccess_content($rootConfig, nm_default_deny_htaccess_content(), $overwrite, true) && $ok;
@@ -674,14 +998,40 @@ function nm_ensure_core_protection_htaccess(?string $dirUser = null, bool $overw
 if (!function_exists('nm_rate_limit_file_path')) {
 function nm_rate_limit_file_path(): string
 {
-    return nm_legacy_root_logs_dir() . '/rate_limit.json';
+    return nm_logs_root() . '/rate_limit.json';
 }
 }
 
-if (!function_exists('nm_rate_limit_load')) {
-function nm_rate_limit_load(): array
+if (!function_exists('nm_rate_limit_lock_path')) {
+function nm_rate_limit_lock_path(): string
 {
-    $path = nm_rate_limit_file_path();
+    return nm_rate_limit_file_path() . '.lock';
+}
+}
+
+if (!function_exists('nm_rate_limit_open_lock')) {
+function nm_rate_limit_open_lock()
+{
+    $lockPath = nm_rate_limit_lock_path();
+    $dir = dirname($lockPath);
+
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+        return false;
+    }
+
+    nm_write_htaccess_content($dir, nm_default_deny_htaccess_content(), false, true);
+
+    $handle = @fopen($lockPath, 'c');
+    if ($handle !== false) {
+        @chmod($lockPath, 0644);
+    }
+    return $handle;
+}
+}
+
+if (!function_exists('nm_rate_limit_load_unlocked')) {
+function nm_rate_limit_load_unlocked(string $path): array
+{
     if (!is_file($path)) {
         return [];
     }
@@ -696,17 +1046,14 @@ function nm_rate_limit_load(): array
 }
 }
 
-if (!function_exists('nm_rate_limit_save')) {
-function nm_rate_limit_save(array $data): bool
+if (!function_exists('nm_rate_limit_save_unlocked')) {
+function nm_rate_limit_save_unlocked(string $path, array $data): bool
 {
-    $path = nm_rate_limit_file_path();
     $dir = dirname($path);
 
-    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
         return false;
     }
-
-    nm_write_htaccess_content($dir, nm_default_deny_htaccess_content(), false, true);
 
     $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
     if (!is_string($json)) {
@@ -734,6 +1081,64 @@ function nm_rate_limit_save(array $data): bool
 
     @chmod($path, 0644);
     return true;
+}
+}
+
+if (!function_exists('nm_rate_limit_load')) {
+function nm_rate_limit_load(): array
+{
+    $lock = nm_rate_limit_open_lock();
+    if ($lock === false || !@flock($lock, LOCK_SH)) {
+        if (is_resource($lock)) {
+            @fclose($lock);
+        }
+        return [];
+    }
+
+    try {
+        return nm_rate_limit_load_unlocked(nm_rate_limit_file_path());
+    } finally {
+        @flock($lock, LOCK_UN);
+        @fclose($lock);
+    }
+}
+}
+
+if (!function_exists('nm_rate_limit_mutate')) {
+function nm_rate_limit_mutate(callable $mutator): bool
+{
+    $lock = nm_rate_limit_open_lock();
+    if ($lock === false || !@flock($lock, LOCK_EX)) {
+        if (is_resource($lock)) {
+            @fclose($lock);
+        }
+        return false;
+    }
+
+    try {
+        $path = nm_rate_limit_file_path();
+        $current = nm_rate_limit_load_unlocked($path);
+        $updated = $mutator($current);
+        if ($updated === null) {
+            return true;
+        }
+        if (!is_array($updated)) {
+            return false;
+        }
+        return nm_rate_limit_save_unlocked($path, $updated);
+    } finally {
+        @flock($lock, LOCK_UN);
+        @fclose($lock);
+    }
+}
+}
+
+if (!function_exists('nm_rate_limit_save')) {
+function nm_rate_limit_save(array $data): bool
+{
+    return nm_rate_limit_mutate(static function (array $current) use ($data): array {
+        return $data;
+    });
 }
 }
 
@@ -788,21 +1193,22 @@ function nm_rate_limit_record_failure(string $bucket, int $window): void
     $window = max(1, $window);
     $now = time();
 
-    $all = nm_rate_limit_load();
-    $hits = [];
+    nm_rate_limit_mutate(static function (array $all) use ($bucket, $window, $now): array {
+        $hits = [];
 
-    if (isset($all[$bucket]) && is_array($all[$bucket])) {
-        foreach ($all[$bucket] as $ts) {
-            $ts = (int)$ts;
-            if ($ts > 0 && ($now - $ts) < $window) {
-                $hits[] = $ts;
+        if (isset($all[$bucket]) && is_array($all[$bucket])) {
+            foreach ($all[$bucket] as $ts) {
+                $ts = (int)$ts;
+                if ($ts > 0 && ($now - $ts) < $window) {
+                    $hits[] = $ts;
+                }
             }
         }
-    }
 
-    $hits[] = $now;
-    $all[$bucket] = array_values($hits);
-    nm_rate_limit_save($all);
+        $hits[] = $now;
+        $all[$bucket] = array_values($hits);
+        return $all;
+    });
 }
 }
 
@@ -814,13 +1220,14 @@ function nm_rate_limit_clear(string $bucket): void
         return;
     }
 
-    $all = nm_rate_limit_load();
-    if (!array_key_exists($bucket, $all)) {
-        return;
-    }
+    nm_rate_limit_mutate(static function (array $all) use ($bucket): ?array {
+        if (!array_key_exists($bucket, $all)) {
+            return null;
+        }
 
-    unset($all[$bucket]);
-    nm_rate_limit_save($all);
+        unset($all[$bucket]);
+        return $all;
+    });
 }
 }
 
@@ -831,38 +1238,171 @@ function nm_rate_limit_clear(string $bucket): void
 if (!function_exists('nm_audit_log_path')) {
 function nm_audit_log_path(): string
 {
-    return nm_legacy_root_logs_dir() . '/audit.log';
+    return nm_logs_root() . '/audit.log';
+}
+}
+
+if (!function_exists('nm_normalize_ip')) {
+function nm_normalize_ip(string $value): ?string
+{
+    $value = trim($value);
+    if ($value === '') {
+        return null;
+    }
+
+    if ($value[0] === '[' && preg_match('/^\[([^\]]+)\](?::\d+)?$/', $value, $match)) {
+        $value = $match[1];
+    } elseif (preg_match('/^((?:\d{1,3}\.){3}\d{1,3}):\d+$/', $value, $match)) {
+        $value = $match[1];
+    }
+
+    return filter_var($value, FILTER_VALIDATE_IP) !== false ? $value : null;
+}
+}
+
+if (!function_exists('nm_trusted_proxy_entries')) {
+function nm_trusted_proxy_entries(): array
+{
+    $configured = getenv('NM_TRUSTED_PROXIES');
+    if ($configured === false || trim($configured) === '') {
+        $configured = (string)($_SERVER['NM_TRUSTED_PROXIES'] ?? '');
+    }
+
+    $entries = preg_split('/[\s,]+/', trim((string)$configured)) ?: [];
+    return array_values(array_filter($entries, static function ($entry): bool {
+        return trim((string)$entry) !== '';
+    }));
+}
+}
+
+if (!function_exists('nm_ip_matches_proxy_entry')) {
+function nm_ip_matches_proxy_entry(string $ip, string $entry): bool
+{
+    $entry = trim($entry);
+    if ($entry === '') {
+        return false;
+    }
+
+    if (strpos($entry, '/') === false) {
+        $proxyIp = nm_normalize_ip($entry);
+        if ($proxyIp === null) {
+            return false;
+        }
+        return @inet_pton($proxyIp) === @inet_pton($ip);
+    }
+
+    [$network, $prefixText] = array_pad(explode('/', $entry, 2), 2, '');
+    $network = nm_normalize_ip($network) ?? '';
+    if ($network === '' || $prefixText === '' || !ctype_digit($prefixText)) {
+        return false;
+    }
+
+    $ipBinary = @inet_pton($ip);
+    $networkBinary = @inet_pton($network);
+    if ($ipBinary === false || $networkBinary === false || strlen($ipBinary) !== strlen($networkBinary)) {
+        return false;
+    }
+
+    $prefix = (int)$prefixText;
+    $maxBits = strlen($ipBinary) * 8;
+    if ($prefix < 0 || $prefix > $maxBits) {
+        return false;
+    }
+
+    $fullBytes = intdiv($prefix, 8);
+    $remainingBits = $prefix % 8;
+    if ($fullBytes > 0 && substr($ipBinary, 0, $fullBytes) !== substr($networkBinary, 0, $fullBytes)) {
+        return false;
+    }
+    if ($remainingBits === 0) {
+        return true;
+    }
+
+    $mask = (0xFF << (8 - $remainingBits)) & 0xFF;
+    return (ord($ipBinary[$fullBytes]) & $mask) === (ord($networkBinary[$fullBytes]) & $mask);
+}
+}
+
+if (!function_exists('nm_is_trusted_proxy')) {
+function nm_is_trusted_proxy(string $ip): bool
+{
+    foreach (nm_trusted_proxy_entries() as $entry) {
+        if (nm_ip_matches_proxy_entry($ip, (string)$entry)) {
+            return true;
+        }
+    }
+    return false;
 }
 }
 
 if (!function_exists('nm_request_ip')) {
 function nm_request_ip(): string
 {
-    $keys = [
-        'HTTP_CLIENT_IP',
-        'HTTP_X_FORWARDED_FOR',
-        'HTTP_X_FORWARDED',
-        'HTTP_X_CLUSTER_CLIENT_IP',
-        'HTTP_FORWARDED_FOR',
-        'HTTP_FORWARDED',
-        'REMOTE_ADDR',
-    ];
+    $remoteAddr = nm_normalize_ip((string)($_SERVER['REMOTE_ADDR'] ?? ''));
+    if ($remoteAddr === null) {
+        return 'UNKNOWN';
+    }
 
-    foreach ($keys as $key) {
-        if (empty($_SERVER[$key])) {
-            continue;
-        }
+    if (!nm_is_trusted_proxy($remoteAddr)) {
+        return $remoteAddr;
+    }
 
-        $ipList = explode(',', (string)$_SERVER[$key]);
-        foreach ($ipList as $ip) {
-            $ip = trim($ip);
-            if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP)) {
-                return $ip;
-            }
+    $forwardedFor = (string)($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '');
+    if ($forwardedFor === '') {
+        return $remoteAddr;
+    }
+
+    $chain = [];
+    foreach (explode(',', $forwardedFor) as $value) {
+        $ip = nm_normalize_ip($value);
+        if ($ip !== null) {
+            $chain[] = $ip;
         }
     }
 
-    return 'UNKNOWN';
+    for ($i = count($chain) - 1; $i >= 0; $i--) {
+        if (!nm_is_trusted_proxy($chain[$i])) {
+            return $chain[$i];
+        }
+    }
+
+    if ($chain === []) {
+        return $remoteAddr;
+    }
+
+    return $chain[0];
+}
+}
+
+if (!function_exists('nm_is_https_request')) {
+function nm_is_https_request(): bool
+{
+    $https = strtolower(trim((string)($_SERVER['HTTPS'] ?? '')));
+    if ($https !== '' && !in_array($https, ['off', '0', 'false'], true)) {
+        return true;
+    }
+    if ((string)($_SERVER['SERVER_PORT'] ?? '') === '443') {
+        return true;
+    }
+
+    $remoteAddr = nm_normalize_ip((string)($_SERVER['REMOTE_ADDR'] ?? ''));
+    if ($remoteAddr === null || !nm_is_trusted_proxy($remoteAddr)) {
+        return false;
+    }
+
+    $forwardedProto = strtolower(trim((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')));
+    if ($forwardedProto === '') {
+        return false;
+    }
+
+    $values = array_map('trim', explode(',', $forwardedProto));
+    foreach ($values as $value) {
+        if ($value !== 'https') {
+            return false;
+        }
+    }
+
+    return true;
 }
 }
 
@@ -954,7 +1494,7 @@ function nm_write_auth_event(string $event, array $context = []): void
 
 function nm_mail_config_path(): string
 {
-    return __DIR__ . '/config/mail.php';
+    return nm_config_root() . '/mail.php';
 }
 
 function nm_mail_default_config(): array
@@ -1395,7 +1935,7 @@ function nm_find_user_by_username(string $username): ?array
         return null;
     }
 
-    $base = __DIR__ . '/config';
+    $base = nm_config_root();
     if (!is_dir($base)) {
         return null;
     }
@@ -1476,9 +2016,9 @@ function nm_auth_write_config(string $username, string $passwordHash, ?string $d
     }
     @chmod($p, 0644);
 
-    clearstatcache(true, $path);
+    clearstatcache(true, $p);
     if (function_exists('opcache_invalidate')) {
-        @opcache_invalidate($path, true);
+        @opcache_invalidate($p, true);
     }
 
     return true;

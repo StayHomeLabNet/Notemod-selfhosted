@@ -9,6 +9,7 @@
 
 require_once __DIR__ . '/../logger.php';
 require_once dirname(__DIR__) . '/data_crypto.php';
+nm_send_security_headers_json();
 
 // =====================
 // 利用ユーザー判定
@@ -38,7 +39,8 @@ if (!is_string($dirUser) || $dirUser === '') {
 // =====================
 // タイムゾーン初期値（実際の common config 読み込み後に上書き）
 // =====================
-date_default_timezone_set('Pacific/Auckland');
+$commonDefaults = nm_common_config_defaults();
+date_default_timezone_set((string)$commonDefaults['TIMEZONE']);
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -106,9 +108,7 @@ if ($method !== 'POST' && !$isBackupNowGet) {
 // =====================
 // 1. 設定読み込み（config/<USER_NAME>/config.api.php）
 // =====================
-$configFile = function_exists('nm_api_config_path')
-    ? nm_api_config_path($dirUser)
-    : (dirname(__DIR__) . '/config/' . $dirUser . '/config.api.php');
+$configFile = nm_api_config_path($dirUser);
 if (!file_exists($configFile)) {
     respond_json(['status' => 'error', 'message' => 'config.api.php missing', 'path' => 'config/' . $dirUser . '/config.api.php'], 500);
 }
@@ -135,20 +135,15 @@ if ($resolvedDirUser !== '') {
     $dirUser = $resolvedDirUser;
 }
 
-$cfgCommonFile = function_exists('nm_config_path')
-    ? nm_config_path($dirUser)
-    : (dirname(__DIR__) . '/config/' . $dirUser . '/config.php');
-$commonCfg = [];
+$cfgCommonFile = nm_config_path($dirUser);
+$commonCfg = $commonDefaults;
 if (is_file($cfgCommonFile)) {
     $tmpCommon = require $cfgCommonFile;
-    if (is_array($tmpCommon)) $commonCfg = $tmpCommon;
+    if (is_array($tmpCommon)) $commonCfg = nm_common_config_with_defaults($tmpCommon);
 }
 $GLOBALS['cfg'] = $commonCfg;
 
-$tz = (string)($commonCfg['TIMEZONE'] ?? $commonCfg['timezone'] ?? '');
-if ($tz === '') {
-    $tz = 'Pacific/Auckland';
-}
+$tz = (string)($commonCfg['TIMEZONE'] ?? $commonCfg['timezone'] ?? $commonDefaults['TIMEZONE']);
 date_default_timezone_set($tz);
 
 if (!function_exists('nm_create_backup_now')) {
@@ -308,7 +303,7 @@ if (!$dryRunBool && $confirm !== 'YES') {
 function nm_get_username(): string
 {
     $u = 'default';
-    $authFile = dirname(__DIR__) . '/config/auth.php';
+    $authFile = nm_config_root() . '/auth.php';
     if (file_exists($authFile)) {
         $auth = require $authFile;
         if (is_array($auth) && isset($auth['USERNAME'])) {
@@ -563,11 +558,12 @@ function nm_is_locked_filename(string $indexPath, string $itemsKey, string $file
     return !empty($map[$filename]);
 }
 
-function nm_set_index_lock(string $indexPath, string $itemsKey, string $filename, bool $lock): array
+function nm_set_index_lock_unlocked(string $indexPath, string $itemsKey, string $filename, bool $lock): array
 {
     if ($filename === '') {
         return ['ok' => false, 'message' => 'filename is required'];
     }
+
     $json = [
         'v' => 1,
         'generated_at' => gmdate('c'),
@@ -605,12 +601,24 @@ function nm_set_index_lock(string $indexPath, string $itemsKey, string $filename
     return ['ok' => true, 'filename' => $filename, 'lock' => $lock];
 }
 
-function nm_rebuild_file_index_and_fix_latest(string $userDir): array
+function nm_set_index_lock(string $indexPath, string $itemsKey, string $filename, bool $lock): array
+{
+    $result = nm_with_index_lock(
+        $indexPath,
+        fn(): array => nm_set_index_lock_unlocked($indexPath, $itemsKey, $filename, $lock)
+    );
+    return is_array($result)
+        ? $result
+        : ['ok' => false, 'message' => 'failed to lock index', 'filename' => $filename];
+}
+
+function nm_rebuild_file_index_and_fix_latest_unlocked(string $userDir): array
 {
     $filesDir = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'files';
     $indexPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'file_index.json';
     $latestPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'file_latest.json';
     $historyPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'file.json';
+
     $lockMap = nm_load_lock_map($indexPath, 'files');
 
     if (!is_dir($filesDir)) {
@@ -700,11 +708,24 @@ function nm_rebuild_file_index_and_fix_latest(string $userDir): array
     return ['ok' => true, 'message' => 'file_index rebuilt; file_latest.json ok', 'index_count' => count($items)];
 }
 
-function nm_rebuild_image_index_and_fix_latest(string $userDir): array
+function nm_rebuild_file_index_and_fix_latest(string $userDir): array
+{
+    $indexPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'file_index.json';
+    $result = nm_with_index_lock(
+        $indexPath,
+        fn(): array => nm_rebuild_file_index_and_fix_latest_unlocked($userDir)
+    );
+    return is_array($result)
+        ? $result
+        : ['ok' => false, 'message' => 'failed to lock file_index.json', 'index_count' => 0];
+}
+
+function nm_rebuild_image_index_and_fix_latest_unlocked(string $userDir): array
 {
     $imagesDir = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'images';
     $indexPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'image_index.json';
     $latestPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'image_latest.json';
+
     $lockMap = nm_load_lock_map($indexPath, 'images');
 
     if (!is_dir($imagesDir)) {
@@ -786,6 +807,18 @@ function nm_rebuild_image_index_and_fix_latest(string $userDir): array
     }
 
     return ['ok' => true, 'message' => 'image_index rebuilt; image_latest.json ok', 'index_count' => count($items)];
+}
+
+function nm_rebuild_image_index_and_fix_latest(string $userDir): array
+{
+    $indexPath = rtrim($userDir, '/\\') . DIRECTORY_SEPARATOR . 'image_index.json';
+    $result = nm_with_index_lock(
+        $indexPath,
+        fn(): array => nm_rebuild_image_index_and_fix_latest_unlocked($userDir)
+    );
+    return is_array($result)
+        ? $result
+        : ['ok' => false, 'message' => 'failed to lock image_index.json', 'index_count' => 0];
 }
 
 // =====================
@@ -1069,9 +1102,7 @@ if ($purgeBakBool) {
 // =====================
 if ($purgeLogBool) {
 
-    $logsDir = function_exists('nm_logs_dir')
-        ? nm_logs_dir($dirUser !== '' ? $dirUser : null)
-        : (dirname(__DIR__) . '/logs/' . $dirUser);
+    $logsDir = nm_logs_dir($dirUser !== '' ? $dirUser : null);
 
     if (!is_dir($logsDir)) {
         respond_json([

@@ -225,19 +225,13 @@ $fileIndexPath  = $userDir . DIRECTORY_SEPARATOR . 'file_index.json';
 $imageIndexPath = $userDir . DIRECTORY_SEPARATOR . 'image_index.json';
 
 
-// URLs
-$uBase = nm_auth_base_url();
-$apiDirUrl     = rtrim($uBase, '/') . '/api';
-$apiUploadUrl  = $apiDirUrl . '/api.php';
-$apiCleanupUrl = $apiDirUrl . '/cleanup_api.php';
-
-$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-  || ((string)($_SERVER['SERVER_PORT'] ?? '') === '443')
-  || ((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-$scheme = $isHttps ? 'https' : 'http';
-$host = (string)($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost');
-$apiCleanupUrlAbs = $scheme . '://' . $host . $apiCleanupUrl;
-$apiUploadUrlAbs = $scheme . '://' . $host . $apiUploadUrl;
+// Server-side API calls use only explicitly configured base URLs.
+$apiCleanupUrlAbs = nm_internal_url('/api/cleanup_api.php');
+$apiUploadUrlAbs = nm_internal_url('/api/api.php');
+$mediaSelfUrl = nm_public_url('/media_files.php');
+if ($mediaSelfUrl === '') {
+  $mediaSelfUrl = nm_url('/media_files.php');
+}
 
 // helpers
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
@@ -284,10 +278,7 @@ function send_binary(string $path, string $mime, string $downloadName): void {
     echo "File not found";
     exit;
   }
-  header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-  header('Pragma: no-cache');
-  header('Expires: 0');
-  header('X-Content-Type-Options: nosniff');
+  nm_send_security_headers_binary();
   header('Content-Type: ' . $mime);
 
   $downloadName = preg_replace('/[\r\n]+/', ' ', $downloadName);
@@ -397,7 +388,7 @@ function parse_file_index_json(string $path): array {
   return $out;
 }
 
-function count_dir_files(string $dir, string $pattern = null): int {
+function count_dir_files(string $dir, ?string $pattern = null): int {
   if (!is_dir($dir)) return 0;
   $n = 0;
   $dh = opendir($dir);
@@ -414,7 +405,7 @@ function count_dir_files(string $dir, string $pattern = null): int {
 }
 
 function call_cleanup_count(string $url, string $adminToken, string $modeKey): ?int {
-  if ($adminToken === '') return null;
+  if ($adminToken === '' || $url === '') return null;
 
   $post = http_build_query([
     'token' => $adminToken,
@@ -460,6 +451,9 @@ function call_cleanup_count(string $url, string $adminToken, string $modeKey): ?
 
 
 function call_cleanup_action(string $url, string $adminToken, array $params): array {
+  if ($url === '') {
+    return ['ok' => false, 'message' => 'NM_PUBLIC_BASE_URL or NM_INTERNAL_BASE_URL is not configured'];
+  }
   if ($adminToken === '') {
     return ['ok' => false, 'message' => 'ADMIN_TOKEN is empty'];
   }
@@ -500,6 +494,9 @@ function call_cleanup_action(string $url, string $adminToken, array $params): ar
 
 
 function call_upload_action(string $url, string $expectedToken, string $dirUser, string $type, array $fileInfo): array {
+  if ($url === '') {
+    return ['ok' => false, 'message' => 'NM_PUBLIC_BASE_URL or NM_INTERNAL_BASE_URL is not configured'];
+  }
   if ($expectedToken === '') {
     return ['ok' => false, 'message' => 'EXPECTED_TOKEN is empty'];
   }
@@ -511,6 +508,15 @@ function call_upload_action(string $url, string $expectedToken, string $dirUser,
   $eol = "\r\n";
   $filename = (string)($fileInfo['name'] ?? 'upload.bin');
   $tmpName = (string)$fileInfo['tmp_name'];
+  $limits = nm_media_limits($dirUser !== '' ? $dirUser : null);
+  $maxBytes = $type === 'image' ? $limits['image_upload_bytes'] : $limits['file_upload_bytes'];
+  $uploadSize = nm_file_size_bytes($tmpName);
+  if ($uploadSize === null) {
+    return ['ok' => false, 'status' => 400, 'message' => 'Failed to determine upload size'];
+  }
+  if ($uploadSize > $maxBytes) {
+    return ['ok' => false, 'status' => 413, 'message' => 'Upload exceeds the application size limit'];
+  }
   $mime = (string)($fileInfo['type'] ?? '');
   if ($mime === '') {
     $mime = 'application/octet-stream';
@@ -572,8 +578,8 @@ if (isset($_GET['thumb']) && $_GET['thumb'] === '1') {
   $real = real_under($imagesDir, $f);
   if (!$real) { http_response_code(404); exit; }
   $mime = detect_mime($real);
+  nm_send_security_headers_binary();
   header('Content-Type: ' . $mime);
-  header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
   readfile($real);
   exit;
 }
@@ -583,11 +589,18 @@ if (isset($_GET['image_copy']) && $_GET['image_copy'] === '1') {
   $f = urldecode($f);
   $real = real_under($imagesDir, $f);
   if (!$real) { http_response_code(404); exit; }
+  nm_send_security_headers_binary();
 
   $w = isset($_GET['w']) ? (int)$_GET['w'] : 0;
   $h = isset($_GET['h']) ? (int)$_GET['h'] : 0;
 
   if ($w > 0 || $h > 0) {
+    $mediaLimits = nm_media_limits($CURRENT_DIR_USER_FOR_POST ?? null);
+    $sourceSize = nm_file_size_bytes($real);
+    if ($sourceSize === null || $sourceSize > $mediaLimits['image_upload_bytes']) {
+      http_response_code(413);
+      exit('Image exceeds the application processing limit');
+    }
     $mime = detect_mime($real);
     $imgInfo = @getimagesize($real);
     if (is_array($imgInfo)) {
@@ -596,14 +609,22 @@ if (isset($_GET['image_copy']) && $_GET['image_copy'] === '1') {
       $imgType = (int)($imgInfo[2] ?? 0);
 
       if ($srcW > 0 && $srcH > 0) {
-        if ($w <= 0 && $h > 0) {
-          $w = (int)round($srcW * ($h / $srcH));
-        } elseif ($h <= 0 && $w > 0) {
-          $h = (int)round($srcH * ($w / $srcW));
+        if (!nm_image_dimensions_allowed($srcW, $srcH, $mediaLimits['image_dimension'], $mediaLimits['image_pixels'])) {
+          http_response_code(413);
+          exit('Source image dimensions exceed the application processing limit');
         }
 
-        $w = max(1, $w);
-        $h = max(1, $h);
+        $target = nm_calculate_resize_dimensions($srcW, $srcH, max(0, $w), max(0, $h));
+        if ($target === null || !nm_image_dimensions_allowed(
+          $target[0],
+          $target[1],
+          $mediaLimits['resize_dimension'],
+          $mediaLimits['resize_pixels']
+        )) {
+          http_response_code(413);
+          exit('Requested image dimensions exceed the application processing limit');
+        }
+        [$w, $h] = $target;
 
         $src = null;
         switch ($imgType) {
@@ -635,40 +656,38 @@ if (isset($_GET['image_copy']) && $_GET['image_copy'] === '1') {
 
           imagecopyresampled($dst, $src, 0, 0, 0, 0, $w, $h, $srcW, $srcH);
 
-          header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-
           switch ($imgType) {
             case IMAGETYPE_JPEG:
               header('Content-Type: image/jpeg');
               imagejpeg($dst, null, 90);
-              imagedestroy($dst);
-              imagedestroy($src);
+              nm_release_gd_image($dst);
+              nm_release_gd_image($src);
               exit;
             case IMAGETYPE_PNG:
               header('Content-Type: image/png');
               imagepng($dst);
-              imagedestroy($dst);
-              imagedestroy($src);
+              nm_release_gd_image($dst);
+              nm_release_gd_image($src);
               exit;
             case IMAGETYPE_GIF:
               header('Content-Type: image/gif');
               imagegif($dst);
-              imagedestroy($dst);
-              imagedestroy($src);
+              nm_release_gd_image($dst);
+              nm_release_gd_image($src);
               exit;
             case IMAGETYPE_WEBP:
               if (function_exists('imagewebp')) {
                 header('Content-Type: image/webp');
                 imagewebp($dst, null, 90);
-                imagedestroy($dst);
-                imagedestroy($src);
+                nm_release_gd_image($dst);
+                nm_release_gd_image($src);
                 exit;
               }
               break;
           }
 
-          imagedestroy($dst);
-          imagedestroy($src);
+          nm_release_gd_image($dst);
+          nm_release_gd_image($src);
         }
       }
     }
@@ -676,7 +695,6 @@ if (isset($_GET['image_copy']) && $_GET['image_copy'] === '1') {
 
   $mime = detect_mime($real);
   header('Content-Type: ' . $mime);
-  header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
   readfile($real);
   exit;
 }
@@ -686,6 +704,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     nm_csrf_validate_or_die();
   } catch (Throwable $e) {
     http_response_code(403);
+    nm_send_security_headers_json();
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['status'=>'error','message'=>'Invalid CSRF token'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
@@ -711,6 +730,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
   }
 
   http_response_code(400);
+  nm_send_security_headers_json();
   header('Content-Type: application/json; charset=utf-8');
   echo json_encode(['status'=>'error','message'=>'unknown kind'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
   exit;
@@ -723,10 +743,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     nm_csrf_validate_or_die();
   } catch (Throwable $e) {
     http_response_code(403);
+    nm_send_security_headers_json();
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['status'=>'error','message'=>'Invalid CSRF token'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
   }
+  nm_send_security_headers_json();
   header('Content-Type: application/json; charset=utf-8');
 
   $type = (string)($_POST['upload_type'] ?? '');
@@ -744,15 +766,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
   }
 
   $fileInfo = $_FILES[$fieldName];
-  if ((int)($fileInfo['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-    http_response_code(400);
+  $uploadError = (int)($fileInfo['error'] ?? UPLOAD_ERR_NO_FILE);
+  if ($uploadError !== UPLOAD_ERR_OK) {
+    http_response_code(in_array($uploadError, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true) ? 413 : 400);
     echo json_encode(['status'=>'error','message'=>'Upload error'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
   }
 
   $result = call_upload_action($apiUploadUrlAbs, $EXPECTED_TOKEN, $CURRENT_DIR_USER_FOR_POST ?? '', $type, $fileInfo);
   if (empty($result['ok'])) {
-    http_response_code(500);
+    http_response_code((int)($result['status'] ?? 500));
     echo json_encode(['status'=>'error','message'=>(string)($result['message'] ?? 'upload failed')], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
   }
@@ -766,10 +789,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     nm_csrf_validate_or_die();
   } catch (Throwable $e) {
     http_response_code(403);
+    nm_send_security_headers_json();
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['status'=>'error','message'=>'Invalid CSRF token'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
   }
+  nm_send_security_headers_json();
   header('Content-Type: application/json; charset=utf-8');
 
   $mode = (string)($_POST['mode'] ?? '');
@@ -825,10 +850,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     nm_csrf_validate_or_die();
   } catch (Throwable $e) {
     http_response_code(403);
+    nm_send_security_headers_json();
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['status'=>'error','message'=>'Invalid CSRF token'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
   }
+  nm_send_security_headers_json();
   header('Content-Type: application/json; charset=utf-8');
 
   $kind = (string)($_POST['kind'] ?? '');
@@ -1394,7 +1421,7 @@ const TEXT_CONFIRM_DELETE_SELECTED_IMAGES = <?=json_encode($t[$lang]['confirm_de
 const TEXT_CONFIRM_DELETE_SELECTED_FILES = <?=json_encode($t[$lang]['confirm_delete_selected_files'])?>;
 
 // --- 画像コピーツール用変数 ---
-const SITE_ORIGIN = <?=json_encode(((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || ((string)($_SERVER['SERVER_PORT'] ?? '') === '443') || ((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') ? 'https' : 'http') . '://' . (string)($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost'))?>;
+const MEDIA_SELF_URL = <?=json_encode($mediaSelfUrl)?>;
 const CURRENT_USER = <?=json_encode(isset($currentDirUser) && $currentDirUser !== '' ? $currentDirUser : $USERNAME)?>;
 const TEXT_COPIED_IMAGE = <?=json_encode($t[$lang]['copied_image'])?>;
 const TEXT_COPIED_IMAGE_URL = <?=json_encode('Image URL copied to clipboard')?>;
@@ -1650,8 +1677,9 @@ function showToast(msg) {
 }
 
 function buildImageUrl(filename) {
-  const rel = `<?=h($_SERVER['PHP_SELF'])?>?image_copy=1&f=${encodeURIComponent(filename)}`;
-  const url = new URL(rel.startsWith('http://') || rel.startsWith('https://') ? rel : (SITE_ORIGIN + rel));
+  const url = new URL(MEDIA_SELF_URL, window.location.origin);
+  url.searchParams.set('image_copy', '1');
+  url.searchParams.set('f', filename);
 
   const widthEl = document.getElementById('imgCopyWidth');
   const heightEl = document.getElementById('imgCopyHeight');

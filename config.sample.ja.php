@@ -41,6 +41,14 @@ return [
     // 2592000 = 30日
     'SESSION_COOKIE_LIFETIME' => 0,
 
+    // アプリ側のアップロード・画像処理上限
+    'MAX_IMAGE_UPLOAD_BYTES' => 10 * 1024 * 1024,
+    'MAX_FILE_UPLOAD_BYTES' => 25 * 1024 * 1024,
+    'MAX_IMAGE_DIMENSION' => 10000,
+    'MAX_IMAGE_PIXELS' => 25000000,
+    'MAX_RESIZE_DIMENSION' => 2000,
+    'MAX_RESIZE_PIXELS' => 4000000,
+
     // （任意）Notemod の初期スナップショットをカスタマイズ
     // （JSON文字列として保存する必要があります）
     // 'INITIAL_SNAPSHOT' => '{"categories":null,"hasSelectedLanguage":null,"notes":null,"selectedLanguage":null}',

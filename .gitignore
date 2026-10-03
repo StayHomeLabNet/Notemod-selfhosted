@@ -2,16 +2,14 @@
 .DS_Store
 Thumbs.db
 
-# --- Secrets (絶対コミットしない) ---
-config/config.php
-config/config.api.php
+# --- Secrets / runtime data (never commit) ---
+# These directories contain per-user credentials, API tokens, encryption keys,
+# password-reset records, notes, uploaded media, IP records, and generated logs.
+/config/
+/notemod-data/
+/logs/
 
-# --- Runtime data (コミットしない) ---
-notemod-data/data.json
-notemod-data/_sync_debug.log
-
-# --- Logs (コミットしない) ---
-logs/
+# --- Logs outside the runtime directories ---
 *.log
 
 # --- Backups (cleanup_api) ---
