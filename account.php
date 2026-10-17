@@ -50,6 +50,8 @@ $t = [
     'dark' => 'Dark',
     'light' => 'Light',
     'new_username_empty' => '新しいユーザー名を入力してください',
+    'invalid_username' => 'ユーザー名には英小文字・数字・アンダースコア・ハイフンを含めてください（制御文字は使用できません）',
+    'username_taken' => 'そのユーザー名は既に使用されています',
     'csrf_invalid' => 'CSRFトークンが無効です。ページを再読み込みしてからもう一度お試しください。',
     'app_info_label' => 'アプリ情報',
     'github_repository' => 'GitHub',
@@ -91,6 +93,8 @@ $t = [
     'dark' => 'Dark',
     'light' => 'Light',
     'new_username_empty' => 'Please enter a new username',
+    'invalid_username' => 'Username must contain letters, numbers, underscores, or hyphens (control characters are not allowed)',
+    'username_taken' => 'That username is already taken',
     'csrf_invalid' => 'Invalid CSRF token. Please reload the page and try again.',
     'app_info_label' => 'Application information',
     'github_repository' => 'GitHub',
@@ -117,6 +121,16 @@ function nm_force_logout_after_account_change(): void
         $_SESSION['nm_username'],
         $_SESSION['nm_login_user']
     );
+
+    if (function_exists('nm_clear_dir_user_cookie')) {
+        nm_clear_dir_user_cookie();
+    }
+    if (function_exists('nm_csrf_rotate_token')) {
+        nm_csrf_rotate_token();
+    }
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_regenerate_id(true);
+    }
 
     $logoutUrl = function_exists('nm_url') ? nm_url('logout.php') : 'logout.php';
     header('Location: ' . $logoutUrl);
@@ -148,12 +162,24 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
             if ($mode === 'change_username') {
                 $uu = trim((string)($_POST['new_username'] ?? ''));
+                $normUser = normalize_username($uu);
                 if ($uu === '') {
                     $err = $t[$lang]['new_username_empty'];
                     $auditEvent = 'account_update_failed';
                     $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'new_username_empty'];
+                } elseif ($normUser === '' || preg_match('/[\x00-\x1f\x7f]/', $uu)) {
+                    $err = $t[$lang]['invalid_username'];
+                    $auditEvent = 'account_update_failed';
+                    $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'invalid_username'];
                 } else {
-                    $newUser = $uu; // USERNAME only. DIR_USER remains unchanged.
+                    $existing = nm_find_user_by_username($uu);
+                    if ($existing !== null && normalize_username((string)($existing['DIR_USER'] ?? '')) !== $currentDirUser) {
+                        $err = $t[$lang]['username_taken'];
+                        $auditEvent = 'account_update_failed';
+                        $auditContext = ['username' => $loginUser, 'dir_user' => $currentDirUser, 'reason' => 'username_taken'];
+                    } else {
+                        $newUser = $uu; // USERNAME only. DIR_USER remains unchanged.
+                    }
                 }
 
             } elseif ($mode === 'change_password') {

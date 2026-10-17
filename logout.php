@@ -39,6 +39,16 @@ $loginUrl = nm_ui_url('/login.php');
 // ログアウト（lang/themeは保持）
 unset($_SESSION['nm_logged_in'], $_SESSION['nm_user'], $_SESSION['nm_dir_user'], $_SESSION['nm_username'], $_SESSION['nm_login_user'], $_SESSION['nm_clear_sync_warning_once']);
 
+if (function_exists('nm_clear_dir_user_cookie')) {
+    nm_clear_dir_user_cookie();
+}
+if (function_exists('nm_csrf_rotate_token')) {
+    nm_csrf_rotate_token();
+}
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_regenerate_id(true);
+}
+
 header('Refresh: 1.2; url=' . $loginUrl);
 
 $u = nm_ui_toggle_urls('/logout.php', $lang, $theme);

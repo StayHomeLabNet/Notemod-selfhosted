@@ -15,7 +15,7 @@ It stores notes in `notemod-data/<DIR_USER>/data.json` and provides Web UI sync,
 
 <br>
 
-![version](https://img.shields.io/badge/version-1.4.7-2ea44f)
+![version](https://img.shields.io/badge/version-1.4.8-2ea44f)
 ![license](https://img.shields.io/badge/license-MIT-97ca00)
 ![language](https://img.shields.io/badge/language-PHP-777bb4)
 ![database](https://img.shields.io/badge/database-not%20required-blue)
@@ -66,6 +66,7 @@ It is developed to **smoothly exchange text, images, and files between Windows P
 - Automatic backups, restore support, and pre-sync-save backups
 - Notifications and password reset through `mail()` / SMTP
 - Authentication security improvements such as CSRF protection, rate limiting, audit logs, and security headers
+- Comprehensive security hardening including session regeneration on logout, username collision checks, XSS filtering, CRLF injection prevention, and test directory access protection
 
 ---
 
@@ -88,7 +89,7 @@ php tests/run.php
 bash tests/http_smoke.sh
 ```
 
-The PHP suite covers configuration defaults, storage paths, trusted-proxy IP and HTTPS detection, canonical URL validation, Unicode password length, media limits, concurrent rate-limit updates, index locking, atomic authentication-config writes, and encrypted-data integrity. The HTTP smoke test verifies the HTML, API, and unauthenticated image-response security policies against a temporary isolated storage directory.
+The PHP suite covers configuration defaults, storage paths, trusted-proxy IP and HTTPS detection, canonical URL validation, Unicode password length, media limits, concurrent rate-limit updates, index locking, atomic authentication-config writes, encrypted-data integrity, backup API authentication requirements, mail header CRLF sanitization, rate-limit expiration pruning, username validation and collision detection, Service Worker JSON escaping, and CLI test execution guards. The HTTP smoke test verifies the HTML, API, and unauthenticated image-response security policies against a temporary isolated storage directory.
 
 GitHub Actions runs PHP syntax checks and both test suites on PHP 8.1 through 8.5 for every push and pull request.
 
@@ -139,10 +140,33 @@ GitHub Actions runs PHP syntax checks and both test suites on PHP 8.1 through 8.
   - CSRF protection
   - rate limiting for login / forgot password / reset password
   - audit log
+  - session regeneration, CSRF token rotation, and cookie clearing on logout and credential change
+  - username collision and control-character validation
+  - mail header / SMTP CRLF injection protection
+  - automatic garbage collection for expired rate-limit buckets
+  - test suite directory protection via `.htaccess` and CLI-only guards
 - **Token exposure reduction**
   - `setup_auth.php` no longer shows API tokens in plain text
   - `clipboard_sync.php` uses masked-by-default + temporary reveal
   - `media_files.php` was changed to a server-side relay design without exposing tokens to the browser
+- **XSS and template protection**
+  - complete stripping of dangerous HTML elements (`<script>`, `<style>`, `<iframe>`, `<object>`, `<embed>`) and their contents in note rendering
+  - URL protocol validation (`http:`, `https:`, `mailto:`) and `rel="noopener noreferrer"` for inserted links
+  - safe JSON escaping (`JSON_HEX_*`) in inline scripts and Service Worker configurations
+- **Backup security**
+  - `api/cleanup_api.php?action=backup_now` requires authentication (session, Bearer token, or `X-Notemod-Token`) to prevent unauthenticated backup generation DoS
+
+---
+
+## Main additions and improvements in v1.4.8
+
+- Enforced authentication on `cleanup_api.php?action=backup_now` and added Bearer / X-Notemod-Token header support to cleanup endpoints
+- Strengthened account and logout security: username uniqueness and control-character validation, full cookie clearing, CSRF token rotation, and session regeneration on logout
+- Added email header / SMTP CRLF injection protection and automatic garbage collection for expired rate-limit buckets
+- Hardened Web UI and Service Worker against XSS: stripped dangerous HTML blocks, safely escaped inline scripts with `JSON_HEX_*`, and enforced safe link protocols
+- Secured test suite with `.htaccess` and blocked direct Web execution of test runners
+- Fixed configuration file generation in `setup_auth.php` to prevent corruption from regex backreferences
+- Expanded automated test coverage in `tests/run.php` to 20 comprehensive security and integration tests
 
 ---
 
@@ -324,6 +348,8 @@ Short-time repeated attempts are now restricted
 /media_files.php
 /clipboard_sync.php
 /notemod_sync.php
+/sw.php
+/manifest.php
 /api/
   api.php
   read_api.php
@@ -346,6 +372,12 @@ Short-time repeated attempts are now restricted
   files/
 /logs/<DIR_USER>/
 /logs/audit.log
+/tests/
+  .htaccess
+  http_smoke.sh
+  rate_limit_worker.php
+  request_ip_override.php
+  run.php
 ```
 
 ---
@@ -428,10 +460,12 @@ Main files automatically generated as needed:
 - `config/<DIR_USER>/auth.php`
 - `config/<DIR_USER>/config.php`
 - `config/<DIR_USER>/config.api.php`
+- `config/<DIR_USER>/.htaccess`
 - `notemod-data/<DIR_USER>/data.json`
 - `notemod-data/<DIR_USER>/.htaccess`
 - `logs/<DIR_USER>/.htaccess`
 - `api/.htaccess`
+- `tests/.htaccess`
 
 `config/mail.php` is created when SMTP settings are saved.  
 `image_index.json` / `file_index.json` are generated and updated when images or files are added.
@@ -524,7 +558,7 @@ Main keys:
 
 ### Manual backup
 - You can run **Back up now** from `bak_settings.php`
-- You can also run it via `api/cleanup_api.php?action=backup_now`
+- You can also run it via `api/cleanup_api.php?action=backup_now` (requires authentication: session or API token)
 
 ### Cleanup backup
 - If `CLEANUP_BACKUP_ENABLED` is enabled, a backup is created before dangerous cleanup operations
@@ -586,6 +620,12 @@ The following additional protections are applied:
 - audit logging
 - session regeneration on successful login via `session_regenerate_id(true)`
 - reduced plain-text exposure of API tokens in `setup_auth.php`, `clipboard_sync.php`, and `media_files.php`
+- session regeneration, CSRF token rotation, and cookie clearing on logout and credential changes
+- username collision and control-character validation on account changes
+- CRLF injection prevention in mail notifications and automatic pruning of expired rate-limit buckets
+- XSS prevention in Web UI and Service Worker: dangerous tag and content stripping in HTML sanitization, secure link protocol enforcement, and JSON escaping in inline scripts
+- authentication required for manual backups via `api/cleanup_api.php?action=backup_now`
+- access restriction on the `tests/` directory with `.htaccess` and CLI-only execution guards
 
 ### `data.json` encryption
 - When `DATA_ENCRYPTION_ENABLED` is `true`, `data.json` is stored encrypted
@@ -630,6 +670,8 @@ The following additional protections are applied:
 - Bulk delete images / files
 - Regenerate `image_index.json` / `file_index.json`
 - Update media lock state
+- Manual backup creation (`action=backup_now`)
+- Requires authentication for all operations, including backups (supports Web UI session, Bearer token, or `X-Notemod-Token` header)
 
 ### `api/image_api.php`
 - Serve authenticated images
@@ -750,6 +792,8 @@ Description:
 - `clipboard_sync.php` / `media_files.php` are designed not to directly expose API token values to the browser
 - Even when handling broken legacy `data.json` formats, the current code is intended to normalize as much as possible before saving
 - `append_api.php` / `search_api.php` / `journal_api.php` are designed to return **human-readable text/plain** equivalent to `pretty=2` when unspecified
+- `api/cleanup_api.php` requires authentication (Web UI session, Bearer token, or `X-Notemod-Token`) for all operations including `action=backup_now` to prevent unauthorized resource consumption
+- `tests/` directory is protected with `.htaccess` and CLI-only guards to deny direct web access
 
 
 ---

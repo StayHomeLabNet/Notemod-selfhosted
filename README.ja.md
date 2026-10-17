@@ -15,7 +15,7 @@
 
 <br>
 
-![version](https://img.shields.io/badge/version-1.4.7-2ea44f)
+![version](https://img.shields.io/badge/version-1.4.8-2ea44f)
 ![license](https://img.shields.io/badge/license-MIT-97ca00)
 ![language](https://img.shields.io/badge/language-PHP-777bb4)
 ![database](https://img.shields.io/badge/database-not%20required-blue)
@@ -66,6 +66,7 @@ DB は不要で、単一データソースとして **`notemod-data/<DIR_USER>/d
 - 自動バックアップ、復元、同期保存前バックアップ
 - `mail()` / SMTP による通知・パスワードリセット
 - CSRF、rate limit、audit log、security header などの認証系セキュリティ強化
+- ログアウト時のセッション再生成、ユーザー名重複防止、XSSサニタイズ強化、メールCRLFインジェクション防止、テストディレクトリ保護などの包括的セキュリティ強化
 
 ---
 
@@ -88,7 +89,7 @@ php tests/run.php
 bash tests/http_smoke.sh
 ```
 
-PHPテストでは、設定既定値、保存先、信頼プロキシ経由のIP・HTTPS判定、正規URL検証、Unicodeパスワード長、メディア上限、rate limitの同時更新、インデックスロック、認証設定の原子的保存、暗号化データの完全性を確認します。HTTPスモークテストでは、隔離した一時保存先を使い、HTML、API、未認証画像応答のセキュリティ方針を検証します。
+PHPテストでは、設定既定値、保存先、信頼プロキシ経由のIP・HTTPS判定、正規URL検証、Unicodeパスワード長、メディア上限、rate limitの同時更新、インデックスロック、認証設定の原子的保存、暗号化データの完全性、バックアップAPIの認証要件、メールヘッダーのCRLF無害化、rate limitの期限切れバケット整理、ユーザー名検証と衝突検知、Service WorkerのJSONエスケープ、CLIテスト実行ガードを確認します。HTTPスモークテストでは、隔離した一時保存先を使い、HTML、API、未認証画像応答のセキュリティ方針を検証します。
 
 GitHub Actionsでは、pushとpull requestごとにPHP 8.1から8.5でPHP構文検査と両テストを実行します。
 
@@ -139,10 +140,33 @@ GitHub Actionsでは、pushとpull requestごとにPHP 8.1から8.5でPHP構文�
   - CSRF 対策
   - login / forgot password / reset password の rate limit
   - audit log
+  - ログアウト時および認証情報変更時のセッション再生成・CSRFトークンローテーション・Cookie削除
+  - ユーザー名変更時の制御文字混入防止および他ユーザーとの重複・衝突防止
+  - メールヘッダーおよびSMTP設定値のCRLFインジェクション防止
+  - 期限切れ rate limit バケットの自動クリーンアップ
+  - `tests/` ディレクトリの `.htaccess` 保護および非CLI実行の遮断
 - **トークン露出対策**
   - `setup_auth.php` で API トークンを平文表示しない
   - `clipboard_sync.php` は初期伏字 + 一時表示
   - `media_files.php` はブラウザへ token を出さずサーバー側中継方式に変更
+- **XSS・テンプレート保護**
+  - ノート表示時の危険なHTML要素（`<script>`, `<style>`, `<iframe>`, `<object>`, `<embed>`）およびその内部コンテンツの完全除去
+  - リンク挿入時の安全なプロトコル制限（`http:`, `https:`, `mailto:`）と `rel="noopener noreferrer"` の自動付与
+  - インラインスクリプトおよびService Worker設定の安全なJSONエスケープ（`JSON_HEX_*`）
+- **バックアップの安全性向上**
+  - `api/cleanup_api.php?action=backup_now` への認証（セッション、Bearerトークン、`X-Notemod-Token`）必須化による未認証バックアップ大量生成DoSの防止
+
+---
+
+## v1.4.8 の主な追加・改善
+
+- `cleanup_api.php?action=backup_now` への認証を必須化し、cleanup エンドポイントで Bearer / X-Notemod-Token ヘッダー認証に対応
+- アカウント管理およびログアウトの安全性強化: ユーザー名の重複・制御文字検証、ログアウト時のCookie消去・CSRFトークンローテーション・セッション再生成
+- メール通知およびSMTP設定のCRLFインジェクション防止、期限切れrate limitバケットの自動定期クリーンアップ
+- Web UIおよびService WorkerにおけるXSS対策の強化: 危険なHTML要素の完全除去、安全なプロトコル制限、インラインスクリプトの `JSON_HEX_*` エスケープ
+- `tests/` ディレクトリへの `.htaccess` アクセス保護とテスト実行スクリプトのWeb直接実行遮断
+- `setup_auth.php` における正規表現後方参照による設定ファイル破損リスクの修正
+- `tests/run.php` にセキュリティテストを追加し、自動テスト全20項目に拡充
 
 ---
 
@@ -326,6 +350,8 @@ GitHub Actionsでは、pushとpull requestごとにPHP 8.1から8.5でPHP構文�
 /media_files.php
 /clipboard_sync.php
 /notemod_sync.php
+/sw.php
+/manifest.php
 /api/
   api.php
   read_api.php
@@ -348,6 +374,12 @@ GitHub Actionsでは、pushとpull requestごとにPHP 8.1から8.5でPHP構文�
   files/
 /logs/<DIR_USER>/
 /logs/audit.log
+/tests/
+  .htaccess
+  http_smoke.sh
+  rate_limit_worker.php
+  request_ip_override.php
+  run.php
 ```
 
 ---
@@ -430,10 +462,12 @@ NM_INTERNAL_BASE_URL=http://127.0.0.1/notemod
 - `config/<DIR_USER>/auth.php`
 - `config/<DIR_USER>/config.php`
 - `config/<DIR_USER>/config.api.php`
+- `config/<DIR_USER>/.htaccess`
 - `notemod-data/<DIR_USER>/data.json`
 - `notemod-data/<DIR_USER>/.htaccess`
 - `logs/<DIR_USER>/.htaccess`
 - `api/.htaccess`
+- `tests/.htaccess`
 
 `config/mail.php` は SMTP 設定を保存した時点で作成されます。  
 `image_index.json` / `file_index.json` は、画像やファイルが追加された時点で生成・更新されます。
@@ -526,7 +560,7 @@ NM_INTERNAL_BASE_URL=http://127.0.0.1/notemod
 
 ### 手動バックアップ
 - `bak_settings.php` から **今すぐバックアップ** を実行可能
-- `api/cleanup_api.php?action=backup_now` でも実行可能
+- `api/cleanup_api.php?action=backup_now` でも実行可能（Web UI セッション、Bearer トークン、または X-Notemod-Token ヘッダーによる要認証）
 
 ### cleanup 用バックアップ
 - `CLEANUP_BACKUP_ENABLED` が有効な場合、cleanup 系の危険操作前にバックアップを作成
@@ -588,6 +622,12 @@ Basic認証が使えない場合は、`setup_auth.php` と `login.php` / `logout
 - 監査ログ
 - `session_regenerate_id(true)` によるログイン成功時のセッション再生成
 - `setup_auth.php` / `clipboard_sync.php` / `media_files.php` での API トークン平文露出削減
+- ログアウト時およびアカウント認証情報変更時のセッション再生成、CSRFトークンローテーション、Cookie削除
+- アカウント名変更時の制御文字混入防止および他ユーザーとの重複・衝突防止
+- メール通知ヘッダーのCRLFインジェクション防止および期限切れrate limitバケットの自動定期クリーンアップ
+- Web UI・Service WorkerでのXSS対策強化（危険タグ・内容の完全除去、安全なプロトコル制限、インラインスクリプトのJSONエスケープ）
+- `api/cleanup_api.php?action=backup_now` への認証（セッションまたはAPIトークン）必須化
+- `tests/` ディレクトリの `.htaccess` によるアクセス保護および非CLI実行の遮断
 
 ### `data.json` 暗号化
 - `DATA_ENCRYPTION_ENABLED` が `true` のとき、`data.json` は暗号化保存されます
@@ -632,6 +672,8 @@ Basic認証が使えない場合は、`setup_auth.php` と `login.php` / `logout
 - 画像 / ファイルの一括削除
 - `image_index.json` / `file_index.json` 再生成
 - メディアロック状態の更新
+- 手動バックアップ作成（`action=backup_now`）
+- バックアップを含む全操作で認証が必須（Web UI セッション、Bearer トークン、または `X-Notemod-Token` ヘッダーに対応）
 
 ### `api/image_api.php`
 - 認証付き画像配信
@@ -752,6 +794,8 @@ curl -H 'Authorization: Bearer YOUR_EXPECTED_TOKEN' \
 - `clipboard_sync.php` / `media_files.php` では、ブラウザへ API token 実値を直接出さない方針です
 - 壊れた旧形式の `data.json` を扱う場合でも、現行コードでは可能な範囲で正規化してから保存する想定です
 - `append_api.php` / `search_api.php` / `journal_api.php` は、未指定時に `pretty=2` 相当で **人間が読みやすい text/plain** を返す設計です
+- `api/cleanup_api.php` は不正なリソース消費を防ぐため、`action=backup_now` を含むすべての操作で認証（Web UI セッション、Bearer トークン、または `X-Notemod-Token`）が必要です
+- `tests/` ディレクトリは Web 経由の直接実行を防ぐため、`.htaccess` によるアクセス遮断と CLI 実行ガードが適用されています
 
 
 ---

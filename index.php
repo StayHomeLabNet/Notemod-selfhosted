@@ -98,7 +98,7 @@ if (!file_exists($nmConfigPath)) {
     die('Missing config for current user: ' . htmlspecialchars('config/' . $nmDirUser . '/config.php', ENT_QUOTES, 'UTF-8'));
 }
 ?>
-<script>window.NM_BASE_PATH = <?= json_encode(function_exists('nm_base_path') ? nm_base_path() : '', JSON_UNESCAPED_SLASHES) ?>;</script>
+<script>window.NM_BASE_PATH = <?= json_encode(function_exists('nm_base_path') ? nm_base_path() : '', JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;</script>
 <script>window.NM_CLEAR_SYNC_WARNING_ON_LOAD = <?= $nmClearSyncWarningOnce ? 'true' : 'false' ?>;</script>
 
 
@@ -1069,9 +1069,9 @@ function notemodCreateSnapshot() {
 }
 
 
-const NM_BASE_PATH = <?= json_encode($basePath, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
-const NOTEMOD_SYNC_URL = <?= json_encode($syncUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
-const NOTEMOD_SYNC_TOKEN = <?php echo json_encode($SECRET, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
+const NM_BASE_PATH = <?= json_encode($basePath, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+const NOTEMOD_SYNC_URL = <?= json_encode($syncUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+const NOTEMOD_SYNC_TOKEN = <?php echo json_encode($SECRET, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 
 
 // サーバーへ保存
@@ -3873,6 +3873,10 @@ const removeModalChild = () => {
             'SPAN'
         ]);
 
+        const dangerousTags = new Set([
+            'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'NOSCRIPT', 'SVG', 'MATH', 'BASE', 'LINK', 'META'
+        ]);
+
         const allowedAttrs = {
             A: new Set(['href', 'target', 'rel']),
             IMG: new Set(['src', 'alt', 'width', 'height', 'style']),
@@ -3884,11 +3888,17 @@ const removeModalChild = () => {
         };
 
         const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT);
+        const toRemove = [];
         const toUnwrap = [];
 
         while (walker.nextNode()) {
             const el = walker.currentNode;
             const tag = el.tagName;
+
+            if (dangerousTags.has(tag)) {
+                toRemove.push(el);
+                continue;
+            }
 
             if (!allowedTags.has(tag)) {
                 toUnwrap.push(el);
@@ -3929,8 +3939,17 @@ const removeModalChild = () => {
                 if (el.getAttribute('target') === '_blank') {
                     el.setAttribute('rel', 'noopener noreferrer');
                 }
+            } else if (tag === 'IMG') {
+                const src = el.getAttribute('src');
+                if (src && !/^(https?:|\/|\.|\?|data:image\/)/i.test(src)) {
+                    el.removeAttribute('src');
+                }
             }
         }
+
+        toRemove.forEach((el) => {
+            el.remove();
+        });
 
         toUnwrap.forEach((el) => {
             el.replaceWith(...el.childNodes);
@@ -4073,31 +4092,31 @@ document.getElementById('import').addEventListener('click', () => {
 })();
 
 document.getElementById('logout')?.addEventListener('click', () => {
-  location.href = <?= json_encode($logoutUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
+  location.href = <?= json_encode($logoutUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 });
 
 document.getElementById('account')?.addEventListener('click', () => {
-  location.href = <?= json_encode($accountUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
+  location.href = <?= json_encode($accountUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 });
 
 document.getElementById('setup_auth')?.addEventListener('click', () => {
-  location.href = <?= json_encode($setupAuthUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
+  location.href = <?= json_encode($setupAuthUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 });
 
 document.getElementById('log_settings')?.addEventListener('click', () => {
-  location.href = <?= json_encode($logSettingsUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
+  location.href = <?= json_encode($logSettingsUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 });
 
 document.getElementById('bak_settings')?.addEventListener('click', () => {
-  location.href = <?= json_encode($bakSettingsUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
+  location.href = <?= json_encode($bakSettingsUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 });
 
 document.getElementById('clipboard_sync')?.addEventListener('click', () => {
-  location.href = <?= json_encode($clipboardSyncUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
+  location.href = <?= json_encode($clipboardSyncUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 });
 
 document.getElementById('media_files')?.addEventListener('click', () => {
-  location.href = <?= json_encode($mediaFilesUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
+  location.href = <?= json_encode($mediaFilesUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 });
 
 function nmT(key){
@@ -4436,12 +4455,16 @@ function createLink() {
     urlInput.focus();
     urlInput.select();
     function handleConfirm() {
-        const url = urlInput.value;
+        const url = (urlInput.value || '').trim();
         if (url) {
+            if (/^(https?:|mailto:|tel:|\/|#)/i.test(url)) {
                 const link = document.createElement('a');
                 link.href = url;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
                 range.surroundContents(link);
                 selection.removeAllRanges();
+            }
         }
         closeModal();
     }

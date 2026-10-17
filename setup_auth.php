@@ -475,19 +475,24 @@ function nm_update_config_api_tokens_preserve(string $configApiPath, string $dir
 
     $replaceValue = function(string $content, string $key, string $newVal): array {
         if ($newVal === '') return [$content, false];
-        $pattern = '/([\'\"]' . preg_quote($key, '/') . '[\'\"]\s*=>\s*)([\'\"])(.*?)(\\2)/u';
+        $literal = var_export($newVal, true);
+        $pattern = '/(^\s*[\'"]' . preg_quote($key, '/') . '[\'"]\s*=>\s*)([\'"]).*?\\2/mu';
         if (preg_match($pattern, $content)) {
-            $repl = '$1' . "'" . addslashes($newVal) . "'";
-            $content2 = preg_replace($pattern, $repl, $content, 1);
+            $content2 = preg_replace_callback(
+                $pattern,
+                static fn(array $m): string => $m[1] . $literal,
+                $content,
+                1
+            );
             return [$content2 ?? $content, true];
         }
         $pos = strrpos($content, '];');
         if ($pos === false) {
             $content .= "\n// Appended by setup_auth.php\n";
-            $content .= "return [\n    '" . $key . "' => '" . addslashes($newVal) . "',\n];\n";
+            $content .= "return [\n    '" . $key . "' => " . $literal . ",\n];\n";
             return [$content, true];
         }
-        $insert = "    '" . $key . "' => '" . addslashes($newVal) . "',\n";
+        $insert = "    '" . $key . "' => " . $literal . ",\n";
         $content2 = substr($content, 0, $pos) . $insert . substr($content, $pos);
         return [$content2, true];
     };
@@ -817,7 +822,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         $expected = trim((string)($_POST['expected_token'] ?? ''));
         $admin    = trim((string)($_POST['admin_token'] ?? ''));
 
-        if (!nm_update_config_api_tokens_preserve($configApiPath, $targetDirUser, $expected, $admin)) {
+        if ($expected !== '' && preg_match('/[\x00-\x1F\x7F]/', $expected)) {
+            $err = 'Invalid expected token format';
+        } elseif ($admin !== '' && preg_match('/[\x00-\x1F\x7F]/', $admin)) {
+            $err = 'Invalid admin token format';
+        } elseif (!nm_update_config_api_tokens_preserve($configApiPath, $targetDirUser, $expected, $admin)) {
             $err = $t[$lang]['api_save_failed'];
         } else {
             $apiInfo = $t[$lang]['api_saved'];

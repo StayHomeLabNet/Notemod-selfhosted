@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-defined('NM_APP_VERSION') || define('NM_APP_VERSION', '1.4.7');
+defined('NM_APP_VERSION') || define('NM_APP_VERSION', '1.4.8');
 defined('NM_REPOSITORY_URL') || define('NM_REPOSITORY_URL', 'https://github.com/StayHomeLabNet/Notemod-selfhosted');
 
 // ==============================
@@ -974,11 +974,15 @@ function nm_ensure_core_protection_htaccess(?string $dirUser = null, bool $overw
     $rootLogs   = nm_logs_root();
     $rootData   = nm_data_root();
     $apiDir     = __DIR__ . '/api';
+    $testsDir   = __DIR__ . '/tests';
 
     $ok = nm_write_htaccess_content($rootConfig, nm_default_deny_htaccess_content(), $overwrite, true) && $ok;
     $ok = nm_write_htaccess_content($rootLogs, nm_default_deny_htaccess_content(), $overwrite, true) && $ok;
     $ok = nm_write_htaccess_content($rootData, nm_default_deny_htaccess_content(), $overwrite, true) && $ok;
     $ok = nm_write_htaccess_content($apiDir, nm_default_api_htaccess_content(), $overwrite, true) && $ok;
+    if (is_dir($testsDir)) {
+        $ok = nm_write_htaccess_content($testsDir, nm_default_deny_htaccess_content(), $overwrite, false) && $ok;
+    }
 
     $resolvedDirUser = normalize_username((string)$dirUser);
     if ($resolvedDirUser !== '') {
@@ -1104,6 +1108,37 @@ function nm_rate_limit_load(): array
 }
 }
 
+if (!function_exists('nm_rate_limit_prune_expired')) {
+function nm_rate_limit_prune_expired(array $data, int $maxAge = 86400): array
+{
+    $now = time();
+    $cutoff = $now - $maxAge;
+
+    foreach ($data as $bucket => $timestamps) {
+        if (!is_array($timestamps) || empty($timestamps)) {
+            unset($data[$bucket]);
+            continue;
+        }
+
+        $valid = [];
+        foreach ($timestamps as $ts) {
+            $ts = (int)$ts;
+            if ($ts > $cutoff && $ts <= ($now + 300)) {
+                $valid[] = $ts;
+            }
+        }
+
+        if (empty($valid)) {
+            unset($data[$bucket]);
+        } else {
+            $data[$bucket] = array_values($valid);
+        }
+    }
+
+    return $data;
+}
+}
+
 if (!function_exists('nm_rate_limit_mutate')) {
 function nm_rate_limit_mutate(callable $mutator): bool
 {
@@ -1125,6 +1160,7 @@ function nm_rate_limit_mutate(callable $mutator): bool
         if (!is_array($updated)) {
             return false;
         }
+        $updated = nm_rate_limit_prune_expired($updated);
         return nm_rate_limit_save_unlocked($path, $updated);
     } finally {
         @flock($lock, LOCK_UN);
@@ -1625,7 +1661,7 @@ function nm_build_mail_headers($from = ''): string
         'Content-Type: text/plain; charset=UTF-8',
     );
 
-    $from = trim((string)$from);
+    $from = str_replace(["\r", "\n"], '', trim((string)$from));
     if ($from !== '') {
         $headers[] = 'From: ' . $from;
     }
@@ -1635,10 +1671,10 @@ function nm_build_mail_headers($from = ''): string
 
 function nm_send_mail_php_mail($to, $subject, $body, $from = '', &$errorMessage = null): bool
 {
-    $to = trim((string)$to);
-    $subject = (string)$subject;
+    $to = str_replace(["\r", "\n"], '', trim((string)$to));
+    $subject = str_replace(["\r", "\n"], '', (string)$subject);
     $body = (string)$body;
-    $from = trim((string)$from);
+    $from = str_replace(["\r", "\n"], '', trim((string)$from));
 
     if ($to === '') {
         $errorMessage = 'Empty recipient.';
@@ -1742,10 +1778,10 @@ function nm_smtp_data_body(string $headers, string $body): string
 
 function nm_send_mail_smtp($to, $subject, $body, $from = '', ?array $settings = null, &$errorMessage = null): bool
 {
-    $to = trim((string)$to);
-    $subject = (string)$subject;
+    $to = str_replace(["\r", "\n"], '', trim((string)$to));
+    $subject = str_replace(["\r", "\n"], '', (string)$subject);
     $body = (string)$body;
-    $fallbackFrom = trim((string)$from);
+    $fallbackFrom = str_replace(["\r", "\n"], '', trim((string)$from));
     $settings = is_array($settings) ? $settings : nm_load_mail_config();
 
     if ($to === '') {
@@ -1753,14 +1789,14 @@ function nm_send_mail_smtp($to, $subject, $body, $from = '', ?array $settings = 
         return false;
     }
 
-    $host = trim((string)($settings['SMTP_HOST'] ?? ''));
+    $host = str_replace(["\r", "\n"], '', trim((string)($settings['SMTP_HOST'] ?? '')));
     $port = (int)($settings['SMTP_PORT'] ?? 0);
     $encryption = strtolower(trim((string)($settings['SMTP_ENCRYPTION'] ?? '')));
     $useAuth = !empty($settings['SMTP_AUTH']);
     $username = trim((string)($settings['SMTP_USERNAME'] ?? ''));
     $password = (string)($settings['SMTP_PASSWORD'] ?? '');
-    $smtpFrom = trim((string)($settings['SMTP_FROM'] ?? ''));
-    $fromName = trim((string)($settings['SMTP_FROM_NAME'] ?? ''));
+    $smtpFrom = str_replace(["\r", "\n"], '', trim((string)($settings['SMTP_FROM'] ?? '')));
+    $fromName = str_replace(["\r", "\n"], '', trim((string)($settings['SMTP_FROM_NAME'] ?? '')));
 
     if ($host === '' || $port <= 0) {
         $errorMessage = 'SMTP host/port is not configured.';
@@ -1769,7 +1805,7 @@ function nm_send_mail_smtp($to, $subject, $body, $from = '', ?array $settings = 
 
     $effectiveFrom = $smtpFrom !== '' ? $smtpFrom : $fallbackFrom;
     if ($effectiveFrom === '') {
-        $effectiveFrom = $username;
+        $effectiveFrom = str_replace(["\r", "\n"], '', $username);
     }
     if ($effectiveFrom === '') {
         $errorMessage = 'SMTP from address is empty.';
@@ -1796,7 +1832,7 @@ function nm_send_mail_smtp($to, $subject, $body, $from = '', ?array $settings = 
             return false;
         }
 
-        $ehloHost = trim((string)($_SERVER['SERVER_NAME'] ?? 'localhost'));
+        $ehloHost = str_replace(["\r", "\n"], '', trim((string)($_SERVER['SERVER_NAME'] ?? 'localhost')));
         if ($ehloHost === '') {
             $ehloHost = 'localhost';
         }

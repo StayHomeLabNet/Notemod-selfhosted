@@ -1,6 +1,12 @@
 <?php
 declare(strict_types=1);
 
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    echo "Access denied\n";
+    exit(1);
+}
+
 require_once dirname(__DIR__) . '/auth_common.php';
 
 $bucket = (string)($argv[1] ?? '');

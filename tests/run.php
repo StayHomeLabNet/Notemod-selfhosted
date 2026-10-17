@@ -1,6 +1,12 @@
 <?php
 declare(strict_types=1);
 
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    echo "Access denied\n";
+    exit(1);
+}
+
 $projectRoot = dirname(__DIR__);
 $testStorage = sys_get_temp_dir() . '/notemod-tests-' . bin2hex(random_bytes(6));
 
@@ -275,6 +281,120 @@ $runner->test('encrypted data round trip rejects tampering', static function () 
     $payload['data'] = base64_encode((string)base64_decode($payload['data'], true) . 'x');
     $tampered = json_encode($payload);
     $runner->same(false, nm_decrypt_json_string($tampered));
+});
+
+$runner->test('cleanup_api requires token for action=backup_now', static function () use ($runner, $projectRoot, $testStorage): void {
+    $dirUser = 'test-cleanup-user';
+    $userConfigDir = nm_config_dir($dirUser);
+    $userDataDir = nm_data_dir($dirUser);
+    @mkdir($userConfigDir, 0700, true);
+    @mkdir($userDataDir, 0700, true);
+
+    $apiConfigPath = nm_api_config_path($dirUser);
+    $dataJsonPath = nm_data_json_path($dirUser);
+    file_put_contents($dataJsonPath, json_encode(['notes' => []]));
+    file_put_contents($apiConfigPath, "<?php\nreturn ['ADMIN_TOKEN' => 'secret-admin-token', 'DATA_JSON' => " . var_export($dataJsonPath, true) . "];\n");
+
+    // トークンなしのリクエスト: 403 Forbidden になること
+    $cmdNoToken = escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg('
+        putenv("NM_STORAGE_ROOT=' . $testStorage . '");
+        $_SERVER["NM_STORAGE_ROOT"] = "' . $testStorage . '";
+        $_SERVER["REQUEST_METHOD"] = "GET";
+        $_GET = ["user" => "' . $dirUser . '", "action" => "backup_now"];
+        $_REQUEST = $_GET;
+        require ' . var_export($projectRoot . '/api/cleanup_api.php', true) . ';
+    ');
+    $output = [];
+    $exitCode = 0;
+    exec($cmdNoToken, $output, $exitCode);
+    $raw = implode('', $output);
+    $res = json_decode($raw, true);
+    $runner->same('error', $res['status'] ?? null, 'unauthenticated backup_now must fail');
+    $runner->same('Forbidden', $res['message'] ?? null);
+
+    // 有効なトークンありのリクエスト: 200 OK になること
+    $cmdWithToken = escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg('
+        putenv("NM_STORAGE_ROOT=' . $testStorage . '");
+        $_SERVER["NM_STORAGE_ROOT"] = "' . $testStorage . '";
+        $_SERVER["REQUEST_METHOD"] = "GET";
+        $_GET = ["user" => "' . $dirUser . '", "action" => "backup_now", "token" => "secret-admin-token"];
+        $_REQUEST = $_GET;
+        require ' . var_export($projectRoot . '/api/cleanup_api.php', true) . ';
+    ');
+    $output = [];
+    $exitCode = 0;
+    exec($cmdWithToken, $output, $exitCode);
+    $raw = implode('', $output);
+    $res = json_decode($raw, true);
+    $runner->same('ok', $res['status'] ?? null, 'authenticated backup_now must succeed');
+    $runner->same('backup created', $res['message'] ?? null);
+});
+
+$runner->test('mail headers and smtp fields sanitize CRLF injection', static function () use ($runner): void {
+    $headers = nm_build_mail_headers("test@example.com\r\nBcc: evil@example.com");
+    $runner->false(str_contains($headers, "\r\nBcc:"));
+    $runner->true(str_contains($headers, "From: test@example.comBcc: evil@example.com"));
+});
+
+$runner->test('rate limit prunes expired buckets on mutate', static function () use ($runner): void {
+    $expiredBucket = 'test:expired:bucket';
+    $freshBucket = 'test:fresh:bucket';
+    $now = time();
+
+    // 2日前と現在のタイムスタンプを持つデータ
+    $data = [
+        $expiredBucket => [$now - 172800],
+        $freshBucket => [$now],
+    ];
+
+    $pruned = nm_rate_limit_prune_expired($data, 86400);
+    $runner->false(isset($pruned[$expiredBucket]), 'expired bucket must be pruned');
+    $runner->true(isset($pruned[$freshBucket]), 'fresh bucket must be preserved');
+    $runner->same([$now], $pruned[$freshBucket]);
+});
+
+$runner->test('account username validation rejects invalid characters and collisions', static function () use ($runner, $testStorage): void {
+    // 2人のユーザー環境をセットアップ
+    nm_auth_write_config('User One', '$2y$10$dummyhashone', 'userone');
+    nm_auth_write_config('User Two', '$2y$10$dummyhashtwo', 'usertwo');
+
+    $foundOne = nm_find_user_by_username('User One');
+    $runner->true(is_array($foundOne), 'user one should be found');
+    $runner->same('userone', $foundOne['DIR_USER'] ?? null);
+
+    // 空の正規化名になる文字列
+    $runner->same('', normalize_username('***@@@'));
+    // 制御文字
+    $runner->true((bool)preg_match('/[\x00-\x1f\x7f]/', "evil\x00user"));
+    $runner->true((bool)preg_match('/[\x00-\x1f\x7f]/', "evil\nuser"));
+
+    // usertwo が 'User One' に改名しようとした場合、衝突が検知できること
+    $existing = nm_find_user_by_username('User One');
+    $runner->true($existing !== null && normalize_username((string)($existing['DIR_USER'] ?? '')) !== 'usertwo');
+
+    // 自分自身の既存ユーザー名（または大文字小文字違い）なら衝突扱いにならないこと
+    $existingSelf = nm_find_user_by_username('userone');
+    $runner->false($existingSelf !== null && normalize_username((string)($existingSelf['DIR_USER'] ?? '')) !== 'userone');
+});
+
+$runner->test('sw.php encodes BASE as valid JSON literal', static function () use ($runner, $projectRoot): void {
+    $swContent = file_get_contents($projectRoot . '/sw.php');
+    $runner->true(is_string($swContent));
+    $runner->true(str_contains($swContent, 'json_encode($basePath'));
+    $runner->true(str_contains($swContent, 'json_encode($cacheName'));
+});
+
+$runner->test('tests directory is protected by htaccess and non-cli execution is rejected', static function () use ($runner, $projectRoot): void {
+    $htaccess = file_get_contents($projectRoot . '/tests/.htaccess');
+    $runner->true(is_string($htaccess));
+    $runner->true(str_contains($htaccess, 'Require all denied') || str_contains($htaccess, 'Deny from all'));
+
+    // CLI実行では SAPIチェックを通過し、引数なしのため exit code 2 (Usage) になること
+    $cmd = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($projectRoot . '/tests/rate_limit_worker.php');
+    $output = [];
+    $exitCode = 0;
+    exec($cmd, $output, $exitCode);
+    $runner->same(2, $exitCode, 'CLI execution should proceed past SAPI check to usage message');
 });
 
 $runner->finish();

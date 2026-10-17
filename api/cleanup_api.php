@@ -146,6 +146,49 @@ $GLOBALS['cfg'] = $commonCfg;
 $tz = (string)($commonCfg['TIMEZONE'] ?? $commonCfg['timezone'] ?? $commonDefaults['TIMEZONE']);
 date_default_timezone_set($tz);
 
+// =====================
+// 2. パラメータ正規化（GET/POST/JSON）
+// =====================
+$getLower  = array_change_key_case($_GET, CASE_LOWER);
+$postLower = array_change_key_case($_POST, CASE_LOWER);
+$jsonBody  = [];
+$ct = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
+if (stripos($ct, 'application/json') !== false) {
+    $raw = file_get_contents('php://input');
+    $decoded = json_decode($raw, true);
+    if (is_array($decoded)) $jsonBody = $decoded;
+}
+$jsonLower = array_change_key_case($jsonBody, CASE_LOWER);
+
+$params = $getLower;
+$params = $postLower + $params;
+$params = $jsonLower + $params; // JSON優先
+
+// =====================
+// 3. 認証（tokenチェック）
+// =====================
+$authHeader = trim((string)(
+    $_SERVER['HTTP_AUTHORIZATION']
+    ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
+    ?? ''
+));
+$headerToken = '';
+if (preg_match('/^Bearer\s+(.+)$/i', $authHeader, $m)) {
+    $headerToken = trim($m[1]);
+}
+if ($headerToken === '') {
+    $headerToken = trim((string)($_SERVER['HTTP_X_NOTEMOD_TOKEN'] ?? ''));
+}
+
+$token = (string)($params['token'] ?? '');
+if ($token === '' && $headerToken !== '') {
+    $token = $headerToken;
+}
+
+if (!hash_equals($ADMIN_TOKEN, $token)) {
+    respond_json(['status' => 'error', 'message' => 'Forbidden'], 403);
+}
+
 if (!function_exists('nm_create_backup_now')) {
     function nm_create_backup_now(string $notemodFile): array
     {
@@ -169,7 +212,8 @@ if (!function_exists('nm_create_backup_now')) {
     }
 }
 
-if ($isBackupNowGet) {
+$action = strtolower(trim((string)($params['action'] ?? '')));
+if ($isBackupNowGet || $action === 'backup_now') {
     $r = nm_create_backup_now($notemodFile);
     if (!$r['ok']) {
         respond_json([
@@ -187,32 +231,6 @@ if ($isBackupNowGet) {
             'file' => $r['file'],
         ],
     ], 200);
-}
-
-// =====================
-// 2. パラメータ正規化（POSTのみ）
-// =====================
-$params = array_change_key_case($_POST, CASE_LOWER);
-
-// JSONボディ対応
-$jsonBody = [];
-$ct = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
-if (stripos($ct, 'application/json') !== false) {
-    $raw = file_get_contents('php://input');
-    $decoded = json_decode($raw, true);
-    if (is_array($decoded)) $jsonBody = $decoded;
-}
-if (!empty($jsonBody)) {
-    $jsonLower = array_change_key_case($jsonBody, CASE_LOWER);
-    $params = $jsonLower + $params; // JSON優先
-}
-
-// =====================
-// 3. 認証
-// =====================
-$token = (string)($params['token'] ?? '');
-if (!hash_equals($ADMIN_TOKEN, $token)) {
-    respond_json(['status' => 'error', 'message' => 'Forbidden'], 403);
 }
 
 // =====================

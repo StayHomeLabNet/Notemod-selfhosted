@@ -22,8 +22,8 @@ $basePath = nm_base_path_from_this_file(); // "/notemod" or "/"
 $cacheName = 'nm-pwa-v1';
 ?>
 /* Notemod PWA Service Worker */
-const CACHE_NAME = "<?= $cacheName ?>";
-const BASE = "<?= $basePath ?>";
+const CACHE_NAME = <?= json_encode($cacheName, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+const BASE = <?= json_encode($basePath, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
 
 const CORE_ASSETS = [
   BASE + "/",

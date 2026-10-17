@@ -1293,14 +1293,14 @@ $csrfToken = function_exists('nm_csrf_token_get') ? nm_csrf_token_get() : '';
                   <tr>
                     <td><div class="lock-cell"><input type="checkbox" class="media-check media-check-image" value="<?=h($fname)?>" <?=!empty($img['lock']) ? 'disabled' : ''?>><button type="button" class="lock-btn <?=!empty($img['lock']) ? 'is-locked' : ''?>" data-lock-kind="image" data-filename="<?=h($fname)?>" data-lock="<?=!empty($img['lock']) ? '1' : '0'?>" title="<?=!empty($img['lock']) ? 'Unlock' : 'Lock'?>" aria-label="<?=!empty($img['lock']) ? 'Unlock' : 'Lock'?>"><?=lock_icon_svg(!empty($img['lock']))?></button></div></td>
                     <td>
-                      <img class="thumb copy-thumb" style="cursor:pointer;" title="<?=htmlspecialchars($t[$lang]['copied_image'], ENT_QUOTES, 'UTF-8')?>" src="<?=h($_SERVER['PHP_SELF'])?>?thumb=1&f=<?=h(urlencode($fname))?>" alt="" data-filename="<?=h($fname)?>">
+                      <img class="thumb copy-thumb" style="cursor:pointer;" title="<?=htmlspecialchars($t[$lang]['copied_image'], ENT_QUOTES, 'UTF-8')?>" src="<?=h($mediaSelfUrl)?>?thumb=1&f=<?=h(urlencode($fname))?>" alt="" data-filename="<?=h($fname)?>">
                     </td>
                     <td><span class="copy-image-url" data-filename="<?=h($fname)?>" style="cursor:pointer; text-decoration:underline;"><?=h($fname)?></span></td>
                     <td><?=h(fmt_local_time_from_unix($mtime))?></td>
                     <td class="right"><?=h(number_format($size))?></td>
                     <td><?=h($ext)?></td>
                     <td>
-                      <form method="POST" action="<?=h($_SERVER['PHP_SELF'])?>" style="margin:0">
+                      <form method="POST" action="<?=h($mediaSelfUrl)?>" style="margin:0">
   <input type="hidden" name="action" value="download">
   <input type="hidden" name="csrf_token" value="<?=h($csrfToken)?>">
     <input type="hidden" name="kind" value="image">
@@ -1362,7 +1362,7 @@ $csrfToken = function_exists('nm_csrf_token_get') ? nm_csrf_token_get() : '';
                     <td class="right"><?=h(number_format($size))?></td>
                     <td><?=h($ext)?></td>
                     <td>
-                      <form method="POST" action="<?=h($_SERVER['PHP_SELF'])?>" style="margin:0">
+                      <form method="POST" action="<?=h($mediaSelfUrl)?>" style="margin:0">
   <input type="hidden" name="action" value="download">
   <input type="hidden" name="csrf_token" value="<?=h($csrfToken)?>">
     <input type="hidden" name="kind" value="file">
