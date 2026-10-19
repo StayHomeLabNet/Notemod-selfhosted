@@ -410,7 +410,7 @@ $params = $params + array_change_key_case($jsonBody, CASE_LOWER);
 /* =========================
  * token チェック
  * ========================= */
-$token = (string)($params['token'] ?? '');
+$token = nm_request_api_token($params);
 if (!hash_equals($EXPECTED_TOKEN, $token)) {
     search_respond_json([
         'status'  => 'error',

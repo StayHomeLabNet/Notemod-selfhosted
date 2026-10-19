@@ -225,9 +225,15 @@ $fileIndexPath  = $userDir . DIRECTORY_SEPARATOR . 'file_index.json';
 $imageIndexPath = $userDir . DIRECTORY_SEPARATOR . 'image_index.json';
 
 
-// Server-side API calls use only explicitly configured base URLs.
+// Server-side API calls use explicitly configured base URLs or fall back to request URL.
 $apiCleanupUrlAbs = nm_internal_url('/api/cleanup_api.php');
 $apiUploadUrlAbs = nm_internal_url('/api/api.php');
+if ($apiCleanupUrlAbs === '') {
+  $apiCleanupUrlAbs = nm_request_url('/api/cleanup_api.php');
+}
+if ($apiUploadUrlAbs === '') {
+  $apiUploadUrlAbs = nm_request_url('/api/api.php');
+}
 $mediaSelfUrl = nm_public_url('/media_files.php');
 if ($mediaSelfUrl === '') {
   $mediaSelfUrl = nm_url('/media_files.php');
@@ -465,14 +471,30 @@ function call_cleanup_action(string $url, string $adminToken, array $params): ar
   ]);
 
   $post = http_build_query($params);
+  $headers = "Content-Type: application/x-www-form-urlencoded\r\n" .
+             "Content-Length: " . strlen($post) . "\r\n" .
+             "User-Agent: Notemod-MediaFiles/1.0\r\n";
+  if (isset($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW'])) {
+    $headers .= "Authorization: Basic " . base64_encode($_SERVER['PHP_AUTH_USER'] . ':' . $_SERVER['PHP_AUTH_PW']) . "\r\n";
+  } elseif ($adminToken !== '') {
+    $headers .= "Authorization: Bearer " . $adminToken . "\r\n";
+  }
+  if ($adminToken !== '') {
+    $headers .= "X-Notemod-Token: " . $adminToken . "\r\n";
+  }
+
   $opts = [
     'http' => [
       'method' => 'POST',
-      'header' => "Content-Type: application/x-www-form-urlencoded\r\n" .
-                  "Content-Length: " . strlen($post) . "\r\n",
+      'header' => $headers,
       'content' => $post,
-      'timeout' => 15,
-    ]
+      'timeout' => 30,
+      'ignore_errors' => true,
+    ],
+    'ssl' => [
+      'verify_peer' => false,
+      'verify_peer_name' => false,
+    ],
   ];
   $ctx = stream_context_create($opts);
   $raw = @file_get_contents($url, false, $ctx);
@@ -546,14 +568,30 @@ function call_upload_action(string $url, string $expectedToken, string $dirUser,
   $body .= $content . $eol;
   $body .= '--' . $boundary . '--' . $eol;
 
+  $headers = "Content-Type: multipart/form-data; boundary=" . $boundary . "\r\n" .
+             "Content-Length: " . strlen($body) . "\r\n" .
+             "User-Agent: Notemod-MediaFiles/1.0\r\n";
+  if (isset($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW'])) {
+    $headers .= "Authorization: Basic " . base64_encode($_SERVER['PHP_AUTH_USER'] . ':' . $_SERVER['PHP_AUTH_PW']) . "\r\n";
+  } elseif ($expectedToken !== '') {
+    $headers .= "Authorization: Bearer " . $expectedToken . "\r\n";
+  }
+  if ($expectedToken !== '') {
+    $headers .= "X-Notemod-Token: " . $expectedToken . "\r\n";
+  }
+
   $opts = [
     'http' => [
       'method' => 'POST',
-      'header' => "Content-Type: multipart/form-data; boundary=" . $boundary . "\r\n" .
-                  "Content-Length: " . strlen($body) . "\r\n",
+      'header' => $headers,
       'content' => $body,
       'timeout' => 60,
-    ]
+      'ignore_errors' => true,
+    ],
+    'ssl' => [
+      'verify_peer' => false,
+      'verify_peer_name' => false,
+    ],
   ];
   $ctx = stream_context_create($opts);
   $raw = @file_get_contents($url, false, $ctx);

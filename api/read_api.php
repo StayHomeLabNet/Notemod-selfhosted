@@ -320,7 +320,7 @@ $prettyMode = nm_param_pretty_mode($params);
 // =====================
 // 2. トークンチェック
 // =====================
-$token = (string)($params['token'] ?? '');
+$token = nm_request_api_token($params);
 if (!hash_equals($EXPECTED_TOKEN, $token)) {
     respond_json(['status' => 'error', 'message' => 'Forbidden'], 403, $prettyMode === '1' ? '1' : '0');
 }

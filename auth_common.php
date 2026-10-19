@@ -158,6 +158,12 @@ function nm_configured_base_url(string $environmentName): string
     if ($value === false || trim($value) === '') {
         $value = (string)($_SERVER[$environmentName] ?? '');
     }
+    if ($value === '' && isset($_SERVER['REDIRECT_' . $environmentName])) {
+        $value = (string)$_SERVER['REDIRECT_' . $environmentName];
+    }
+    if ($value === '' && isset($GLOBALS['cfg'][$environmentName])) {
+        $value = (string)$GLOBALS['cfg'][$environmentName];
+    }
 
     $value = trim((string)$value);
     if ($value === '') {
@@ -225,10 +231,36 @@ function nm_public_base_url(): string
     return nm_configured_base_url('NM_PUBLIC_BASE_URL');
 }
 
+function nm_request_base_url(): string
+{
+    $host = trim((string)($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? ''));
+    if ($host === '' || preg_match('/[^\w\.\-\:\[\]]/', $host)) {
+        return '';
+    }
+    $scheme = nm_is_https_request() ? 'https' : 'http';
+    return $scheme . '://' . $host . nm_base_path();
+}
+
+function nm_request_url(string $path = ''): string
+{
+    $base = nm_request_base_url();
+    if ($base === '') {
+        return '';
+    }
+    return rtrim($base, '/') . '/' . ltrim($path, '/');
+}
+
 function nm_internal_base_url(): string
 {
     $internal = nm_configured_base_url('NM_INTERNAL_BASE_URL');
-    return $internal !== '' ? $internal : nm_public_base_url();
+    if ($internal !== '') {
+        return $internal;
+    }
+    $public = nm_public_base_url();
+    if ($public !== '') {
+        return $public;
+    }
+    return nm_request_base_url();
 }
 
 function nm_join_base_url(string $baseUrl, string $path): string
@@ -536,6 +568,49 @@ function nm_send_security_headers_binary(): void
     if (!headers_sent()) {
         header("Content-Security-Policy: default-src 'none'; base-uri 'none'; frame-ancestors 'none'; sandbox");
     }
+}
+}
+
+// ==============================
+// API Token Request helper
+// ==============================
+
+if (!function_exists('nm_request_api_token')) {
+function nm_request_api_token(array $params = []): string
+{
+    $authHeader = trim((string)(
+        $_SERVER['HTTP_AUTHORIZATION']
+        ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
+        ?? ''
+    ));
+    if ($authHeader === '' && function_exists('getallheaders')) {
+        $headers = getallheaders();
+        if (is_array($headers)) {
+            $headersLower = array_change_key_case($headers, CASE_LOWER);
+            $authHeader = trim((string)($headersLower['authorization'] ?? ''));
+        }
+    }
+
+    if (preg_match('/^Bearer\s+(.+)$/i', $authHeader, $m)) {
+        $token = trim($m[1]);
+        if ($token !== '') {
+            return $token;
+        }
+    }
+
+    $customHeader = trim((string)($_SERVER['HTTP_X_NOTEMOD_TOKEN'] ?? ''));
+    if ($customHeader === '' && function_exists('getallheaders')) {
+        $headers = getallheaders();
+        if (is_array($headers)) {
+            $headersLower = array_change_key_case($headers, CASE_LOWER);
+            $customHeader = trim((string)($headersLower['x-notemod-token'] ?? ''));
+        }
+    }
+    if ($customHeader !== '') {
+        return $customHeader;
+    }
+
+    return (string)($params['token'] ?? '');
 }
 }
 

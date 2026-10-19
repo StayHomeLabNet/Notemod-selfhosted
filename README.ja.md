@@ -160,13 +160,15 @@ GitHub Actionsでは、pushとpull requestごとにPHP 8.1から8.5でPHP構文�
 
 ## v1.4.8 の主な追加・改善
 
-- `cleanup_api.php?action=backup_now` への認証を必須化し、cleanup エンドポイントで Bearer / X-Notemod-Token ヘッダー認証に対応
+- 全APIエンドポイント（`read_api.php`、`api.php`、`cleanup_api.php`、`image_api.php`、`append_api.php`、`search_api.php`、`journal_api.php`）で `Authorization: Bearer <TOKEN>` および `X-Notemod-Token: <TOKEN>` ヘッダー認証に一括対応（ClipboardSync等の外部クライアントとの安定連携および後方互換性を確保）
+- メディア画面（`media_files.php`）のサーバー間内部API呼び出しにおいて、環境変数が未設定の場合でもリクエスト情報（ホストおよびパス）から自動解決するフォールバック機能を追加し、`config/config.php` 内でのベースURL指定にも対応
+- `cleanup_api.php?action=backup_now` への認証を必須化し、未認証バックアップ大量生成DoSを防止
 - アカウント管理およびログアウトの安全性強化: ユーザー名の重複・制御文字検証、ログアウト時のCookie消去・CSRFトークンローテーション・セッション再生成
 - メール通知およびSMTP設定のCRLFインジェクション防止、期限切れrate limitバケットの自動定期クリーンアップ
 - Web UIおよびService WorkerにおけるXSS対策の強化: 危険なHTML要素の完全除去、安全なプロトコル制限、インラインスクリプトの `JSON_HEX_*` エスケープ
 - `tests/` ディレクトリへの `.htaccess` アクセス保護とテスト実行スクリプトのWeb直接実行遮断
 - `setup_auth.php` における正規表現後方参照による設定ファイル破損リスクの修正
-- `tests/run.php` にセキュリティテストを追加し、自動テスト全20項目に拡充
+- `tests/run.php` にセキュリティ・API認証・URL解決テストを追加し、自動テスト全23項目に拡充
 
 ---
 
@@ -439,6 +441,8 @@ NM_INTERNAL_BASE_URL=http://127.0.0.1/notemod
 
 `NM_INTERNAL_BASE_URL`は任意で、未設定時は`NM_PUBLIC_BASE_URL`を使います。どちらも認証情報、クエリ、フラグメント、親ディレクトリ要素を含まない`http`または`https`の絶対URLである必要があります。ブラウザーに表示するAPI URLは、設定済みの公開URL、または未設定時にはブラウザー自身のオリジンから補完します。
 
+なお、`NM_PUBLIC_BASE_URL` および `NM_INTERNAL_BASE_URL` は環境変数のほか、`config/<DIR_USER>/config.php`（例: `'NM_PUBLIC_BASE_URL' => 'https://notes.example.com/notemod'`）でも設定可能です。また、メディア画面（`media_files.php`）のサーバー間内部API呼び出しでは、これらが未設定であっても現在のWebアクセス情報から安全に自動解決されるため、環境変数を設定できない共有サーバー環境でも初期設定のままアップロード・クリーンアップが動作します（パスワード再設定メールのみ、Hostヘッダー改変対策のため設定が必要です）。
+
 ---
 
 ## 初期設定
@@ -646,6 +650,13 @@ Basic認証が使えない場合は、`setup_auth.php` と `login.php` / `logout
 ---
 
 ## API の概要
+
+すべての API エンドポイント（`api.php`, `read_api.php`, `cleanup_api.php`, `image_api.php`, `append_api.php`, `search_api.php`, `journal_api.php`）において、以下の認証方法に対応しています。
+
+- **HTTP ヘッダー**: `Authorization: Bearer <TOKEN>` または `X-Notemod-Token: <TOKEN>`（推奨）
+- **POST パラメータ**: `token=<TOKEN>`（フォームデータまたはリクエスト本文）
+
+ClipboardSync などの外部クライアントからも安全かつ確実に連携可能です。
 
 ### `api/api.php`
 - テキスト追加

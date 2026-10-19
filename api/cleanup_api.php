@@ -165,25 +165,7 @@ $params = $postLower + $params;
 $params = $jsonLower + $params; // JSON優先
 
 // =====================
-// 3. 認証（tokenチェック）
-// =====================
-$authHeader = trim((string)(
-    $_SERVER['HTTP_AUTHORIZATION']
-    ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
-    ?? ''
-));
-$headerToken = '';
-if (preg_match('/^Bearer\s+(.+)$/i', $authHeader, $m)) {
-    $headerToken = trim($m[1]);
-}
-if ($headerToken === '') {
-    $headerToken = trim((string)($_SERVER['HTTP_X_NOTEMOD_TOKEN'] ?? ''));
-}
-
-$token = (string)($params['token'] ?? '');
-if ($token === '' && $headerToken !== '') {
-    $token = $headerToken;
-}
+$token = nm_request_api_token($params);
 
 if (!hash_equals($ADMIN_TOKEN, $token)) {
     respond_json(['status' => 'error', 'message' => 'Forbidden'], 403);

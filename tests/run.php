@@ -397,4 +397,146 @@ $runner->test('tests directory is protected by htaccess and non-cli execution is
     $runner->same(2, $exitCode, 'CLI execution should proceed past SAPI check to usage message');
 });
 
+$runner->test('base URL resolution supports config array and request fallback', static function () use ($runner): void {
+    // 1. $GLOBALS['cfg'] 経由の設定読み込み
+    $GLOBALS['cfg']['NM_PUBLIC_BASE_URL'] = 'https://cfg.example.com/notemod';
+    $runner->same('https://cfg.example.com/notemod', nm_public_base_url());
+    $runner->same('https://cfg.example.com/notemod/api/api.php', nm_internal_url('/api/api.php'));
+    unset($GLOBALS['cfg']['NM_PUBLIC_BASE_URL']);
+
+    // 2. 未設定時、HTTP_HOST があればリクエスト情報から内部URLを補完
+    unset($_SERVER['NM_PUBLIC_BASE_URL'], $_SERVER['NM_INTERNAL_BASE_URL']);
+    putenv('NM_PUBLIC_BASE_URL');
+    putenv('NM_INTERNAL_BASE_URL');
+    $_SERVER['HTTP_HOST'] = 'myhost.example.com';
+    $_SERVER['SCRIPT_NAME'] = '/notemod/media_files.php';
+    unset($_SERVER['HTTPS']);
+
+    $runner->same('http://myhost.example.com/notemod', nm_request_base_url());
+    $runner->same('http://myhost.example.com/notemod/api/api.php', nm_internal_url('/api/api.php'));
+    $runner->same('http://myhost.example.com/notemod/api/cleanup_api.php', nm_internal_url('/api/cleanup_api.php'));
+
+    // 3. 不正なホストヘッダーは拒否
+    $_SERVER['HTTP_HOST'] = "evil.com\r\nInjected: header";
+    $runner->same('', nm_request_base_url());
+
+    // クリーンアップ
+    unset($_SERVER['HTTP_HOST'], $_SERVER['SCRIPT_NAME']);
+});
+
+$runner->test('nm_request_api_token extracts Bearer, X-Notemod-Token, and params', static function () use ($runner): void {
+    // 1. Bearer header
+    $_SERVER['HTTP_AUTHORIZATION'] = 'Bearer token-from-bearer';
+    unset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'], $_SERVER['HTTP_X_NOTEMOD_TOKEN']);
+    $runner->same('token-from-bearer', nm_request_api_token(['token' => 'token-from-param']));
+
+    // 2. REDIRECT_HTTP_AUTHORIZATION
+    unset($_SERVER['HTTP_AUTHORIZATION']);
+    $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] = 'Bearer token-from-redirect';
+    $runner->same('token-from-redirect', nm_request_api_token(['token' => 'token-from-param']));
+
+    // 3. X-Notemod-Token header
+    unset($_SERVER['HTTP_AUTHORIZATION'], $_SERVER['REDIRECT_HTTP_AUTHORIZATION']);
+    $_SERVER['HTTP_X_NOTEMOD_TOKEN'] = 'token-from-x-header';
+    $runner->same('token-from-x-header', nm_request_api_token(['token' => 'token-from-param']));
+
+    // 4. Params fallback
+    unset($_SERVER['HTTP_X_NOTEMOD_TOKEN']);
+    $runner->same('token-from-param', nm_request_api_token(['token' => 'token-from-param']));
+    $runner->same('', nm_request_api_token([]));
+});
+
+$runner->test('read_api and api authenticate via Bearer, X-Notemod-Token, and POST body', static function () use ($runner, $projectRoot, $testStorage): void {
+    $dirUser = 'test-api-user';
+    $userConfigDir = nm_config_dir($dirUser);
+    $userDataDir = nm_data_dir($dirUser);
+    @mkdir($userConfigDir, 0700, true);
+    @mkdir($userDataDir, 0700, true);
+
+    $apiConfigPath = nm_api_config_path($dirUser);
+    $dataJsonPath = nm_data_json_path($dirUser);
+    file_put_contents($dataJsonPath, json_encode([
+        'categories' => [['id' => 1, 'name' => 'INBOX']],
+        'notes' => [['id' => 'n1', 'title' => 'Test', 'content' => 'Hello', 'categories' => [1], 'createdAt' => '2026-01-01T00:00:00Z']],
+    ]));
+    file_put_contents($apiConfigPath, "<?php\nreturn ['EXPECTED_TOKEN' => 'secret-expected-token', 'DATA_JSON' => " . var_export($dataJsonPath, true) . "];\n");
+
+    // 1. read_api: トークンなし -> 403 Forbidden
+    $cmdNoToken = escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg('
+        putenv("NM_STORAGE_ROOT=' . $testStorage . '");
+        $_SERVER["NM_STORAGE_ROOT"] = "' . $testStorage . '";
+        $_SERVER["REQUEST_METHOD"] = "GET";
+        $_GET = ["user" => "' . $dirUser . '", "action" => "list_categories"];
+        $_REQUEST = $_GET;
+        require ' . var_export($projectRoot . '/api/read_api.php', true) . ';
+    ');
+    $out = [];
+    exec($cmdNoToken, $out);
+    $res = json_decode(implode('', $out), true);
+    $runner->same('error', $res['status'] ?? null);
+    $runner->same('Forbidden', $res['message'] ?? null);
+
+    // 2. read_api: Bearer トークンヘッダー -> 200 OK
+    $cmdBearer = escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg('
+        putenv("NM_STORAGE_ROOT=' . $testStorage . '");
+        $_SERVER["NM_STORAGE_ROOT"] = "' . $testStorage . '";
+        $_SERVER["REQUEST_METHOD"] = "GET";
+        $_SERVER["HTTP_AUTHORIZATION"] = "Bearer secret-expected-token";
+        $_GET = ["user" => "' . $dirUser . '", "action" => "list_categories"];
+        $_REQUEST = $_GET;
+        require ' . var_export($projectRoot . '/api/read_api.php', true) . ';
+    ');
+    $out = [];
+    exec($cmdBearer, $out);
+    $res = json_decode(implode('', $out), true);
+    $runner->same('ok', $res['status'] ?? null, 'Bearer token in read_api should succeed');
+    $runner->same(1, $res['count'] ?? null);
+
+    // 3. read_api: X-Notemod-Token ヘッダー -> 200 OK
+    $cmdXHeader = escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg('
+        putenv("NM_STORAGE_ROOT=' . $testStorage . '");
+        $_SERVER["NM_STORAGE_ROOT"] = "' . $testStorage . '";
+        $_SERVER["REQUEST_METHOD"] = "GET";
+        $_SERVER["HTTP_X_NOTEMOD_TOKEN"] = "secret-expected-token";
+        $_GET = ["user" => "' . $dirUser . '", "action" => "list_categories"];
+        $_REQUEST = $_GET;
+        require ' . var_export($projectRoot . '/api/read_api.php', true) . ';
+    ');
+    $out = [];
+    exec($cmdXHeader, $out);
+    $res = json_decode(implode('', $out), true);
+    $runner->same('ok', $res['status'] ?? null, 'X-Notemod-Token header in read_api should succeed');
+    $runner->same(1, $res['count'] ?? null);
+
+    // 4. read_api: POST ボディ token -> 200 OK
+    $cmdPostBody = escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg('
+        putenv("NM_STORAGE_ROOT=' . $testStorage . '");
+        $_SERVER["NM_STORAGE_ROOT"] = "' . $testStorage . '";
+        $_SERVER["REQUEST_METHOD"] = "POST";
+        $_POST = ["user" => "' . $dirUser . '", "action" => "list_categories", "token" => "secret-expected-token"];
+        $_REQUEST = $_POST;
+        require ' . var_export($projectRoot . '/api/read_api.php', true) . ';
+    ');
+    $out = [];
+    exec($cmdPostBody, $out);
+    $res = json_decode(implode('', $out), true);
+    $runner->same('ok', $res['status'] ?? null, 'POST body token in read_api should succeed');
+    $runner->same(1, $res['count'] ?? null);
+
+    // 5. api.php: Bearer トークンヘッダー -> 200 OK
+    $cmdApiBearer = escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg('
+        putenv("NM_STORAGE_ROOT=' . $testStorage . '");
+        $_SERVER["NM_STORAGE_ROOT"] = "' . $testStorage . '";
+        $_SERVER["REQUEST_METHOD"] = "POST";
+        $_SERVER["HTTP_AUTHORIZATION"] = "Bearer secret-expected-token";
+        $_POST = ["user" => "' . $dirUser . '", "type" => "text", "text" => "Note via Bearer"];
+        $_REQUEST = $_POST;
+        require ' . var_export($projectRoot . '/api/api.php', true) . ';
+    ');
+    $out = [];
+    exec($cmdApiBearer, $out);
+    $res = json_decode(implode('', $out), true);
+    $runner->same('ok', $res['status'] ?? null, 'Bearer token in api.php should succeed');
+});
+
 $runner->finish();

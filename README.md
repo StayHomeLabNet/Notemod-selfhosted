@@ -160,13 +160,15 @@ GitHub Actions runs PHP syntax checks and both test suites on PHP 8.1 through 8.
 
 ## Main additions and improvements in v1.4.8
 
-- Enforced authentication on `cleanup_api.php?action=backup_now` and added Bearer / X-Notemod-Token header support to cleanup endpoints
+- Unified API token authentication across all endpoints (`read_api.php`, `api.php`, `cleanup_api.php`, `image_api.php`, `append_api.php`, `search_api.php`, `journal_api.php`) via `Authorization: Bearer <TOKEN>` and `X-Notemod-Token: <TOKEN>` headers while maintaining backward compatibility
+- Added automatic request URL fallback for internal server-side API calls in `media_files.php` when environment variables are unset, and enabled configuring base URLs in `config/config.php`
+- Enforced authentication on `cleanup_api.php?action=backup_now` to prevent unauthenticated backup DoS
 - Strengthened account and logout security: username uniqueness and control-character validation, full cookie clearing, CSRF token rotation, and session regeneration on logout
 - Added email header / SMTP CRLF injection protection and automatic garbage collection for expired rate-limit buckets
 - Hardened Web UI and Service Worker against XSS: stripped dangerous HTML blocks, safely escaped inline scripts with `JSON_HEX_*`, and enforced safe link protocols
 - Secured test suite with `.htaccess` and blocked direct Web execution of test runners
 - Fixed configuration file generation in `setup_auth.php` to prevent corruption from regex backreferences
-- Expanded automated test coverage in `tests/run.php` to 20 comprehensive security and integration tests
+- Expanded automated test coverage in `tests/run.php` to 23 comprehensive security and integration tests
 
 ---
 
@@ -437,6 +439,8 @@ NM_INTERNAL_BASE_URL=http://127.0.0.1/notemod
 
 `NM_INTERNAL_BASE_URL` is optional and falls back to `NM_PUBLIC_BASE_URL`. Both values must be absolute `http` or `https` URLs without credentials, query parameters, fragments, or parent-directory segments. API URLs shown in the browser are completed using the configured public URL, or the browser's own origin when it is unset.
 
+Both `NM_PUBLIC_BASE_URL` and `NM_INTERNAL_BASE_URL` can also be configured in `config/<DIR_USER>/config.php` (e.g. `'NM_PUBLIC_BASE_URL' => 'https://notes.example.com/notemod'`). Furthermore, internal server-side API calls in `media_files.php` automatically fall back to the current web request URL if these variables are unset, allowing drag-and-drop uploads and cleanups to work out of the box on shared hosts without environment variable access (only password reset emails require an explicit base URL to guard against host header poisoning).
+
 ---
 
 ## Initial setup
@@ -644,6 +648,13 @@ The following additional protections are applied:
 ---
 
 ## API overview
+
+All API endpoints (`api.php`, `read_api.php`, `cleanup_api.php`, `image_api.php`, `append_api.php`, `search_api.php`, `journal_api.php`) support the following authentication methods:
+
+- **HTTP Headers**: `Authorization: Bearer <TOKEN>` or `X-Notemod-Token: <TOKEN>` (recommended)
+- **POST parameter**: `token=<TOKEN>` (form-data or request body)
+
+This ensures secure and seamless communication with external tools such as ClipboardSync.
 
 ### `api/api.php`
 - Add text

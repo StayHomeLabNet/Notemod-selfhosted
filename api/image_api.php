@@ -44,15 +44,7 @@ function respond_error(int $status, string $message): void {
 }
 
 function image_api_request_token(): string {
-    $authorization = trim((string)(
-        $_SERVER['HTTP_AUTHORIZATION']
-        ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
-        ?? ''
-    ));
-    if (preg_match('/^Bearer\s+(.+)$/i', $authorization, $match)) {
-        return trim($match[1]);
-    }
-    return trim((string)($_SERVER['HTTP_X_NOTEMOD_TOKEN'] ?? ''));
+    return nm_request_api_token();
 }
 
 function image_api_session_authorized(string $dirUser): bool {
